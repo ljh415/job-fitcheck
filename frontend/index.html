@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Job FitCheck</title>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+
+<nav class="navbar">
+  <span class="navbar-brand" onclick="navigate('dashboard')">🧭 Job FitCheck</span>
+  <div class="navbar-links">
+    <button onclick="navigate('add')">+ 회사 추가</button>
+    <button onclick="navigate('settings')">설정</button>
+    <button id="logout-btn" onclick="logout()" class="hidden">로그아웃</button>
+  </div>
+</nav>
+
+<div id="app"></div>
+
+<!-- ── 뷰 템플릿 ─────────────────────────────────────────── -->
+
+<template id="tpl-login">
+  <div class="login-wrap">
+    <div class="login-card">
+      <div class="login-logo">🧭</div>
+      <h2>Job FitCheck</h2>
+      <form onsubmit="submitLogin(event)">
+        <input type="password" id="login-password" placeholder="비밀번호" autocomplete="current-password" />
+        <button type="submit" class="btn-primary">로그인</button>
+        <p id="login-error" class="login-error hidden">비밀번호가 틀렸습니다.</p>
+      </form>
+    </div>
+  </div>
+</template>
+
+<template id="tpl-dashboard">
+  <div class="view">
+    <div class="view-header">
+      <h2>회사 목록</h2>
+      <button onclick="navigate('timeline')" class="back-btn">타임라인 →</button>
+      <div class="toolbar-stack">
+        <div class="toolbar">
+          <input id="search" type="text" placeholder="검색..." oninput="applyFilters()" />
+          <select id="filter-status" onchange="applyFilters()">
+            <option value="">전체 상태</option>
+            <option value="미지원">미지원</option>
+            <option value="지원">지원</option>
+            <option value="서류통과">서류통과</option>
+            <option value="인터뷰">인터뷰</option>
+            <option value="최종">최종</option>
+            <option value="탈락">탈락</option>
+            <option value="보류">보류</option>
+            <option value="지원마감">지원마감</option>
+          </select>
+          <select id="filter-score" onchange="applyFilters()">
+            <option value="">전체 점수</option>
+            <option value="high">고 (70+)</option>
+            <option value="mid">중 (50~69)</option>
+            <option value="low">저 (~49)</option>
+            <option value="none">미평가</option>
+          </select>
+          <select id="sort-by" onchange="applyFilters()">
+            <option value="updated">최신순</option>
+            <option value="score">적합도순</option>
+            <option value="status">상태순</option>
+          </select>
+        </div>
+        <div class="toolbar-sub">
+          <button id="hide-terminated-btn" class="btn-secondary" onclick="toggleHideTerminated()" style="white-space:nowrap">탈락 보기</button>
+          <button class="btn-secondary" onclick="exportCSV()" title="회사 목록을 CSV 파일로 내보내기" style="white-space:nowrap">CSV</button>
+          <button id="compare-btn" class="hidden" onclick="goCompare()" style="white-space:nowrap">비교 보기</button>
+          <button id="delete-btn" class="hidden btn-danger" onclick="deleteSelected()" style="white-space:nowrap">선택 삭제</button>
+        </div>
+      </div>
+    </div>
+    <div id="profile-banner" class="banner-warn hidden">
+      📄 이력서를 아직 등록하지 않았어요. <a href="#" onclick="navigate('settings')">설정에서 PDF를 업로드</a>하면 적합도 평가가 활성화됩니다.
+    </div>
+
+    <div id="pinned-section" class="pinned-section hidden">
+      <div class="pinned-header">
+        <span>📌 즐겨찾기</span>
+        <span id="pinned-count" class="pinned-count"></span>
+      </div>
+      <div id="pinned-cards" class="pinned-cards"></div>
+    </div>
+
+    <div class="table-wrap">
+      <table id="company-table">
+        <thead>
+          <tr>
+            <th><input type="checkbox" id="check-all" onchange="toggleAll(this)" /></th>
+            <th><button id="pin-header-btn" onclick="toggleFilterPinned()" title="즐겨찾기만 보기" style="background:none;border:none;cursor:pointer;font-size:14px;padding:0;opacity:0.3">📌</button></th>
+            <th>회사</th>
+            <th>직무</th>
+            <th>적합도</th>
+            <th>결론</th>
+            <th>안정성</th>
+            <th>위치</th>
+            <th>상태</th>
+            <th>분석일</th>
+          </tr>
+        </thead>
+        <tbody id="company-tbody"></tbody>
+      </table>
+      <p id="empty-msg" class="empty hidden">아직 등록된 회사가 없어요. 회사를 추가해보세요!</p>
+    </div>
+  </div>
+</template>
+
+<template id="tpl-detail">
+  <div class="view">
+    <div class="view-header">
+      <button onclick="navigate('dashboard')" class="back-btn">← 목록</button>
+      <div class="detail-actions">
+        <button onclick="switchTab('info')" id="tab-info" class="tab-btn active">상세정보</button>
+        <button onclick="switchTab('edit')" id="tab-edit" class="tab-btn">편집</button>
+        <button onclick="switchTab('qa')" id="tab-qa" class="tab-btn">Q&A</button>
+        <button onclick="refitCompany()" class="btn-secondary">🎯 적합도 재평가</button>
+        <button onclick="deleteCompany()" class="btn-danger">삭제</button>
+      </div>
+    </div>
+
+    <div id="tab-content-info" class="tab-content">
+      <div class="detail-meta">
+        <div id="fit-badge"></div>
+        <div id="meta-chips"></div>
+        <div id="company-facts" class="company-facts hidden"></div>
+      </div>
+      <div id="company-body" class="markdown-body"></div>
+    </div>
+
+    <div id="tab-content-edit" class="tab-content hidden">
+      <form id="edit-form" onsubmit="saveCompany(event)">
+        <div class="edit-form-actions">
+          <button type="submit" class="btn-primary">저장</button>
+        </div>
+
+        <div class="edit-section">
+          <div class="edit-section-title">기본 정보</div>
+          <div class="form-grid">
+            <label class="edit-label">회사명<input name="company_name" /></label>
+            <label class="edit-label">직무명<input name="job_title" /></label>
+            <label class="edit-label">근무지<input name="location" /></label>
+            <label class="edit-label">지원 상태
+              <select name="status">
+                <option value="미지원">미지원</option>
+                <option value="지원">지원</option>
+                <option value="서류통과">서류통과</option>
+                <option value="인터뷰">인터뷰</option>
+                <option value="최종">최종</option>
+                <option value="탈락">탈락</option>
+                <option value="보류">보류</option>
+                <option value="지원마감">지원마감</option>
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <div class="edit-section">
+          <div class="edit-section-title">공고 URL</div>
+          <div class="source-url-row">
+            <input name="source_url" type="url" placeholder="https://www.wanted.co.kr/wd/..." style="flex:1" />
+            <button type="button" onclick="syncWanted()" class="btn-secondary" style="white-space:nowrap">🔄 원티드 동기화</button>
+          </div>
+        </div>
+
+        <div class="edit-section">
+          <div class="edit-section-title">회사 정보</div>
+          <div class="form-grid">
+            <label class="edit-label">임직원 수<input name="employee_count" /></label>
+            <label class="edit-label">안정성
+              <select name="stability">
+                <option value="">-</option>
+                <option value="강">강</option>
+                <option value="중">중</option>
+                <option value="약">약</option>
+              </select>
+            </label>
+            <label class="edit-label">투자 단계<input name="investment_stage" /></label>
+            <label class="edit-label">잡플래닛 점수<input name="jobplanet_score" type="number" step="0.1" /></label>
+          </div>
+        </div>
+
+
+        <div class="edit-section">
+          <div class="edit-section-title">태그</div>
+          <label class="edit-label full-width">기술 스택 <span class="field-hint">(쉼표 구분)</span><input name="tech_stack" /></label>
+          <label class="edit-label full-width" style="margin-top:8px">태그 <span class="field-hint">(쉼표 구분)</span><input name="tags" /></label>
+        </div>
+
+        <div class="edit-section">
+          <div class="edit-section-title">내용 (마크다운)</div>
+          <textarea name="body" rows="20" style="width:100%"></textarea>
+        </div>
+
+        <div class="edit-form-actions">
+          <button type="submit" class="btn-primary">저장</button>
+        </div>
+      </form>
+    </div>
+
+    <div id="tab-content-qa" class="tab-content hidden">
+      <div class="qa-company-header">
+        <div class="qa-company-info">
+          <span id="qa-company-name" class="qa-company-name-text"></span>
+          <span id="qa-company-job" class="qa-company-job-text"></span>
+        </div>
+        <div class="qa-skill-hover-wrap">
+          <button class="qa-skill-trigger">📊 적합도 보기</button>
+          <div class="qa-skill-panel" id="qa-skill-panel"></div>
+        </div>
+      </div>
+      <div id="qa-messages" class="qa-messages"></div>
+      <div class="qa-input-row">
+        <textarea id="qa-input" placeholder="질문을 입력하세요... (예: 이 회사 면접 어떻게 준비해?)" rows="3"></textarea>
+        <button onclick="sendQA()" class="btn-primary">전송</button>
+      </div>
+    </div>
+  </div>
+</template>
+
+<template id="tpl-add">
+  <div class="view">
+    <div class="view-header">
+      <button onclick="navigate('dashboard')" class="back-btn">← 목록</button>
+      <h2>새 회사 추가</h2>
+    </div>
+    <p class="add-guide">
+      <strong>원티드 · 리멤버</strong>는 URL 입력으로 자동 스크래핑 가능합니다.
+      <strong>사람인 · 잡코리아</strong> 등은 텍스트 붙여넣기 또는 이미지 업로드를 이용해주세요.
+    </p>
+    <div class="tab-bar">
+      <button onclick="switchAddTab('url')" id="add-tab-url" class="tab-btn active">🔗 URL 입력</button>
+      <button onclick="switchAddTab('text')" id="add-tab-text" class="tab-btn">📋 텍스트 입력</button>
+      <button onclick="switchAddTab('image')" id="add-tab-image" class="tab-btn">📷 이미지 업로드</button>
+    </div>
+
+    <div id="add-url" class="add-panel">
+      <label>채용공고 URL
+        <input id="url-input" type="url" placeholder="https://www.wanted.co.kr/wd/..." />
+      </label>
+<button onclick="submitUrl()" class="btn-primary">분석 시작</button>
+    </div>
+
+    <div id="add-text" class="add-panel hidden">
+      <div class="form-grid" style="margin-bottom:12px">
+        <label>회사명 *<input id="text-company" placeholder="회사명" /></label>
+        <label>직무명 *<input id="text-job" placeholder="ML 엔지니어" /></label>
+        <label style="grid-column:1/-1">공고 URL (선택)<input id="text-url" type="url" placeholder="https://..." /></label>
+      </div>
+      <label>공고 내용 (선택 — 붙여넣으면 AI가 자동 분석)
+        <textarea id="text-input" rows="14" placeholder="채용공고 전문을 여기에 붙여넣으세요. 비워두면 기본 정보만 저장됩니다."></textarea>
+      </label>
+      <button onclick="submitText()" class="btn-primary">저장 / 분석 시작</button>
+    </div>
+
+    <div id="add-image" class="add-panel hidden">
+      <label>이미지 선택 (JPEG · PNG · WebP, 여러 장 가능)
+        <input type="file" id="image-input" accept="image/jpeg,image/png,image/webp,image/gif" multiple onchange="onImageSelect()" />
+      </label>
+      <p class="input-hint">💡 스크린샷 여러 장을 한 번에 올리면 공고 전체를 인식합니다. 1568px 초과 이미지는 자동으로 축소됩니다.</p>
+      <div id="image-preview" class="image-preview"></div>
+      <button onclick="submitImage()" class="btn-primary">분석 시작</button>
+    </div>
+
+
+<div id="add-progress" class="progress-box hidden">
+      <div class="progress-header">
+        <div id="progress-msg" class="progress-msg">처리 중...</div>
+        <div class="spinner"></div>
+      </div>
+      <div class="progress-bar-wrap">
+        <div id="progress-bar" class="progress-bar"></div>
+      </div>
+      <div id="progress-elapsed" class="progress-elapsed">0초 경과</div>
+    </div>
+  </div>
+</template>
+
+<template id="tpl-compare">
+  <div class="view view--compare">
+    <div class="view-header">
+      <button onclick="navigate('dashboard')" class="back-btn">← 목록</button>
+      <h2>회사 비교</h2>
+    </div>
+    <div class="table-wrap">
+      <table id="compare-table"></table>
+    </div>
+    <div class="compare-qa">
+      <h3>비교 Q&A</h3>
+      <div id="compare-qa-messages" class="qa-messages"></div>
+      <div class="qa-input-row">
+        <textarea id="compare-qa-input" placeholder="여러 회사를 비교하며 질문하세요... (예: 어떤 회사에 먼저 지원해야 해?)" rows="3"></textarea>
+        <button onclick="sendCompareQA()" class="btn-primary">전송</button>
+      </div>
+    </div>
+  </div>
+</template>
+
+<template id="tpl-settings">
+  <div class="view">
+    <div class="settings-page-header">
+      <h2 style="margin:0">설정</h2>
+      <div class="export-dropdown-wrap" id="export-dropdown-wrap">
+        <button class="btn-secondary export-dropdown-btn" onclick="toggleExportDropdown(event)">내보내기 ▾</button>
+        <div class="export-dropdown-panel hidden" id="export-dropdown-panel">
+          <div class="export-dropdown-label">ZIP 백업</div>
+          <label class="export-check-item export-check-required"><input type="checkbox" checked disabled> 회사 분석 + 원문 <span class="export-check-path">companies/*</span></label>
+          <label class="export-check-item export-check-required"><input type="checkbox" checked disabled> 내 프로필 <span class="export-check-path">candidate_profile.md</span></label>
+          <label class="export-check-item export-check-required"><input type="checkbox" checked disabled> 커스텀 평가 기준 <span class="export-check-path">eval_criteria.md</span></label>
+          <label class="export-check-item"><input type="checkbox" id="export-include-pdf"> 원본 PDF <span class="export-check-path">uploads/*.pdf</span></label>
+          <label class="export-check-item"><input type="checkbox" id="export-include-log"> 비용 로그 <span class="export-check-path">usage_log.jsonl</span></label>
+          <button class="btn-primary export-dropdown-action" onclick="exportZip()">ZIP 다운로드</button>
+          <div class="export-dropdown-divider"></div>
+          <button class="export-dropdown-link" onclick="exportCSV()">💾 전체 회사 목록 CSV</button>
+          <button class="export-dropdown-link" id="export-profile-dd-btn" onclick="exportProfile()" disabled>💾 프로필 MD</button>
+        </div>
+      </div>
+    </div>
+
+    <section class="settings-section">
+      <div class="section-header-row">
+        <h3 style="margin:0">📄 내 프로필 (이력서 / 포트폴리오)</h3>
+      </div>
+      <p class="profile-guide">
+        프로필 분석 시 아래 항목이 자동 추출됩니다. 이력서에 명시되지 않은 항목은 <strong>추가 설명</strong>란에 직접 입력해주세요.<br>
+        <span class="profile-guide-fields">희망 근무지 · 희망 고용형태 · 희망 최소 연봉 · 총 경력 연수 · 선호 직무 역할</span>
+      </p>
+      <div id="profile-status-msg"></div>
+      <div id="profile-preview" class="markdown-body profile-preview-area"></div>
+
+      <div class="profile-upload-box">
+        <div class="profile-upload-box-title" onclick="toggleUploadBox()" id="upload-box-toggle">
+          📤 프로필 업데이트 <span id="upload-box-chevron">▸</span>
+        </div>
+        <div id="upload-box-body">
+        <div id="pdf-dropzone" class="pdf-dropzone" onclick="document.getElementById('pdf-input').click()"
+             ondragover="event.preventDefault();this.classList.add('drag-over')"
+             ondragleave="this.classList.remove('drag-over')"
+             ondrop="handleProfileDrop(event)">
+          <div id="pdf-dropzone-label">📂 클릭하거나 PDF를 여기에 드래그하세요 (복수 가능)</div>
+          <input type="file" id="pdf-input" accept=".pdf" multiple style="display:none" onchange="updateDropzoneLabel()" />
+        </div>
+        <textarea id="profile-extra-note" rows="3" placeholder="추가 설명 (선택) — 예: 백엔드 전문이며 MLOps 경험 있음. 풀스택보다 AI 인프라 역할 선호." style="margin-top:10px;width:100%;font-size:13px;color:#374151;resize:vertical;box-sizing:border-box" oninput="localStorage.setItem('profile-extra-note', this.value)"></textarea>
+        <div class="profile-upload-footer">
+          <label class="upload-option-label" title="프로필 본문 생성 시 최대 출력 토큰 수. 이력서·포트폴리오가 길수록 높게 설정하세요.">
+            본문 max_tokens
+            <input type="number" id="profile-max-tokens" value="8192" min="1024" max="32000" step="1024" style="width:90px" />
+          </label>
+          <button onclick="uploadProfile()" class="btn-primary">업로드 및 분석</button>
+        </div>
+        <div id="upload-progress" class="progress-box hidden">
+          <div id="upload-msg">업로드 중...</div>
+          <div class="spinner"></div>
+        </div>
+        </div><!-- /upload-box-body -->
+      </div>
+    </section>
+
+    <section class="settings-section">
+      <h3>📝 커스텀 평가 기준</h3>
+      <p style="font-size:13px;color:#6b7280;margin-bottom:12px">적합도 평가 시 LLM에게 추가로 전달할 기준을 자유롭게 입력하세요.<br>예: "스타트업보다 중견기업 이상 선호", "재택근무 가능 여부 중요", "Python 기반 팀 우대"</p>
+      <label class="full-width">
+        <textarea id="eval-criteria-input" rows="6" placeholder="예시&#10;- 임직원 100명 이상 회사 우선&#10;- 풀스택보다 백엔드 전문 팀 선호&#10;- 서울 강남/판교 근무 가능 여부 중요"></textarea>
+      </label>
+      <button onclick="saveEvalCriteria()" class="btn-primary" style="margin-top:8px">평가 기준 저장</button>
+    </section>
+
+    <section class="settings-section">
+      <h3>🤖 LLM Provider</h3>
+      <div id="current-provider-info"></div>
+      <div class="form-grid">
+        <label>Provider
+          <select id="provider-select" onchange="syncProviderModels()">
+            <option value="claude">Claude (Anthropic)</option>
+            <option value="openai">ChatGPT (OpenAI)</option>
+          </select>
+        </label>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;margin-top:8px">
+        <button type="button" class="btn-secondary" onclick="fetchModelList()">모델 목록 불러오기</button>
+        <span id="model-list-updated" style="font-size:12px;color:#9ca3af"></span>
+      </div>
+      <div class="model-tier-wrap">
+        <span class="model-tier-trigger">💰 비용 순서 보기</span>
+        <div id="model-tier-view" class="model-tier-panel"></div>
+      </div>
+      <div id="model-inputs-claude" class="form-grid" style="margin-top:8px">
+        <label>High 모델<input id="claude-high-model" /></label>
+        <label>Light 모델<input id="claude-light-model" /></label>
+      </div>
+      <div id="model-inputs-openai" class="form-grid" style="margin-top:8px;display:none">
+        <label>High 모델<input id="openai-high-model" /></label>
+        <label>Light 모델<input id="openai-light-model" /></label>
+      </div>
+      <button onclick="saveSettings()" class="btn-primary">설정 저장</button>
+    </section>
+
+    <section class="settings-section">
+      <h3>💰 사용 이력</h3>
+      <div id="usage-summary" class="usage-summary"></div>
+      <div class="table-wrap usage-table-scroll" style="margin-top:12px">
+        <table id="usage-table">
+          <thead>
+            <tr>
+              <th>일시</th>
+              <th>작업</th>
+              <th>모델</th>
+              <th style="text-align:right">입력 토큰</th>
+              <th style="text-align:right">출력 토큰</th>
+              <th style="text-align:right">비용</th>
+            </tr>
+          </thead>
+          <tbody id="usage-tbody"></tbody>
+        </table>
+        <p id="usage-empty" class="empty hidden">아직 사용 이력이 없습니다.</p>
+      </div>
+    </section>
+  </div>
+</template>
+
+<template id="tpl-timeline">
+  <div class="view">
+    <div class="view-header">
+      <button onclick="navigate('dashboard')" class="back-btn">← 목록</button>
+      <h2>타임라인</h2>
+      <div class="tl-header-right">
+        <button id="tl-show-closed-btn" class="btn-secondary" onclick="toggleTimelineClosed()" style="font-size:12px;padding:5px 10px">종료 보기</button>
+        <div class="tl-tab-bar">
+          <button id="tl-tab-list" class="tl-tab active" onclick="switchTimelineTab('list')">타임라인</button>
+          <button id="tl-tab-cal" class="tl-tab" onclick="switchTimelineTab('cal')">캘린더</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 상태별 요약 -->
+    <div id="tl-summary" class="tl-summary"></div>
+
+    <!-- 타임라인 탭 -->
+    <div id="tl-list-panel">
+      <div id="tl-list-body"></div>
+    </div>
+
+    <!-- 캘린더 탭 -->
+    <div id="tl-cal-panel" class="hidden">
+      <div class="cal-header">
+        <button class="cal-nav-btn" onclick="calPrevMonth()">&#8249;</button>
+        <span id="cal-month-label"></span>
+        <button class="cal-nav-btn" onclick="calNextMonth()">&#8250;</button>
+      </div>
+      <div class="cal-grid-header">
+        <span>일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span>
+      </div>
+      <div id="cal-grid" class="cal-grid"></div>
+    </div>
+  </div>
+</template>
+
+<script src="/app.js"></script>
+</body>
+</html>

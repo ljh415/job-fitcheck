@@ -1,0 +1,29 @@
+# 환경 변수 (API 키 포함)
+.env
+backend/.env
+
+# Claude Code 로컬 설정 (훅에 봇 토큰 포함)
+.claude/
+
+# 데이터 (개인 정보 포함)
+data/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
