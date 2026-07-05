@@ -1,9 +1,20 @@
 /* ── 테마 ─────────────────────────────────────────────────────────── */
+function applyHljs(container) {
+  if (typeof hljs === 'undefined') return;
+  container.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
+}
+
+function setHljsTheme(dark) {
+  document.getElementById('hljs-light').disabled = dark;
+  document.getElementById('hljs-dark').disabled = !dark;
+}
+
 (function initTheme() {
   const saved = localStorage.getItem('job-fitcheck-theme');
   if (saved === 'dark') {
     document.documentElement.setAttribute('data-theme', 'dark');
     document.getElementById('theme-toggle-btn').textContent = '☀️';
+    setHljsTheme(true);
   }
 })();
 
@@ -14,10 +25,12 @@ function toggleTheme() {
     document.documentElement.removeAttribute('data-theme');
     btn.textContent = '🌙';
     localStorage.setItem('job-fitcheck-theme', 'light');
+    setHljsTheme(false);
   } else {
     document.documentElement.setAttribute('data-theme', 'dark');
     btn.textContent = '☀️';
     localStorage.setItem('job-fitcheck-theme', 'dark');
+    setHljsTheme(true);
   }
 }
 
@@ -497,7 +510,10 @@ async function initDetail(slug) {
 
   // 마크다운 본문
   const bodyEl = document.getElementById('company-body');
-  if (bodyEl && record.body) bodyEl.innerHTML = DOMPurify.sanitize(marked.parse(record.body));
+  if (bodyEl && record.body) {
+    bodyEl.innerHTML = DOMPurify.sanitize(marked.parse(record.body));
+    applyHljs(bodyEl);
+  }
 
   // 편집 폼 채우기
   fillEditForm(fm, record.body);
@@ -603,7 +619,21 @@ function fillEditForm(fm, body) {
   });
   if (form.elements['tech_stack']) form.elements['tech_stack'].value = (fm.tech_stack || []).join(', ');
   if (form.elements['tags']) form.elements['tags'].value = (fm.tags || []).join(', ');
-  if (form.elements['body']) form.elements['body'].value = body || '';
+  if (form.elements['body']) {
+    const bodyEl = form.elements['body'];
+    bodyEl.value = body || '';
+    const preview = document.getElementById('md-preview');
+    if (preview) {
+      const update = () => {
+        preview.innerHTML = DOMPurify.sanitize(marked.parse(bodyEl.value || ''));
+        applyHljs(preview);
+      };
+      update();
+      bodyEl.removeEventListener('input', bodyEl._mdUpdate);
+      bodyEl._mdUpdate = update;
+      bodyEl.addEventListener('input', update);
+    }
+  }
 }
 
 async function saveCompany(event) {

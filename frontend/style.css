@@ -212,6 +212,12 @@ tr.company-row:hover { background: var(--table-row-hover); }
 .company-facts { font-size: 12px; color: var(--text-muted); display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
 .facts-sep { color: var(--border-input); margin: 0 2px; }
 
+/* ── 마크다운 에디터 ─────────────────────────────────────────────── */
+.md-editor { display: flex; gap: 12px; }
+.md-editor-input { flex: 1; min-width: 0; resize: vertical; font-family: 'SFMono-Regular', Consolas, monospace; font-size: 13px; line-height: 1.6; }
+.md-editor-preview { flex: 1; min-width: 0; overflow-y: auto; padding: 10px 14px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-subtle); min-height: 200px; }
+.md-editor-preview:empty::before { content: '미리보기...'; color: var(--text-dimmed); font-size: 13px; }
+
 /* ── 마크다운 ─────────────────────────────────────────────────────── */
 .markdown-body { line-height: 1.75; color: var(--text); }
 .markdown-body h1 { font-size: 22px; border-bottom: 2px solid var(--border); padding-bottom: 8px; margin: 0 0 16px; }
@@ -435,3 +441,47 @@ label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-w
 .tl-summary-card { display: flex; flex-direction: column; align-items: center; gap: 2px; background: var(--bg-surface); border: 2px solid; border-radius: 10px; padding: 10px 18px; min-width: 72px; }
 .tl-summary-count { font-size: 22px; font-weight: 800; line-height: 1; }
 .tl-summary-label { font-size: 11px; color: var(--text-muted); font-weight: 500; }
+
+/* ── 모바일 반응형 ───────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  /* 네비게이션 */
+  .navbar { height: auto; padding: 8px 12px; flex-wrap: wrap; gap: 6px; }
+  .navbar-brand { font-size: 15px; }
+  .navbar-links { gap: 6px; flex-wrap: wrap; }
+  .navbar-links button { padding: 5px 10px; font-size: 12px; }
+
+  /* 뷰 */
+  .view { padding: 14px 12px; }
+  .view-header { gap: 8px; margin-bottom: 14px; }
+
+  /* 툴바 */
+  .toolbar-stack { width: 100%; }
+  .toolbar { flex-wrap: wrap; }
+  .toolbar input { width: 100%; }
+  .toolbar-sub { flex-wrap: wrap; }
+
+  /* 마크다운 에디터: 세로 스택 */
+  .md-editor { flex-direction: column; }
+  .md-editor-input { min-height: 200px; }
+
+  /* 비교 뷰: 가로 스크롤 */
+  .view--compare { min-width: unset; }
+  .view--compare .table-wrap { overflow-x: auto; }
+  #compare-table { min-width: 600px; }
+
+  /* 캘린더: 가로 스크롤 */
+  .cal-grid-header, .cal-grid { min-width: 480px; }
+  .cal-cell { min-height: 70px; }
+
+  /* 타임라인 */
+  .tl-entry-badges { display: none; }
+
+  /* 토스트 */
+  #toast-container { bottom: 12px; right: 12px; left: 12px; }
+  .toast { min-width: unset; max-width: 100%; }
+
+  /* 설정 */
+  .settings-page-header { flex-wrap: wrap; gap: 8px; }
+  .export-dropdown-panel { min-width: unset; width: max-content; max-width: calc(100vw - 48px); }
+  .profile-upload-footer { flex-direction: column; align-items: flex-start; }
+}
