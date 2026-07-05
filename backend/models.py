@@ -5,8 +5,8 @@ CompanyFrontmatter  — 회사 MD 파일의 YAML frontmatter 전체 스키마
 CandidateProfile    — 후보자 프로필 MD 파일의 YAML frontmatter
 API 요청/응답 모델  — 각 엔드포인트의 입출력 타입
 """
-from typing import Literal
-from pydantic import BaseModel, Field
+from typing import Any, Literal
+from pydantic import BaseModel, Field, field_validator
 
 
 # ── 회사 frontmatter ──────────────────────────────────────────────────────────
@@ -63,6 +63,18 @@ class CompanyFrontmatter(BaseModel):
     application_source: str | None = None  # 지원 경로 (예: 원티드, 링크드인)
     tags: list[str] = Field(default_factory=list)
     pinned: bool = False  # 즐겨찾기 여부
+
+    @field_validator(
+        "tech_stack", "key_responsibilities", "required_skills",
+        "preferred_skills", "benefits", "hiring_process",
+        "strengths", "gaps", "tags",
+        mode="before",
+    )
+    @classmethod
+    def coerce_null_to_list(cls, v: Any) -> list:
+        if v is None or v == "null":
+            return []
+        return v
 
 
 class CompanyRecord(BaseModel):

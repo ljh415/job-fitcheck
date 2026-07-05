@@ -602,8 +602,11 @@ def _replace_fit_section(body: str, new_section: str) -> str:
     parts = body.split("\n## ")
     section_content = new_section.removeprefix("## ")
 
-    # 1. 기존 적합도 리포트 섹션 모두 제거 후 첫 위치에 교체
-    fit_indices = [i for i in range(1, len(parts)) if parts[i].startswith("4. 적합도 리포트")]
+    # 1. 기존 적합도 리포트 + 종합 의견 섹션 모두 제거 후 첫 위치에 교체
+    fit_indices = [
+        i for i in range(1, len(parts))
+        if parts[i].startswith("4. 적합도 리포트") or parts[i].startswith("5. 종합 의견")
+    ]
     if fit_indices:
         first = fit_indices[0]
         parts[first] = section_content
@@ -656,17 +659,33 @@ async def _process_company(
     if job_title_override:
         extracted["job_title"] = job_title_override
 
-    # 2. 잡플래닛 평점 조회 (네이버 검색 스크래핑, 실패해도 전체 흐름 중단 안 함)
+    # 2. 잡플래닛 평점 조회 (refill 시 기존 점수 있으면 재사용, 없으면 스크래핑)
     company_name_for_jp = extracted.get("display_name") or extracted.get("company_name", "")
     if company_name_for_jp:
-        logger.info("[2/4] 잡플래닛 조회: %s", company_name_for_jp)
-        jp = await fetch_jobplanet_score(company_name_for_jp)
-        if jp.score is not None:
-            extracted["jobplanet_score"] = jp.score
-            extracted["jobplanet_review_count"] = jp.review_count
-            logger.info("[2/4] 잡플래닛 결과: %.1f점 (%d건)", jp.score, jp.review_count or 0)
+        existing_jp_score = None
+        existing_jp_review = None
+        if existing_slug:
+            try:
+                existing_record = storage.read_company(existing_slug)
+                if existing_record:
+                    existing_jp_score = existing_record.frontmatter.jobplanet_score
+                    existing_jp_review = existing_record.frontmatter.jobplanet_review_count
+            except Exception:
+                pass
+
+        if existing_jp_score is not None:
+            extracted["jobplanet_score"] = existing_jp_score
+            extracted["jobplanet_review_count"] = existing_jp_review
+            logger.info("[2/4] 잡플래닛 기존값 재사용: %.1f점", existing_jp_score)
         else:
-            logger.info("[2/4] 잡플래닛 결과: %s", jp.source)
+            logger.info("[2/4] 잡플래닛 조회: %s", company_name_for_jp)
+            jp = await fetch_jobplanet_score(company_name_for_jp)
+            if jp.score is not None:
+                extracted["jobplanet_score"] = jp.score
+                extracted["jobplanet_review_count"] = jp.review_count
+                logger.info("[2/4] 잡플래닛 결과: %.1f점 (%d건)", jp.score, jp.review_count or 0)
+            else:
+                logger.info("[2/4] 잡플래닛 결과: %s", jp.source)
 
     # 3. Lightweight: 구조화 데이터 + 원문을 바탕으로 마크다운 본문 생성
     logger.info("[3/4] 마크다운 본문 생성 시작")
@@ -720,10 +739,10 @@ async def _process_company(
         fm_data["source_url"] = source_url
     fm = CompanyFrontmatter(**fm_data)
 
-    # 섹션 추가: 적합도 있으면 4(리포트) → 5(로그), 없으면 4(로그)
+    # 섹션 추가: 적합도 있으면 4(리포트)+5(종합의견) → 6(로그), 없으면 4(로그)
     if fit_report:
         body += f"\n\n## 4. 적합도 리포트 — {fit_data.get('fit_score', '?')} / 100\n\n{fit_report}"
-        body += f"\n\n## 5. 지원 상태 로그\n- {date.today().isoformat()}: 분석 완료"
+        body += f"\n\n## 6. 지원 상태 로그\n- {date.today().isoformat()}: 분석 완료"
     else:
         body += f"\n\n## 4. 지원 상태 로그\n- {date.today().isoformat()}: 분석 완료"
 
@@ -911,9 +930,15 @@ async def refit_company(slug: str):
     custom_criteria_section = (
         f"\n\n## 추가 평가 기준 (사용자 지정)\n{eval_criteria}" if eval_criteria else ""
     )
+    # 이전 평가 결과(strengths/gaps/fit_score 등)는 LLM 입력에서 제외 — 자기참조 편향 방지
+    _REFIT_EXCLUDE = {"strengths", "gaps", "fit_score", "fit_label", "fit_report_body"}
+    company_data = {
+        k: v for k, v in record.frontmatter.model_dump().items()
+        if k not in _REFIT_EXCLUDE
+    }
     user_fit = prompts.EVALUATE_FIT_USER_TEMPLATE.format(
         candidate_profile=profile_text,
-        company_json=record.frontmatter.model_dump_json(indent=2),
+        company_json=json.dumps(company_data, ensure_ascii=False, indent=2),
         raw_text=raw_text[:4000],
         custom_criteria=custom_criteria_section,
     )

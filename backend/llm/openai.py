@@ -29,10 +29,12 @@ class OpenAIProvider(LLMProvider):
         tool_schema: dict,
         model: str,
         operation: str = "",
+        max_tokens: int = 8192,
     ) -> dict:
         try:
             response = await self._client.chat.completions.create(
                 model=model,
+                temperature=0.5,
                 messages=[
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},

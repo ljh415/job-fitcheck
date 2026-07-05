@@ -28,6 +28,7 @@ class LLMProvider(ABC):
         tool_schema: dict,
         model: str,
         operation: str = "",
+        max_tokens: int = 8192,
     ) -> dict:
         """Tool use / Function calling으로 구조화 JSON을 반환한다.
         Anthropic은 tool_use, OpenAI는 function calling으로 각각 구현."""

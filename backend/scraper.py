@@ -125,6 +125,7 @@ def _parse_wanted(html: str) -> tuple[str | None, int | None]:
             f"자격요건: {job.get('requirements', '')}",
             f"우대사항: {job.get('preferred_points', '')}",
             f"혜택 및 복지: {job.get('benefits', '')}",
+            f"채용 전형: {job.get('hire_rounds', '')}",
             f"근무지: {job.get('address', {}).get('full_location', '')}",
             f"경력: {career_str}",
             f"고용형태: {employment}",

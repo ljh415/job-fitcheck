@@ -45,11 +45,16 @@
   - ✅ 추출 누락 필드 보완 — `benefits`·`hiring_process` 필드 추가
   - ✅ 적합도 평가 기준 세분화 — 사용자 커스텀 기준 자유 입력 지원 (`/api/eval-criteria`)
   - ✅ GENERATE_BODY 출력 포맷 고정 — 3섹션 형식 명시 (기본정보 표·안정성 표+판단근거·공고내용 인라인코드)
-  - ✅ EVALUATE_FIT 재설계 — 점수 우선순위 7항목, 라벨 기준 테이블, fit_report_body 6섹션 포맷
+  - ✅ EVALUATE_FIT 재설계 — 점수 우선순위 7항목(잡플래닛 평점 추가), 라벨 기준 테이블, fit_report_body 6섹션 포맷
+  - ✅ EVALUATE_FIT strengths 스키마 강화 — 특정 프로젝트·회사 단일 경험으로 서술, 다중 프로젝트 합산 금지
+  - ✅ EVALUATE_FIT 할루시네이션 방지 강화 — 경험 합산 금지("통합 처리·단일 파이프라인" 표현 금지), 각 프로젝트 개별 나열
+  - ✅ EVALUATE_FIT 핵심 근거 지침 — 필수요건 미충족 항목을 커스텀 기준보다 우선하여 반드시 포함
   - ✅ EXTRACT_PROFILE 프롬프트 튜닝 — skills 3분리(tech_skills·domains·soft_skills), summary 가이드 구체화, 다중 파일 안내
   - ✅ GENERATE_PROFILE_BODY 프롬프트 튜닝 — 할루시네이션 방지 강화
   - ✅ Q&A 프롬프트 튜닝 — 현행 유지 (충분함)
   - ✅ 전체 시스템 프롬프트 할루시네이션 방지 통일
+  - ✅ revenue_status 스키마 개선 — 실제 수치·설명 추출, 단순 확인만 가능하면 null
+  - ✅ stability 판단 기준 — 최신(당해·전년도) 매출 데이터만 반영
 - ✅ 에러 케이스 처리
   - ✅ 스크래핑 실패 시 안내 메시지 — httpx 예외 세분화 (TimeoutException / HTTPStatusError / 기타)
   - ✅ LLM API 오류 시 fallback 응답 — `LLMAPIError` 공통 예외 (인증·rate limit·서버 오류 → 사용자 친화적 메시지)
@@ -132,3 +137,4 @@
 - ✅ SSE 스트리밍 도중 화면 이탈 시 dangling reader 수정 (navigate/popstate에서 cancel 처리)
 - ✅ SSE 스트리밍 도중 연결 끊김 시 자동 재시도 (최대 2회, 지수 백오프)
 - ⬜ provider 런타임 설정: 서버 재시작 시 .env의 DEFAULT_PROVIDER로 리셋 (PoC 단계라 허용)
+- ⬜ refill UI 없음: 현재 `/api/companies/{slug}/refill` 엔드포인트는 존재하나 프론트엔드 버튼 미구현 — 필요 시 curl로 수동 호출

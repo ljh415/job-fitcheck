@@ -219,15 +219,31 @@ tr.company-row:hover { background: var(--table-row-hover); }
 .md-editor-preview:empty::before { content: '미리보기...'; color: var(--text-dimmed); font-size: 13px; }
 
 /* ── 마크다운 ─────────────────────────────────────────────────────── */
-.markdown-body { line-height: 1.75; color: var(--text); }
-.markdown-body h1 { font-size: 22px; border-bottom: 2px solid var(--border); padding-bottom: 8px; margin: 0 0 16px; }
-.markdown-body h2 { font-size: 17px; margin: 24px 0 10px; color: var(--text); }
-.markdown-body h3 { font-size: 15px; margin: 16px 0 8px; }
+.markdown-body { line-height: 1.8; color: var(--text); font-size: 15px; }
+.markdown-body h1 { font-size: 23px; border-bottom: 2px solid var(--border); padding-bottom: 8px; margin: 0 0 16px; }
+.markdown-body h2 { font-size: 18px; margin: 24px 0 10px; color: var(--text); }
+.markdown-body h3 { font-size: 16px; margin: 16px 0 8px; }
+.markdown-body h4 { font-size: 14px; font-weight: 700; margin: 12px 0 6px; color: var(--text-secondary); }
 .markdown-body p { margin: 8px 0; }
 .markdown-body ul, .markdown-body ol { margin: 8px 0 8px 20px; }
 .markdown-body li { margin: 4px 0; }
-.markdown-body code { background: var(--bg-muted); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+.markdown-body code { background: var(--bg-muted); padding: 1px 5px; border-radius: 4px; font-size: 13px; }
 .markdown-body strong { font-weight: 700; }
+.markdown-body mark { color: inherit; padding: 0.05em 0.25em; border-radius: 3px; }
+.markdown-body mark.mark-pos { background: #dcfce7; }
+.markdown-body mark.mark-neg { background: #fee2e2; }
+[data-theme="dark"] .markdown-body mark.mark-pos { background: #14532d; color: #bbf7d0; }
+[data-theme="dark"] .markdown-body mark.mark-neg { background: #7f1d1d; color: #fecaca; }
+.markdown-body table { border-collapse: collapse; }
+.markdown-body table th, .markdown-body table td { padding: 6px 12px; border: 1px solid var(--border); }
+.markdown-body table.info-table { table-layout: fixed; width: 100%; }
+.markdown-body table.info-table th:first-child,
+.markdown-body table.info-table td:first-child { width: 130px; }
+.markdown-body table.fit-check-table { table-layout: fixed; width: 100%; }
+.markdown-body table.fit-check-table th:first-child,
+.markdown-body table.fit-check-table td:first-child { width: 220px; }
+.markdown-body table.fit-check-table th:nth-child(2),
+.markdown-body table.fit-check-table td:nth-child(2) { width: 90px; text-align: center; }
 
 /* ── 폼 ──────────────────────────────────────────────────────────── */
 .form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-bottom: 12px; }

@@ -27,6 +27,7 @@ class AnthropicProvider(LLMProvider):
         tool_schema: dict,
         model: str,
         operation: str = "",
+        max_tokens: int = 8192,
     ) -> dict:
         tool_def = anthropic.types.ToolParam(
             name=tool_name,
@@ -36,7 +37,8 @@ class AnthropicProvider(LLMProvider):
         try:
             response = await self._client.messages.create(
                 model=model,
-                max_tokens=4096,
+                max_tokens=max_tokens,
+                temperature=0.5,
                 system=system,
                 messages=[{"role": "user", "content": user}],
                 tools=[tool_def],
@@ -57,6 +59,12 @@ class AnthropicProvider(LLMProvider):
             input_tokens=response.usage.input_tokens,
             output_tokens=response.usage.output_tokens,
         )
+        if response.stop_reason == "max_tokens":
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "[%s] tool call 응답이 max_tokens(%d)에 의해 잘렸습니다. 일부 필드가 누락될 수 있습니다.",
+                operation, max_tokens,
+            )
         for block in response.content:
             if block.type == "tool_use" and block.name == tool_name:
                 return dict(block.input)  # type: ignore[arg-type]

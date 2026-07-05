@@ -1,3 +1,11 @@
+/* ── marked 확장: ==텍스트== → <mark> 하이라이트 ───────────────────── */
+function parseMarkdown(text) {
+  let html = marked.parse(text || '');
+  html = html.replace(/==([^=\n]+)==/g, '<mark class="mark-pos">$1</mark>');
+  html = html.replace(/!!([^!\n]+)!!/g, '<mark class="mark-neg">$1</mark>');
+  return DOMPurify.sanitize(html, { ADD_ATTR: ['class'] });
+}
+
 /* ── 테마 ─────────────────────────────────────────────────────────── */
 function applyHljs(container) {
   if (typeof hljs === 'undefined') return;
@@ -511,8 +519,25 @@ async function initDetail(slug) {
   // 마크다운 본문
   const bodyEl = document.getElementById('company-body');
   if (bodyEl && record.body) {
-    bodyEl.innerHTML = DOMPurify.sanitize(marked.parse(record.body));
+    bodyEl.innerHTML = parseMarkdown(record.body);
     applyHljs(bodyEl);
+    // 섹션 1·2 테이블 첫 번째 열 너비 고정
+    for (const h2 of bodyEl.querySelectorAll('h2')) {
+      const text = h2.textContent.trim();
+      if (/^[12]\./.test(text)) {
+        let el = h2.nextElementSibling;
+        while (el && el.tagName !== 'TABLE' && el.tagName !== 'H2') el = el.nextElementSibling;
+        if (el?.tagName === 'TABLE') el.classList.add('info-table');
+      }
+    }
+    // 충족 현황 테이블 열 너비 고정
+    for (const h3 of bodyEl.querySelectorAll('h3')) {
+      if (h3.textContent.includes('충족 현황')) {
+        let el = h3.nextElementSibling;
+        while (el && el.tagName !== 'TABLE' && el.tagName !== 'H3') el = el.nextElementSibling;
+        if (el?.tagName === 'TABLE') el.classList.add('fit-check-table');
+      }
+    }
   }
 
   // 편집 폼 채우기
@@ -625,7 +650,7 @@ function fillEditForm(fm, body) {
     const preview = document.getElementById('md-preview');
     if (preview) {
       const update = () => {
-        preview.innerHTML = DOMPurify.sanitize(marked.parse(bodyEl.value || ''));
+        preview.innerHTML = parseMarkdown(bodyEl.value || '');
         applyHljs(preview);
       };
       update();
@@ -771,7 +796,7 @@ function appendBubble(containerId, text, role) {
   const container = document.getElementById(containerId);
   const bubble = document.createElement('div');
   bubble.className = `qa-bubble ${role}`;
-  if (role === 'assistant' && text) bubble.innerHTML = DOMPurify.sanitize(marked.parse(text));
+  if (role === 'assistant' && text) bubble.innerHTML = parseMarkdown(text);
   else bubble.textContent = text;
   container.appendChild(bubble);
   container.scrollTop = container.scrollHeight;
@@ -829,7 +854,7 @@ async function consumeSSE(res, bubble) {
           const { text, error } = JSON.parse(payload);
           if (error) { bubble.textContent = `오류: ${error}`; break; }
           fullText += text;
-          bubble.innerHTML = DOMPurify.sanitize(marked.parse(fullText));
+          bubble.innerHTML = parseMarkdown(fullText);
           bubble.scrollIntoView({ block: 'end' });
         } catch (_) {}
       }
@@ -1094,7 +1119,7 @@ async function initSettings() {
       const previewEl = document.getElementById('profile-preview');
       if (!previewEl) throw new Error();
       if (profileRecord.body && profileRecord.body.trim()) {
-        previewEl.innerHTML = DOMPurify.sanitize(marked.parse(profileRecord.body));
+        previewEl.innerHTML = parseMarkdown(profileRecord.body);
         applyHljs(previewEl);
       } else {
         const fm = profileRecord.frontmatter || {};
@@ -1109,7 +1134,7 @@ async function initSettings() {
         if (fm.preferred_location?.length) lines.push(`\n## 선호 근무지\n${fm.preferred_location.join(', ')}`);
         if (fm.preferred_employment_type) lines.push(`\n## 선호 고용형태\n${fm.preferred_employment_type}`);
         if (fm.preferred_min_salary) lines.push(`\n## 희망 최소 연봉\n${fm.preferred_min_salary}만원`);
-        previewEl.innerHTML = DOMPurify.sanitize(marked.parse(lines.join('\n')));
+        previewEl.innerHTML = parseMarkdown(lines.join('\n'));
       }
       const editBtn = document.getElementById('profile-edit-btn');
       if (editBtn) editBtn.style.display = '';
@@ -1210,7 +1235,7 @@ function toggleProfileEditor() {
     const editorPreview = document.getElementById('profile-editor-preview');
     input.value = body;
     const update = () => {
-      editorPreview.innerHTML = DOMPurify.sanitize(marked.parse(input.value || ''));
+      editorPreview.innerHTML = parseMarkdown(input.value || '');
       applyHljs(editorPreview);
     };
     update();
@@ -1237,7 +1262,7 @@ async function saveProfileEdit() {
     });
     window._profileRecord = updated;
     const previewEl = document.getElementById('profile-preview');
-    previewEl.innerHTML = DOMPurify.sanitize(marked.parse(updated.body || ''));
+    previewEl.innerHTML = parseMarkdown(updated.body || '');
     applyHljs(previewEl);
     toggleProfileEditor();
     showToast('프로필이 저장되었습니다.');

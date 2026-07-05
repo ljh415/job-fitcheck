@@ -66,9 +66,11 @@ class JobplanetResult:
 
 
 def _normalize(name: str) -> str:
-    """법인 접두/접미사 제거 후 소문자 정규화."""
+    """법인 접두/접미사·괄호 내 영문 제거 후 소문자 정규화."""
     name = unicodedata.normalize("NFC", name)
-    name = re.sub(r"\(주\)|\(유\)|\(사\)|주식회사|유한회사|\s+", "", name)
+    name = re.sub(r"\(주\)|\(유\)|\(사\)|주식회사|유한회사", "", name)
+    name = re.sub(r"\([^)]*\)", "", name)  # (DEEP.FINE) 등 괄호 내용 제거
+    name = re.sub(r"\s+", "", name)
     return name.lower()
 
 
@@ -151,17 +153,19 @@ async def fetch_jobplanet_score(company_name: str) -> JobplanetResult:
             - score/review_count가 None이면 미확인 (소규모·미등록 회사)
             - source="error" 면 네트워크 오류 (호출 측에서 무시해도 됨)
     """
+    # 괄호 내 영문 제거 — "딥파인(DEEP.FINE)" → "딥파인" 으로 검색
+    search_name = re.sub(r"\([^)]*\)", "", company_name).strip() or company_name
     try:
         async with httpx.AsyncClient(headers=_HEADERS, timeout=15, follow_redirects=True) as client:
             # 1차: Naver
-            candidates = await _search_naver(company_name, client)
-            result = _best_candidate(company_name, candidates)
+            candidates = await _search_naver(search_name, client)
+            result = _best_candidate(search_name, candidates)
             if result:
                 return result
 
             # 2차: DuckDuckGo fallback
-            candidates = await _search_ddg(company_name, client)
-            result = _best_candidate(company_name, candidates)
+            candidates = await _search_ddg(search_name, client)
+            result = _best_candidate(search_name, candidates)
             if result:
                 return result
 
