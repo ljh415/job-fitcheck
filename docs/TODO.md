@@ -41,14 +41,15 @@
   - ✅ Wanted URL 입력 → 스크래핑 + 분석 확인
   - ✅ Q&A 스트리밍 응답 확인
 - ⬜ Claude / OpenAI 전환 테스트 (동일 공고 결과 비교) — 프롬프트 튜닝 완료 후 진행
-- 🔧 프롬프트 품질 검토 및 튜닝
+- ✅ 프롬프트 품질 검토 및 튜닝
   - ✅ 추출 누락 필드 보완 — `benefits`·`hiring_process` 필드 추가
   - ✅ 적합도 평가 기준 세분화 — 사용자 커스텀 기준 자유 입력 지원 (`/api/eval-criteria`)
   - ✅ GENERATE_BODY 출력 포맷 고정 — 3섹션 형식 명시 (기본정보 표·안정성 표+판단근거·공고내용 인라인코드)
   - ✅ EVALUATE_FIT 재설계 — 점수 우선순위 7항목, 라벨 기준 테이블, fit_report_body 6섹션 포맷
-  - 🔧 EXTRACT_PROFILE 프롬프트 튜닝
-  - 🔧 GENERATE_PROFILE_BODY 프롬프트 튜닝
-  - 🔧 Q&A 프롬프트 튜닝
+  - ✅ EXTRACT_PROFILE 프롬프트 튜닝 — skills 3분리(tech_skills·domains·soft_skills), summary 가이드 구체화, 다중 파일 안내
+  - ✅ GENERATE_PROFILE_BODY 프롬프트 튜닝 — 할루시네이션 방지 강화
+  - ✅ Q&A 프롬프트 튜닝 — 현행 유지 (충분함)
+  - ✅ 전체 시스템 프롬프트 할루시네이션 방지 통일
 - ✅ 에러 케이스 처리
   - ✅ 스크래핑 실패 시 안내 메시지 — httpx 예외 세분화 (TimeoutException / HTTPStatusError / 기타)
   - ✅ LLM API 오류 시 fallback 응답 — `LLMAPIError` 공통 예외 (인증·rate limit·서버 오류 → 사용자 친화적 메시지)
