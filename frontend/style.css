@@ -188,7 +188,7 @@ tr.company-row:hover { background: var(--table-row-hover); }
 
 /* ── 상태 칩 ─────────────────────────────────────────────────────── */
 .status-chip { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; }
-.status-select { padding: 2px 6px; border-radius: 12px; font-size: 11px; font-weight: 600; border: none; cursor: pointer; outline: none; width: auto; }
+.status-select { padding: 3px 8px; border-radius: 12px; font-size: 12px; font-weight: 600; border: none; cursor: pointer; outline: none; width: auto; }
 .status-미지원   { background: var(--status-미지원-bg);   color: var(--status-미지원-text); }
 .status-지원     { background: var(--status-지원-bg);     color: var(--status-지원-text); }
 .status-서류통과 { background: var(--status-서류통과-bg); color: var(--status-서류통과-text); }
