@@ -1090,10 +1090,12 @@ async function initSettings() {
     if (exportProfileDdBtn) exportProfileDdBtn.disabled = false;
     try {
       const profileRecord = await api('/profile');
+      window._profileRecord = profileRecord;
       const previewEl = document.getElementById('profile-preview');
       if (!previewEl) throw new Error();
       if (profileRecord.body && profileRecord.body.trim()) {
         previewEl.innerHTML = DOMPurify.sanitize(marked.parse(profileRecord.body));
+        applyHljs(previewEl);
       } else {
         const fm = profileRecord.frontmatter || {};
         const lines = [];
@@ -1107,6 +1109,8 @@ async function initSettings() {
         if (fm.preferred_min_salary) lines.push(`\n## 희망 최소 연봉\n${fm.preferred_min_salary}만원`);
         previewEl.innerHTML = DOMPurify.sanitize(marked.parse(lines.join('\n')));
       }
+      const editBtn = document.getElementById('profile-edit-btn');
+      if (editBtn) editBtn.style.display = '';
     } catch (e) { console.error('프로필 미리보기 로딩 실패:', e); }
   } else {
     statusMsg.textContent = '⚠️ 프로필이 없습니다. PDF를 업로드해주세요.';
@@ -1189,6 +1193,52 @@ async function saveEvalCriteria() {
   try {
     await api('/eval-criteria', { method: 'PUT', body: JSON.stringify({ text }) });
     showToast('평가 기준이 저장되었습니다.');
+  } catch (e) {
+    showToast('저장 실패: ' + e.message, 'error');
+  }
+}
+
+function toggleProfileEditor() {
+  const wrap = document.getElementById('profile-editor-wrap');
+  const preview = document.getElementById('profile-preview');
+  const isHidden = wrap.classList.contains('hidden');
+  if (isHidden) {
+    const body = window._profileRecord?.body || '';
+    const input = document.getElementById('profile-editor-input');
+    const editorPreview = document.getElementById('profile-editor-preview');
+    input.value = body;
+    const update = () => {
+      editorPreview.innerHTML = DOMPurify.sanitize(marked.parse(input.value || ''));
+      applyHljs(editorPreview);
+    };
+    update();
+    input.removeEventListener('input', input._mdUpdate);
+    input._mdUpdate = update;
+    input.addEventListener('input', update);
+    wrap.classList.remove('hidden');
+    preview.classList.add('hidden');
+    document.getElementById('profile-edit-btn').textContent = '✕ 닫기';
+  } else {
+    wrap.classList.add('hidden');
+    preview.classList.remove('hidden');
+    document.getElementById('profile-edit-btn').textContent = '✏️ 직접 편집';
+  }
+}
+
+async function saveProfileEdit() {
+  if (!window._profileRecord) return;
+  const body = document.getElementById('profile-editor-input').value;
+  try {
+    const updated = await api('/profile', {
+      method: 'PUT',
+      body: JSON.stringify({ frontmatter: window._profileRecord.frontmatter, body }),
+    });
+    window._profileRecord = updated;
+    const previewEl = document.getElementById('profile-preview');
+    previewEl.innerHTML = DOMPurify.sanitize(marked.parse(updated.body || ''));
+    applyHljs(previewEl);
+    toggleProfileEditor();
+    showToast('프로필이 저장되었습니다.');
   } catch (e) {
     showToast('저장 실패: ' + e.message, 'error');
   }
