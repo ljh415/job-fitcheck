@@ -46,6 +46,8 @@ class CompanyFrontmatter(BaseModel):
     key_responsibilities: list[str] = Field(default_factory=list)
     required_skills: list[str] = Field(default_factory=list)
     preferred_skills: list[str] = Field(default_factory=list)
+    benefits: list[str] = Field(default_factory=list)
+    hiring_process: list[str] = Field(default_factory=list)
 
     # 적합도 — High 티어 LLM이 후보자 프로필과 공고를 비교해서 생성
     fit_score: int | None = None    # 0~100

@@ -90,6 +90,16 @@ EXTRACT_COMPANY_TOOL_SCHEMA = {
             "items": {"type": "string"},
             "description": "분류 태그 (예: AI, RAG, 핀테크)"
         },
+        "benefits": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "복리후생 목록 (예: 스톡옵션, 원격근무, 식대 지원)"
+        },
+        "hiring_process": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "채용 절차 순서 목록 (예: 서류전형, 1차 기술면접, 2차 임원면접)"
+        },
     },
     "required": ["company_name", "display_name", "job_title"],
 }
@@ -107,20 +117,61 @@ GENERATE_BODY_USER_TEMPLATE = """다음 회사 정보를 바탕으로 구조화�
 ## 원문 텍스트
 {raw_text}
 
-아래 형식으로 마크다운 문서를 작성하세요:
+아래 형식을 반드시 지켜 마크다운 문서를 작성하세요.
+값이 없는 행/항목은 생략하세요. 섹션 1~3만 작성하세요.
+
+---
 
 # {{display_name}} ({{company_name}}) — {{job_title}}
 
 ## 1. 기본정보
-(위치, 고용형태, 경력요건, 웹사이트 등)
+
+| 항목 | 내용 |
+|------|------|
+| 회사명 | {{company_name}} |
+| 근무지 | {{location}} |
+| 경력요건 | {{experience_required}} |
+| 고용형태 | {{employment_type}} |
+| 분야 | {{industry}} |
+| 연봉 | {{salary_min}}~{{salary_max}}만원 또는 {{salary_note}} (없으면 이 행 생략) |
 
 ## 2. 회사 규모 / 안정성
-(임직원 수, 투자 단계, 매출 현황, 안정성 평가 이유)
+
+| 항목 | 내용 |
+|------|------|
+| 임직원 수 | {{employee_count}} |
+| 투자 단계 | {{investment_stage}} |
+| 누적 투자금 | {{funding_total}} |
+| 매출현황 | {{revenue_status}} |
+| 잡플래닛 | {{jobplanet_score}}점 (리뷰 {{jobplanet_review_count}}개) |
+| 안정성 | {{stability}} |
+
+> 📝 {{안정성 판단 근거를 1~2문장으로 서술. 투자단계·매출·임직원 수 근거 포함.}}
 
 ## 3. 공고 내용
-(주요 업무, 기술스택, 필수/우대 요건)
 
-문서만 출력하고 다른 설명은 하지 마세요. 섹션 1~3만 작성하세요."""
+**기술 스택**: `기술1` `기술2` `기술3` (없으면 이 줄 생략)
+
+**주요 업무**
+- 항목1
+- 항목2
+
+**필수 요건**
+- 항목 (기술명은 `인라인 코드`로 표기)
+
+**우대 요건**
+- 항목 (기술명은 `인라인 코드`로 표기)
+
+**복리후생** (없으면 이 항목 전체 생략)
+- 항목1
+
+**채용 절차** (없으면 이 항목 전체 생략)
+- 1단계
+- 2단계
+
+---
+
+문서만 출력하고 다른 설명은 하지 마세요."""
 
 # ── 적합도 평가 (High 티어) ───────────────────────────────────────────────────
 
