@@ -86,7 +86,9 @@ class CandidateProfile(BaseModel):
     updated_at: str = ""
     source_files: list[str] = Field(default_factory=list)  # 업로드된 PDF 파일명 목록
 
-    skills: list[str] = Field(default_factory=list)
+    tech_skills: list[str] = Field(default_factory=list)
+    domains: list[str] = Field(default_factory=list)
+    soft_skills: list[str] = Field(default_factory=list)
     experience_years: int | None = None
     experience_roles: list[str] = Field(default_factory=list)
     education: str | None = None

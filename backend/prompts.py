@@ -307,10 +307,10 @@ EVALUATE_FIT_TOOL_SCHEMA = {
 # ── 후보자 프로필 추출 (High 티어) ───────────────────────────────────────────
 
 EXTRACT_PROFILE_SYSTEM = """당신은 이력서와 포트폴리오에서 핵심 정보를 추출하는 전문가입니다.
-제공된 문서에서 후보자의 역량, 경력, 희망 조건을 정확히 파악하세요.
+제공된 모든 문서(이력서·포트폴리오·경력기술서 등)를 빠짐없이 검토하여 후보자의 역량, 경력, 희망 조건을 정확히 파악하세요.
 명시되지 않은 정보는 null로 처리하고 절대 추측하지 마세요."""
 
-EXTRACT_PROFILE_USER_TEMPLATE = """다음은 후보자의 이력서/포트폴리오 텍스트입니다.
+EXTRACT_PROFILE_USER_TEMPLATE = """다음은 후보자의 이력서/포트폴리오 텍스트입니다. 여러 파일이 포함되어 있을 수 있으며, 모든 내용을 종합하여 판단하세요.
 
 <documents>
 {pdf_text}
@@ -325,10 +325,20 @@ EXTRACT_PROFILE_TOOL_SCHEMA = {
     "type": "object",
     "properties": {
         "name": {"type": "string", "description": "후보자 이름"},
-        "skills": {
+        "tech_skills": {
             "type": "array",
             "items": {"type": "string"},
-            "description": "기술 스킬 목록 (언어, 프레임워크, 도구 등)"
+            "description": "기술 스킬 목록 — 언어·프레임워크·라이브러리·도구·인프라 등 (예: Python, React, AWS, Docker)"
+        },
+        "domains": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "경험한 산업/비즈니스 도메인 — 회사명이 아닌 실제 수행한 프로젝트·업무 내용을 기반으로 판단 (예: 핀테크, B2B SaaS, 커머스, 의료, MLOps). 여러 문서를 종합하여 추출"
+        },
+        "soft_skills": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "소프트 스킬 목록 — 이력서에 명시된 경우만 추출, 없으면 빈 배열 (예: 리더십, 커뮤니케이션, 문제해결)"
         },
         "experience_years": {"type": ["integer", "null"], "description": "총 경력 연수"},
         "experience_roles": {
@@ -346,7 +356,7 @@ EXTRACT_PROFILE_TOOL_SCHEMA = {
         "preferred_min_salary": {"type": ["integer", "null"], "description": "희망 최소 연봉 (만원 단위)"},
         "summary": {"type": "string", "description": "후보자 핵심 역량 2~3문장 요약"},
     },
-    "required": ["name", "skills", "summary"],
+    "required": ["name", "tech_skills", "summary"],
 }
 
 # ── 후보자 프로필 본문 생성 (profile_body) — tool use와 분리 ─────────────────────

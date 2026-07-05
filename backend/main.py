@@ -372,7 +372,7 @@ async def upload_profile(files: list[UploadFile] = File(...), extra_note: str = 
         )
     except LLMAPIError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e))
-    logger.info("프로필 구조화 추출 완료: name=%s, skills=%s", result.get("name"), result.get("skills"))
+    logger.info("프로필 구조화 추출 완료: name=%s, tech_skills=%s", result.get("name"), result.get("tech_skills"))
 
     # 2단계: complete()로 프로필 본문 생성 — tool use는 장문 산문 생성에 부적합
     logger.info("프로필 본문 생성 시작")

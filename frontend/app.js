@@ -1103,7 +1103,9 @@ async function initSettings() {
         if (fm.summary) lines.push(`\n${fm.summary}`);
         if (fm.education) lines.push(`\n## 학력\n${fm.education}`);
         if ((fm.experience_roles||[]).length) lines.push(`\n## 직무 역할\n${fm.experience_roles.map(r=>`- ${r}`).join('\n')}`);
-        if ((fm.skills||[]).length) lines.push(`\n## 기술 스택\n${fm.skills.map(s=>`- ${s}`).join('\n')}`);
+        if ((fm.tech_skills||[]).length) lines.push(`\n## 기술 스킬\n${fm.tech_skills.map(s=>`- ${s}`).join('\n')}`);
+        if ((fm.domains||[]).length) lines.push(`\n## 경험 도메인\n${fm.domains.map(s=>`- ${s}`).join('\n')}`);
+        if ((fm.soft_skills||[]).length) lines.push(`\n## 소프트 스킬\n${fm.soft_skills.map(s=>`- ${s}`).join('\n')}`);
         if (fm.preferred_location?.length) lines.push(`\n## 선호 근무지\n${fm.preferred_location.join(', ')}`);
         if (fm.preferred_employment_type) lines.push(`\n## 선호 고용형태\n${fm.preferred_employment_type}`);
         if (fm.preferred_min_salary) lines.push(`\n## 희망 최소 연봉\n${fm.preferred_min_salary}만원`);
