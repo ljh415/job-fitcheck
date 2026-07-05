@@ -1,3 +1,26 @@
+/* ── 테마 ─────────────────────────────────────────────────────────── */
+(function initTheme() {
+  const saved = localStorage.getItem('job-fitcheck-theme');
+  if (saved === 'dark') {
+    document.documentElement.setAttribute('data-theme', 'dark');
+    document.getElementById('theme-toggle-btn').textContent = '☀️';
+  }
+})();
+
+function toggleTheme() {
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  const btn = document.getElementById('theme-toggle-btn');
+  if (isDark) {
+    document.documentElement.removeAttribute('data-theme');
+    btn.textContent = '🌙';
+    localStorage.setItem('job-fitcheck-theme', 'light');
+  } else {
+    document.documentElement.setAttribute('data-theme', 'dark');
+    btn.textContent = '☀️';
+    localStorage.setItem('job-fitcheck-theme', 'dark');
+  }
+}
+
 /* ── 상태 ─────────────────────────────────────────────────────────── */
 const TOKEN_KEY = 'job-fitcheck-token';
 let currentView = 'dashboard';

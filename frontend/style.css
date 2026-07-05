@@ -63,13 +63,76 @@
   --status-지원마감-bg: #e5e7eb; --status-지원마감-text: #374151;
 }
 
+/* ── 다크모드 ────────────────────────────────────────────────────── */
+[data-theme="dark"] {
+  /* Brand */
+  --primary:        #6b8af5;
+  --primary-hover:  #5a78f0;
+  --primary-light:  #1e2645;
+  --primary-border: #3d4e8a;
+  --primary-focus:  rgba(107,138,245,.2);
+
+  /* Background */
+  --bg:         #0f0f1a;
+  --bg-surface: #1a1b2e;
+  --bg-subtle:  #1e2035;
+  --bg-muted:   #252740;
+
+  /* Text */
+  --text:           #e2e8f0;
+  --text-inverse:   #fff;
+  --text-secondary: #cbd5e1;
+  --text-muted:     #94a3b8;
+  --text-dimmed:    #64748b;
+
+  /* Border */
+  --border:       #2d2f4e;
+  --border-input: #3d3f5e;
+  --border-subtle:#252740;
+
+  /* Navbar */
+  --navbar-bg: #0a0a14;
+
+  /* Buttons */
+  --btn-secondary-bg:    #252740;
+  --btn-secondary-text:  #cbd5e1;
+  --btn-secondary-hover: #2d2f4e;
+
+  /* Table */
+  --table-th-bg:     #1e2035;
+  --table-th-border: #2d2f4e;
+  --table-row-hover: #1e2035;
+
+  /* Shadows */
+  --shadow-sm:    0 1px 4px rgba(0,0,0,.3);
+  --shadow-md:    0 4px 16px rgba(0,0,0,.4);
+  --shadow-lg:    0 8px 24px rgba(0,0,0,.4);
+  --shadow-toast: 0 4px 16px rgba(0,0,0,.6);
+
+  /* Score badges */
+  --score-high-bg:   #064e3b; --score-high-text:   #6ee7b7;
+  --score-mid-bg:    #451a03; --score-mid-text:    #fcd34d;
+  --score-low-bg:    #450a0a; --score-low-text:    #fca5a5;
+  --score-none-bg:   #252740; --score-none-text:   #94a3b8;
+
+  /* Status chips */
+  --status-미지원-bg:   #252740; --status-미지원-text:   #94a3b8;
+  --status-지원-bg:     #1e3a5f; --status-지원-text:     #93c5fd;
+  --status-서류통과-bg: #064e3b; --status-서류통과-text: #6ee7b7;
+  --status-인터뷰-bg:   #2e1065; --status-인터뷰-text:   #c4b5fd;
+  --status-최종-bg:     #422006; --status-최종-text:     #fde68a;
+  --status-탈락-bg:     #450a0a; --status-탈락-text:     #fca5a5;
+  --status-보류-bg:     #451a03; --status-보류-text:     #fcd34d;
+  --status-지원마감-bg: #252740; --status-지원마감-text: #94a3b8;
+}
+
 /* ── 리셋 & 기본 ─────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: 'Segoe UI', 'Noto Sans KR', sans-serif; font-size: 14px; color: var(--text); background: var(--bg); min-height: 100vh; }
 a { color: var(--primary); text-decoration: none; }
 a:hover { text-decoration: underline; }
 button { cursor: pointer; border: none; border-radius: 6px; padding: 6px 14px; font-size: 13px; transition: background 0.15s; }
-input, select, textarea { border: 1px solid var(--border-input); border-radius: 6px; padding: 7px 10px; font-size: 13px; width: 100%; background: var(--bg-surface); }
+input, select, textarea { border: 1px solid var(--border-input); border-radius: 6px; padding: 7px 10px; font-size: 13px; width: 100%; background: var(--bg-surface); color: var(--text); }
 input:focus, select:focus, textarea:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-focus); }
 
 /* ── 네비게이션 ──────────────────────────────────────────────────── */
