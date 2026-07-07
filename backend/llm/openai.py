@@ -15,6 +15,32 @@ from config import settings
 from .base import LLMAPIError, LLMProvider
 
 
+def _max_tokens_kwarg(model: str, max_tokens: int) -> dict:
+    """gpt-5.x / o-series 모델은 max_completion_tokens를 요구한다."""
+    if any(model.startswith(p) for p in ("gpt-5", "o1", "o3", "o4")):
+        return {"max_completion_tokens": max_tokens}
+    return {"max_tokens": max_tokens}
+
+
+# temperature 기본값(1)만 지원하는 모델 — 0.5 등 지정 시 400 오류
+_NO_TEMPERATURE_MODELS = frozenset({
+    "gpt-5", "gpt-5-nano", "gpt-5-mini",
+    "gpt-5.5", "gpt-5.5-pro",
+})
+
+
+def _reasoning_effort_kwarg(model: str) -> dict:
+    """gpt-5 계열(하이픈/점 모두) 및 o-series 모델에 reasoning_effort를 적용한다.
+    gpt-5-mini/nano는 low/medium에서 reasoning_tokens=0 (파라미터 수용, 추론 미작동),
+    high에서는 실제 추론이 활성화된다 (D-3 실험 확인).
+    gpt-4o 계열은 400 오류가 발생하므로 제외."""
+    from config import get_model_override
+    if not (model.startswith("gpt-5") or model.startswith("o1") or model.startswith("o3") or model.startswith("o4")):
+        return {}
+    effort = get_model_override("openai_reasoning_effort") or "medium"
+    return {"extra_body": {"reasoning_effort": effort}}
+
+
 class OpenAIProvider(LLMProvider):
 
     def __init__(self) -> None:
@@ -31,10 +57,17 @@ class OpenAIProvider(LLMProvider):
         operation: str = "",
         max_tokens: int = 8192,
     ) -> dict:
+        temperature_kwarg = {} if model in _NO_TEMPERATURE_MODELS else {"temperature": 0.5}
+        reasoning_kwarg = _reasoning_effort_kwarg(model)
+        # reasoning 모델은 max_completion_tokens 한도를 충분히 줘야 reasoning 후 출력 가능
+        if reasoning_kwarg:
+            max_tokens = max(max_tokens, 16384)
         try:
             response = await self._client.chat.completions.create(
                 model=model,
-                temperature=0.5,
+                **temperature_kwarg,
+                **_max_tokens_kwarg(model, max_tokens),
+                **reasoning_kwarg,
                 messages=[
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
@@ -95,10 +128,14 @@ class OpenAIProvider(LLMProvider):
         max_tokens: int = 4096,
     ) -> str:
         msg_content = self._to_openai_content(content) if content is not None else user
+        reasoning_kwarg = _reasoning_effort_kwarg(model)
+        if reasoning_kwarg:
+            max_tokens = max(max_tokens, 8192)
         try:
             response = await self._client.chat.completions.create(
                 model=model,
-                max_tokens=max_tokens,
+                **_max_tokens_kwarg(model, max_tokens),
+                **reasoning_kwarg,
                 messages=[
                     {"role": "system", "content": system},
                     {"role": "user", "content": msg_content},  # type: ignore[arg-type]
@@ -151,7 +188,7 @@ class OpenAIProvider(LLMProvider):
         try:
             async with await self._client.chat.completions.create(
                 model=model,
-                max_tokens=max_tokens,
+                **_max_tokens_kwarg(model, max_tokens),
                 messages=full_messages,  # type: ignore[arg-type]
                 stream=True,
                 stream_options={"include_usage": True},
