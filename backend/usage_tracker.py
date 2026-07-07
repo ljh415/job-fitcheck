@@ -19,12 +19,29 @@ PRICING: dict[str, dict[str, float]] = {
     "claude-sonnet-4-6":            {"input": 3.00,  "output": 15.00},
     "claude-haiku-4-5":             {"input": 1.00,  "output":  5.00},
     "claude-haiku-4-5-20251001":    {"input": 1.00,  "output":  5.00},
-    # OpenAI
+    # OpenAI GPT-4 계열
     "gpt-4o":                       {"input": 2.50,  "output": 10.00},
     "gpt-4o-mini":                  {"input": 0.15,  "output":  0.60},
     "gpt-4.1":                      {"input": 2.00,  "output":  8.00},
     "gpt-4.1-mini":                 {"input": 0.40,  "output":  1.60},
     "gpt-4.1-nano":                 {"input": 0.10,  "output":  0.40},
+    # OpenAI GPT-5 계열
+    "gpt-5-nano":                   {"input": 0.05,  "output":  0.20},
+    "gpt-5-mini":                   {"input": 0.25,  "output":  1.00},
+    "gpt-5":                        {"input": 1.25,  "output":  5.00},
+    "gpt-5.1":                      {"input": 1.25,  "output":  5.00},
+    "gpt-5.2":                      {"input": 1.75,  "output":  7.00},
+    "gpt-5.4-nano":                 {"input": 0.20,  "output":  0.80},
+    "gpt-5.4-mini":                 {"input": 0.75,  "output":  3.00},
+    "gpt-5.4":                      {"input": 2.50,  "output": 10.00},
+    "gpt-5.5":                      {"input": 5.00,  "output": 20.00},
+    "gpt-5.5-pro":                  {"input": 30.00, "output": 120.00},
+    # Google Gemini (유료 티어 근사값 — 무료 티어는 비용 미발생)
+    "gemini-2.5-pro":               {"input": 1.25,  "output": 10.00},
+    "gemini-2.5-flash":             {"input": 0.30,  "output":  2.50},
+    "gemini-2.5-flash-lite":        {"input": 0.10,  "output":  0.40},
+    "gemini-2.0-flash":             {"input": 0.10,  "output":  0.40},
+    "gemini-2.0-flash-lite":        {"input": 0.075, "output":  0.30},
 }
 
 

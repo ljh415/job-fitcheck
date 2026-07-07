@@ -8,6 +8,7 @@ AnthropicProvider/OpenAIProvider는 내부에 httpx.AsyncClient 연결 풀을 �
 from .base import LLMProvider
 from .anthropic import AnthropicProvider
 from .openai import OpenAIProvider
+from .gemini import GeminiProvider
 from config import get_active_provider
 
 _provider_cache: dict[str, LLMProvider] = {}
@@ -21,6 +22,8 @@ def get_provider(override: str | None = None) -> LLMProvider:
             _provider_cache[name] = AnthropicProvider()
         elif name == "openai":
             _provider_cache[name] = OpenAIProvider()
+        elif name == "gemini":
+            _provider_cache[name] = GeminiProvider()
         else:
             raise ValueError(f"Unknown provider: {name}")
     return _provider_cache[name]

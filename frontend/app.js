@@ -705,8 +705,41 @@ async function deleteCompany() {
   }
 }
 
+function toggleRefitDropdown(e) {
+  e.stopPropagation();
+  const panel = document.getElementById('refit-dropdown-panel');
+  if (!panel) return;
+  const isHidden = panel.classList.toggle('hidden');
+  if (!isHidden) {
+    const close = (ev) => {
+      if (!document.getElementById('refit-dropdown-wrap')?.contains(ev.target)) {
+        panel.classList.add('hidden');
+        document.removeEventListener('click', close);
+      }
+    };
+    document.addEventListener('click', close, { once: true });
+  }
+}
+
+async function refillCompany() {
+  document.getElementById('refit-dropdown-panel')?.classList.add('hidden');
+  if (!confirm('원문 기반으로 전체 재분석합니다. 기존 분석 내용이 덮어씌워집니다. 계속할까요?')) return;
+  const btn = document.querySelector('#refit-dropdown-wrap .export-dropdown-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ 재분석 중...'; }
+  try {
+    await api(`/companies/${encodeURIComponent(currentSlug)}/refill`, { method: 'POST', body: '{}' });
+    showToast('전체 재분석 완료!');
+    await loadDetail(currentSlug);
+  } catch (e) {
+    showToast('재분석 실패: ' + e.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🎯 재분석 ▾'; }
+  }
+}
+
 async function refitCompany() {
-  const btn = document.querySelector('button[onclick="refitCompany()"]');
+  document.getElementById('refit-dropdown-panel')?.classList.add('hidden');
+  const btn = document.querySelector('#refit-dropdown-wrap .export-dropdown-btn');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ 재평가 중...'; }
   try {
     await api(`/companies/${encodeURIComponent(currentSlug)}/refit`, { method: 'POST', body: '{}' });
@@ -715,7 +748,7 @@ async function refitCompany() {
   } catch (e) {
     showToast('재평가 실패: ' + e.message, 'error');
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '🎯 적합도 재평가'; }
+    if (btn) { btn.disabled = false; btn.textContent = '🎯 재분석 ▾'; }
   }
 }
 
@@ -1155,6 +1188,7 @@ async function initSettings() {
   // 캐시된 모델 목록 복원
   const p = currentSettings.provider;
   applyModelCache(p, currentSettings[`${p}_high_model`], currentSettings[`${p}_light_model`]);
+  initModelTierHover();
 
   // 추가 설명 복원
   const extraNoteEl = document.getElementById('profile-extra-note');
@@ -1353,12 +1387,31 @@ function syncProviderModels() {
   const provider = document.getElementById('provider-select')?.value;
   document.getElementById('model-inputs-claude').style.display = provider === 'claude' ? '' : 'none';
   document.getElementById('model-inputs-openai').style.display = provider === 'openai' ? '' : 'none';
+  document.getElementById('model-inputs-gemini').style.display = provider === 'gemini' ? '' : 'none';
 }
 
 // 알려진 모델 입력 단가 ($/1M tokens) — 미등록 모델은 이름 패턴으로 추정
 const MODEL_INPUT_PRICE = {
+  // Claude
   'claude-opus': 5, 'claude-sonnet': 3, 'claude-haiku': 1,
-  'o3': 20, 'o1': 15, 'gpt-4o': 2.5, 'gpt-4o-mini': 0.15,
+  // GPT-5 (구체적 패턴 먼저)
+  'gpt-5.5-pro': 30, 'gpt-5.5': 5,
+  'gpt-5.4-pro': 30, 'gpt-5.4-mini': 0.75, 'gpt-5.4-nano': 0.2, 'gpt-5.4': 2.5,
+  'gpt-5.2-pro': 21, 'gpt-5.2': 1.75,
+  'gpt-5.1': 1.25,
+  'gpt-5-pro': 15, 'gpt-5-mini': 0.25, 'gpt-5-nano': 0.05, 'gpt-5': 1.25,
+  // GPT-4.1
+  'gpt-4.1-mini': 0.4, 'gpt-4.1-nano': 0.1, 'gpt-4.1': 2,
+  // GPT-4o
+  'gpt-4o-mini': 0.15, 'gpt-4o': 2.5,
+  // GPT-4 legacy
+  'gpt-4-turbo': 10, 'gpt-4-32k': 60, 'gpt-4': 30,
+  // GPT-3.5
+  'gpt-3.5-turbo-16k': 3, 'gpt-3.5-turbo': 0.5,
+  // o-series (구체적 패턴 먼저)
+  'o1-pro': 150, 'o1-mini': 1.1, 'o1': 15,
+  'o3-pro': 20, 'o3-mini': 1.1, 'o3': 2,
+  'o4-mini': 1.1,
 };
 
 function getModelPrice(id) {
@@ -1373,6 +1426,19 @@ function getTierStyle(price) {
   if (price >= 4)   return { bar: '#ef4444', label: '고가' };
   if (price >= 1.5) return { bar: '#f59e0b', label: '중간' };
   return              { bar: '#22c55e', label: '저가' };
+}
+
+function initModelTierHover() {
+  const wrap = document.querySelector('.model-tier-wrap');
+  const panel = document.getElementById('model-tier-view');
+  if (!wrap || !panel) return;
+  let hideTimer = null;
+  const show = () => { clearTimeout(hideTimer); panel.classList.add('visible'); };
+  const hide = () => { hideTimer = setTimeout(() => panel.classList.remove('visible'), 150); };
+  wrap.addEventListener('mouseenter', show);
+  wrap.addEventListener('mouseleave', hide);
+  panel.addEventListener('mouseenter', show);
+  panel.addEventListener('mouseleave', hide);
 }
 
 function renderModelTierView(models, provider) {
@@ -1473,6 +1539,8 @@ async function saveSettings() {
     claude_light_model: document.getElementById('claude-light-model')?.value || null,
     openai_high_model: document.getElementById('openai-high-model')?.value || null,
     openai_light_model: document.getElementById('openai-light-model')?.value || null,
+    gemini_high_model: document.getElementById('gemini-high-model')?.value || null,
+    gemini_light_model: document.getElementById('gemini-light-model')?.value || null,
   };
   try {
     await api('/settings', { method: 'PUT', body: JSON.stringify(payload) });

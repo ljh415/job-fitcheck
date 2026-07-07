@@ -40,11 +40,19 @@ from telegram import send_notification
 from config import (
     ensure_dirs,
     get_active_provider,
+    get_model_override,
     set_active_provider,
     set_model_override,
     settings,
 )
 from llm.router import high_provider, light_provider
+
+
+def _evaluate_fit_system() -> str:
+    """현재 provider에 맞는 EVALUATE_FIT_SYSTEM 반환."""
+    if get_active_provider() == "openai":
+        return prompts.EVALUATE_FIT_SYSTEM_OPENAI
+    return prompts.EVALUATE_FIT_SYSTEM
 from models import (
     CandidateProfile,
     CompanyFrontmatter,
@@ -160,12 +168,17 @@ async def health():
 
 @app.get("/api/settings", response_model=SettingsResponse)
 async def get_settings():
+    def _m(key: str, default: str) -> str:
+        return get_model_override(key) or default
     return SettingsResponse(
         provider=get_active_provider(),
-        claude_high_model=settings.claude_high_model,
-        claude_light_model=settings.claude_light_model,
-        openai_high_model=settings.openai_high_model,
-        openai_light_model=settings.openai_light_model,
+        claude_high_model=_m("claude_high_model", settings.claude_high_model),
+        claude_light_model=_m("claude_light_model", settings.claude_light_model),
+        openai_high_model=_m("openai_high_model", settings.openai_high_model),
+        openai_light_model=_m("openai_light_model", settings.openai_light_model),
+        openai_reasoning_effort=_m("openai_reasoning_effort", settings.openai_reasoning_effort),
+        gemini_high_model=_m("gemini_high_model", settings.gemini_high_model),
+        gemini_light_model=_m("gemini_light_model", settings.gemini_light_model),
     )
 
 
@@ -176,7 +189,7 @@ async def update_settings(req: SettingsUpdateRequest):
             set_active_provider(req.provider)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
-    for key in ("claude_high_model", "claude_light_model", "openai_high_model", "openai_light_model"):
+    for key in ("claude_high_model", "claude_light_model", "openai_high_model", "openai_light_model", "openai_reasoning_effort", "gemini_high_model", "gemini_light_model"):
         val = getattr(req, key)
         if val:
             set_model_override(key, val)
@@ -209,6 +222,25 @@ async def list_models(provider: str = "claude"):
                 [m.id for m in page.data if m.id.startswith("gpt-") or m.id.startswith("o1") or m.id.startswith("o3")],
                 reverse=True,
             )
+        elif provider == "gemini":
+            async with httpx.AsyncClient(timeout=15) as client:
+                res = await client.get(
+                    "https://generativelanguage.googleapis.com/v1beta/models",
+                    params={"key": settings.google_api_key, "pageSize": 50},
+                )
+                res.raise_for_status()
+                data = res.json().get("models", [])
+                model_ids = sorted(
+                    [
+                        m["name"].replace("models/", "")
+                        for m in data
+                        if "gemini" in m.get("name", "")
+                        and "generateContent" in m.get("supportedGenerationMethods", [])
+                        and "tts" not in m.get("name", "")
+                        and "embedding" not in m.get("name", "")
+                    ],
+                    reverse=True,
+                )
         else:
             raise HTTPException(status_code=400, detail=f"지원하지 않는 provider: {provider}")
     except HTTPException:
@@ -658,6 +690,9 @@ async def _process_company(
             extracted["display_name"] = company_name_override
     if job_title_override:
         extracted["job_title"] = job_title_override
+    # display_name 폴백: LLM이 None 반환하면 company_name으로 대체
+    if not extracted.get("display_name"):
+        extracted["display_name"] = extracted.get("company_name") or ""
 
     # 2. 잡플래닛 평점 조회 (refill 시 기존 점수 있으면 재사용, 없으면 스크래핑)
     company_name_for_jp = extracted.get("display_name") or extracted.get("company_name", "")
@@ -719,7 +754,7 @@ async def _process_company(
             custom_criteria=custom_criteria_section,
         )
         fit_result = await high.extract_structured(
-            system=prompts.EVALUATE_FIT_SYSTEM,
+            system=_evaluate_fit_system(),
             user=user_fit,
             tool_name=prompts.EVALUATE_FIT_TOOL_NAME,
             tool_description=prompts.EVALUATE_FIT_TOOL_DESCRIPTION,
@@ -944,7 +979,7 @@ async def refit_company(slug: str):
     )
     try:
         fit_result = await high.extract_structured(
-            system=prompts.EVALUATE_FIT_SYSTEM,
+            system=_evaluate_fit_system(),
             user=user_fit,
             tool_name=prompts.EVALUATE_FIT_TOOL_NAME,
             tool_description=prompts.EVALUATE_FIT_TOOL_DESCRIPTION,

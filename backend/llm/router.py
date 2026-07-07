@@ -20,6 +20,8 @@ def _model(tier: str, provider: str) -> str:
         return override
     if provider == "claude":
         return settings.claude_high_model if tier == "high" else settings.claude_light_model
+    if provider == "gemini":
+        return settings.gemini_high_model if tier == "high" else settings.gemini_light_model
     return settings.openai_high_model if tier == "high" else settings.openai_light_model
 
 

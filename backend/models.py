@@ -159,6 +159,9 @@ class SettingsResponse(BaseModel):
     claude_light_model: str
     openai_high_model: str
     openai_light_model: str
+    openai_reasoning_effort: str
+    gemini_high_model: str
+    gemini_light_model: str
 
 
 class SettingsUpdateRequest(BaseModel):
@@ -167,6 +170,9 @@ class SettingsUpdateRequest(BaseModel):
     claude_light_model: str | None = None
     openai_high_model: str | None = None
     openai_light_model: str | None = None
+    openai_reasoning_effort: str | None = None
+    gemini_high_model: str | None = None
+    gemini_light_model: str | None = None
 
 
 class ProfileUpdateRequest(BaseModel):

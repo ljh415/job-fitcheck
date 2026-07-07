@@ -330,7 +330,7 @@ label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-w
 .model-tier-trigger { font-size: 12px; color: var(--text-muted); cursor: default; user-select: none; }
 .model-tier-trigger:hover { color: var(--primary); }
 .model-tier-panel { display: none; position: absolute; top: 22px; left: 0; z-index: 100; background: var(--bg-surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; box-shadow: var(--shadow-md); min-width: 320px; max-width: 520px; }
-.model-tier-wrap:hover .model-tier-panel { display: block; }
+.model-tier-panel.visible { display: block; }
 .pdf-dropzone { border: 2px dashed var(--primary-border); border-radius: 10px; padding: 28px 20px; text-align: center; cursor: pointer; color: var(--text-muted); font-size: 14px; transition: background 0.15s, border-color 0.15s; user-select: none; }
 .pdf-dropzone:hover, .pdf-dropzone.drag-over { background: #eff6ff; border-color: var(--primary); color: #1d4ed8; }
 #profile-status-msg { margin-bottom: 12px; color: var(--text-muted); font-size: 13px; }

@@ -40,7 +40,7 @@
   - ✅ 텍스트 붙여넣기 → 회사 추출 + 적합도 평가 확인
   - ✅ Wanted URL 입력 → 스크래핑 + 분석 확인
   - ✅ Q&A 스트리밍 응답 확인
-- ⬜ Claude / OpenAI 전환 테스트 (동일 공고 결과 비교) — 프롬프트 튜닝 완료 후 진행
+- ✅ Claude / OpenAI 전환 테스트 (동일 공고 결과 비교) — 프롬프트 튜닝 완료 후 진행
 - ✅ 프롬프트 품질 검토 및 튜닝
   - ✅ 추출 누락 필드 보완 — `benefits`·`hiring_process` 필드 추가
   - ✅ 적합도 평가 기준 세분화 — 사용자 커스텀 기준 자유 입력 지원 (`/api/eval-criteria`)
@@ -137,4 +137,4 @@
 - ✅ SSE 스트리밍 도중 화면 이탈 시 dangling reader 수정 (navigate/popstate에서 cancel 처리)
 - ✅ SSE 스트리밍 도중 연결 끊김 시 자동 재시도 (최대 2회, 지수 백오프)
 - ⬜ provider 런타임 설정: 서버 재시작 시 .env의 DEFAULT_PROVIDER로 리셋 (PoC 단계라 허용)
-- ⬜ refill UI 없음: 현재 `/api/companies/{slug}/refill` 엔드포인트는 존재하나 프론트엔드 버튼 미구현 — 필요 시 curl로 수동 호출
+- ✅ refill UI: 상세 페이지 `🎯 재분석 ▾` 드롭다운으로 구현 — 적합도만 재평가 / 전체 재분석 선택 가능

@@ -124,7 +124,15 @@
         <button onclick="switchTab('info')" id="tab-info" class="tab-btn active">상세정보</button>
         <button onclick="switchTab('edit')" id="tab-edit" class="tab-btn">편집</button>
         <button onclick="switchTab('qa')" id="tab-qa" class="tab-btn">Q&A</button>
-        <button onclick="refitCompany()" class="btn-secondary">🎯 적합도 재평가</button>
+        <div class="export-dropdown-wrap" id="refit-dropdown-wrap">
+          <button class="btn-secondary export-dropdown-btn" onclick="toggleRefitDropdown(event)">🎯 재분석 ▾</button>
+          <div class="export-dropdown-panel hidden" id="refit-dropdown-panel">
+            <button class="export-dropdown-link" onclick="refitCompany()">🎯 적합도만 재평가</button>
+            <div class="export-dropdown-divider"></div>
+            <button class="export-dropdown-link" onclick="refillCompany()">🔄 전체 재분석</button>
+            <div class="export-dropdown-label" style="font-size:11px;color:var(--text-muted);padding:4px 12px 8px">원문 기반 전체 재분석<br>기존 내용 덮어씀</div>
+          </div>
+        </div>
         <button onclick="deleteCompany()" class="btn-danger">삭제</button>
       </div>
     </div>
@@ -398,6 +406,7 @@
           <select id="provider-select" onchange="syncProviderModels()">
             <option value="claude">Claude (Anthropic)</option>
             <option value="openai">ChatGPT (OpenAI)</option>
+            <option value="gemini">Gemini (Google)</option>
           </select>
         </label>
       </div>
@@ -416,6 +425,10 @@
       <div id="model-inputs-openai" class="form-grid" style="margin-top:8px;display:none">
         <label>High 모델<input id="openai-high-model" /></label>
         <label>Light 모델<input id="openai-light-model" /></label>
+      </div>
+      <div id="model-inputs-gemini" class="form-grid" style="margin-top:8px;display:none">
+        <label>High 모델<input id="gemini-high-model" /></label>
+        <label>Light 모델<input id="gemini-light-model" /></label>
       </div>
       <button onclick="saveSettings()" class="btn-primary">설정 저장</button>
     </section>

@@ -12,8 +12,8 @@ from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-# backend/.env 기준 절대경로 — cwd와 무관하게 항상 동일한 위치를 가리킴
-_ENV_FILE = Path(__file__).parent / ".env"
+# 루트 .env 기준 절대경로 — cwd와 무관하게 항상 동일한 위치를 가리킴
+_ENV_FILE = Path(__file__).parent.parent / ".env"
 
 
 class Settings(BaseSettings):
@@ -21,15 +21,19 @@ class Settings(BaseSettings):
 
     anthropic_api_key: str = ""
     openai_api_key: str = ""
+    google_api_key: str = ""
 
-    # 기본 provider: "claude" | "openai"
+    # 기본 provider: "claude" | "openai" | "gemini"
     default_provider: str = "claude"
 
     # 모델 티어 기본값 (설정 뷰에서 런타임 변경 가능)
     claude_high_model: str = "claude-sonnet-4-6"
     claude_light_model: str = "claude-haiku-4-5-20251001"
-    openai_high_model: str = "gpt-4o"
-    openai_light_model: str = "gpt-4o-mini"
+    openai_high_model: str = "gpt-5"
+    openai_light_model: str = "gpt-5-mini"
+    openai_reasoning_effort: str = "medium"
+    gemini_high_model: str = "gemini-2.5-flash"
+    gemini_light_model: str = "gemini-2.5-flash-lite"
 
     # 로그인 비밀번호 — 비어 있으면 인증 미적용 (로컬 개발용)
     app_secret: str = ""
@@ -68,7 +72,7 @@ def get_active_provider() -> str:
 
 def set_active_provider(provider: str) -> None:
     global _runtime_provider
-    if provider not in ("claude", "openai"):
+    if provider not in ("claude", "openai", "gemini"):
         raise ValueError(f"Unknown provider: {provider}")
     _runtime_provider = provider
 
@@ -79,6 +83,10 @@ def get_model_override(key: str) -> str | None:
 
 def set_model_override(key: str, model: str) -> None:
     _runtime_models[key] = model
+
+
+def get_reasoning_effort() -> str:
+    return _runtime_models.get("openai_reasoning_effort") or settings.openai_reasoning_effort
 
 
 def ensure_dirs() -> None:

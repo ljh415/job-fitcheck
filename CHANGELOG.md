@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.15.0 — OpenAI 전용 프롬프트 분리 및 reasoning_effort 확장 (2026-07-07)
+
+**OpenAI 전용 적합도 평가 프롬프트 신설**
+- `EVALUATE_FIT_SYSTEM_OPENAI` 추가 (`backend/prompts.py`): OpenAI용 갭 판정 전용 시스템 프롬프트
+  - `[근거 명시 원칙]`: ✅ 판정 시 이력서의 회사명·프로젝트명+기술명 출처 필수 명시 → 근거 없는 ✅ 남발 방지
+  - ❌/🔲 판정 원칙 및 금지 규칙 OpenAI 특화 강화
+- `EVALUATE_FIT_SYSTEM` 원복: 공유 프롬프트에서 [갭 판정 기준] 제거 — Claude는 원래부터 갭 판정 정확도가 높아 불필요
+- `_evaluate_fit_system()` 헬퍼 추가 (`backend/main.py`): Provider(Claude/OpenAI)에 따라 자동으로 맞는 시스템 프롬프트 선택
+
+**reasoning_effort 지원 범위 확장**
+- `_reasoning_effort_kwarg()` 조건 단순화 (`backend/llm/openai.py`): `model.startswith("gpt-5")`로 변경
+  - 기존: `gpt-5` 본체 + `gpt-5.x` 점 계열만 지원 (하이픈 계열 제외)
+  - 변경: `gpt-5-mini`, `gpt-5-nano` 포함 — `high` effort에서 실제 추론 활성화 확인 (D-3 실험)
+  - `low`/`medium` effort에서는 reasoning_tokens=0이나 파라미터 수용, `high`에서 추론 활성화
+
+**실험 결과 요약 (Phase D LLM Judge)**
+- Best 구성: Claude는 원본 프롬프트 유지, OpenAI는 `EVALUATE_FIT_SYSTEM_OPENAI` v6 채택
+- 갭 판정 정확성은 프롬프트 기여가 크고, 근거 구체성·전략 실용성은 모델 능력 기여가 큼
+
+---
+
+## v0.14.0 — OpenAI 모델 기본값 업데이트 및 reasoning_effort 지원 (2026-07-06)
+
+- **OpenAI 기본 모델 변경**: High=`gpt-5`, Light=`gpt-5-mini` (Phase 1 실험 결과 반영, 비용 -35%)
+- **reasoning_effort 지원**: `gpt-5`/`gpt-5.x` 계열에 자동 적용, 기본값 `medium`
+- **settings API 확장**: `openai_reasoning_effort` 필드 GET/PUT 지원
+- **max_completion_tokens 자동 상향**: reasoning 모델에서 출력 공간 부족 방지 (extract: 16384, complete: 8192)
+- **LLM 단가 업데이트**: gpt-5.x 전 계열 비용 추적 (`usage_tracker.py`)
+
+---
+
 ## v0.13.1 — 적합도 평가 정확도 개선 (2026-07-06)
 
 **적합도 평가 프롬프트 개선**

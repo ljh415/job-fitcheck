@@ -1,6 +1,9 @@
 # 환경 변수 (API 키 포함)
 .env
-backend/.env
+
+# 실험 스크립트·로그
+scripts/
+logs/
 
 # Claude Code 로컬 설정 (훅에 봇 토큰 포함)
 .claude/
