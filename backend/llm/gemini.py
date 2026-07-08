@@ -4,6 +4,7 @@ Google Gemini provider 구현.
 구조화 추출: function_calling (mode=ANY) 으로 특정 함수 강제 호출
 스트리밍: generate_content_stream 사용
 """
+import asyncio
 import base64
 import logging
 from collections.abc import AsyncIterator
@@ -81,6 +82,7 @@ class GeminiProvider(LLMProvider):
         return parts
 
     def _raise(self, e: Exception) -> NoReturn:
+        logger.exception("Gemini API 오류: %s", e)
         msg = str(e)
         code = getattr(e, "status_code", None)
         if code in (401, 403) or "API_KEY_INVALID" in msg or "PERMISSION_DENIED" in msg:
@@ -88,6 +90,12 @@ class GeminiProvider(LLMProvider):
         if code == 429 or "RESOURCE_EXHAUSTED" in msg:
             raise LLMAPIError("LLM API 요청 한도 초과 — 잠시 후 다시 시도해주세요.", 429)
         raise LLMAPIError("LLM 서비스 오류 — 잠시 후 다시 시도해주세요.", 503)
+
+    @staticmethod
+    def _is_retryable(e: Exception) -> bool:
+        msg = str(e)
+        code = getattr(e, "status_code", None)
+        return code == 503 or "UNAVAILABLE" in msg or "high demand" in msg
 
     async def extract_structured(
         self,
@@ -118,16 +126,28 @@ class GeminiProvider(LLMProvider):
                     allowed_function_names=[tool_name],
                 )
             ),
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
             max_output_tokens=max_tokens,
         )
-        try:
-            response = await self._client.aio.models.generate_content(
-                model=model,
-                contents=[types.Content(role="user", parts=[types.Part.from_text(text=user)])],
-                config=config,
-            )
-        except Exception as e:
-            self._raise(e)
+        last_exc: Exception | None = None
+        for attempt in range(3):
+            try:
+                response = await self._client.aio.models.generate_content(
+                    model=model,
+                    contents=[types.Content(role="user", parts=[types.Part.from_text(text=user)])],
+                    config=config,
+                )
+                break
+            except Exception as e:
+                last_exc = e
+                if self._is_retryable(e) and attempt < 2:
+                    wait = 5 * (attempt + 1)
+                    logger.warning("Gemini 503 재시도 %d/2 (%d초 대기)", attempt + 1, wait)
+                    await asyncio.sleep(wait)
+                else:
+                    self._raise(e)
+        else:
+            self._raise(last_exc)
 
         if response.usage_metadata:
             usage_tracker.append_usage(
@@ -136,10 +156,19 @@ class GeminiProvider(LLMProvider):
                 input_tokens=response.usage_metadata.prompt_token_count or 0,
                 output_tokens=response.usage_metadata.candidates_token_count or 0,
             )
-        for part in response.candidates[0].content.parts:
+
+        candidates = response.candidates or []
+        if not candidates:
+            raise RuntimeError("Gemini 응답에 candidates가 없습니다")
+        candidate = candidates[0]
+        finish_reason = getattr(candidate.finish_reason, "name", str(candidate.finish_reason))
+        if candidate.content is None:
+            logger.error("Gemini content=None (finish_reason=%s)", finish_reason)
+            raise LLMAPIError(f"Gemini 응답이 차단되었습니다 (finish_reason={finish_reason})", 503)
+        for part in candidate.content.parts:
             if part.function_call:
                 return dict(part.function_call.args)
-        raise RuntimeError("No function call returned from Gemini")
+        raise RuntimeError(f"Gemini function call 없음 (finish_reason={finish_reason})")
 
     async def complete(
         self,
@@ -155,14 +184,25 @@ class GeminiProvider(LLMProvider):
             system_instruction=system,
             max_output_tokens=max_tokens,
         )
-        try:
-            response = await self._client.aio.models.generate_content(
-                model=model,
-                contents=[types.Content(role="user", parts=parts)],
-                config=config,
-            )
-        except Exception as e:
-            self._raise(e)
+        last_exc: Exception | None = None
+        for attempt in range(3):
+            try:
+                response = await self._client.aio.models.generate_content(
+                    model=model,
+                    contents=[types.Content(role="user", parts=parts)],
+                    config=config,
+                )
+                break
+            except Exception as e:
+                last_exc = e
+                if self._is_retryable(e) and attempt < 2:
+                    wait = 5 * (attempt + 1)
+                    logger.warning("Gemini 503 재시도 %d/2 (%d초 대기)", attempt + 1, wait)
+                    await asyncio.sleep(wait)
+                else:
+                    self._raise(e)
+        else:
+            self._raise(last_exc)
 
         if response.usage_metadata:
             candidates = response.candidates or []
@@ -203,22 +243,33 @@ class GeminiProvider(LLMProvider):
         )
         input_tokens = 0
         output_tokens = 0
-        try:
-            stream_resp = await self._client.aio.models.generate_content_stream(
-                model=model,
-                contents=contents,
-                config=config,
-            )
-            async for chunk in stream_resp:
-                if chunk.usage_metadata:
-                    input_tokens = chunk.usage_metadata.prompt_token_count or 0
-                    output_tokens = chunk.usage_metadata.candidates_token_count or 0
-                if chunk.text:
-                    yield chunk.text
-        except LLMAPIError:
-            raise
-        except Exception as e:
-            self._raise(e)
+        last_exc: Exception | None = None
+        for attempt in range(3):
+            try:
+                stream_resp = await self._client.aio.models.generate_content_stream(
+                    model=model,
+                    contents=contents,
+                    config=config,
+                )
+                async for chunk in stream_resp:
+                    if chunk.usage_metadata:
+                        input_tokens = chunk.usage_metadata.prompt_token_count or 0
+                        output_tokens = chunk.usage_metadata.candidates_token_count or 0
+                    if chunk.text:
+                        yield chunk.text
+                break
+            except LLMAPIError:
+                raise
+            except Exception as e:
+                last_exc = e
+                if self._is_retryable(e) and attempt < 2:
+                    wait = 5 * (attempt + 1)
+                    logger.warning("Gemini 503 재시도 %d/2 (%d초 대기)", attempt + 1, wait)
+                    await asyncio.sleep(wait)
+                else:
+                    self._raise(e)
+        else:
+            self._raise(last_exc)
         if input_tokens or output_tokens:
             usage_tracker.append_usage(
                 operation=operation,

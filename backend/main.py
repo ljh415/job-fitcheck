@@ -144,10 +144,12 @@ async def auth_middleware(request: Request, call_next):
 @app.post("/api/login")
 async def login(req: LoginRequest):
     if not settings.app_secret:
-        # APP_SECRET 미설정 시 어떤 비밀번호든 통과 (개발/단순 운영용)
+        logger.info("로그인 성공 (APP_SECRET 미설정 — 개발 모드)")
         return {"token": "dev"}
     if req.password != settings.app_secret:
+        logger.warning("로그인 실패 — 비밀번호 불일치")
         raise HTTPException(status_code=401, detail="비밀번호가 틀렸습니다.")
+    logger.info("로그인 성공")
     return {"token": _make_token()}
 
 
@@ -186,13 +188,17 @@ async def get_settings():
 async def update_settings(req: SettingsUpdateRequest):
     if req.provider:
         try:
+            prev = get_active_provider()
             set_active_provider(req.provider)
+            if prev != req.provider:
+                logger.info("provider 변경: %s → %s", prev, req.provider)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
     for key in ("claude_high_model", "claude_light_model", "openai_high_model", "openai_light_model", "openai_reasoning_effort", "gemini_high_model", "gemini_light_model"):
         val = getattr(req, key)
         if val:
             set_model_override(key, val)
+            logger.info("모델 변경: %s = %s", key, val)
     return {"status": "ok", "provider": get_active_provider()}
 
 
@@ -268,6 +274,7 @@ async def update_eval_criteria(req: dict):
     if not isinstance(text, str):
         raise HTTPException(status_code=400, detail="text 필드는 문자열이어야 합니다.")
     storage.write_eval_criteria(text)
+    logger.info("평가 기준 업데이트: %d자", len(text))
     return {"status": "ok"}
 
 
@@ -352,6 +359,7 @@ async def export_profile():
 @app.put("/api/profile")
 async def update_profile(req: ProfileUpdateRequest):
     record = storage.write_profile(req.frontmatter, req.body)
+    logger.info("프로필 수동 업데이트 완료")
     return record
 
 
@@ -570,6 +578,7 @@ async def update_company(slug: str, req: CompanyUpdateRequest):
     )
     fm.created_at = existing.frontmatter.created_at
     record = storage.write_company(slug, fm, req.body)
+    logger.info("공고 수동 편집: %s", slug)
     return record
 
 
@@ -577,6 +586,7 @@ async def update_company(slug: str, req: CompanyUpdateRequest):
 async def delete_company(slug: str):
     if not storage.delete_company(slug, pre_delete_hook=_save_backup_zip):
         raise HTTPException(status_code=404, detail="회사를 찾을 수 없습니다.")
+    logger.info("공고 삭제: %s", slug)
     return {"status": "deleted"}
 
 
@@ -622,6 +632,8 @@ async def sync_wanted(slug: str, req: SyncWantedRequest = SyncWantedRequest()):
         fm.revenue_status = facts["revenue_status"]
 
     record = storage.write_company(slug, fm, existing.body)
+    updated_keys = [k for k, v in facts.items() if v is not None]
+    logger.info("원티드 동기화: %s → 업데이트 필드: %s", slug, updated_keys)
     return {"status": "ok", "updated": {k: v for k, v in facts.items() if v is not None}}
 
 
@@ -753,16 +765,43 @@ async def _process_company(
             raw_text=raw_text[:4000],
             custom_criteria=custom_criteria_section,
         )
-        fit_result = await high.extract_structured(
-            system=_evaluate_fit_system(),
-            user=user_fit,
-            tool_name=prompts.EVALUATE_FIT_TOOL_NAME,
-            tool_description=prompts.EVALUATE_FIT_TOOL_DESCRIPTION,
-            tool_schema=prompts.EVALUATE_FIT_TOOL_SCHEMA,
-            model=high_model,
-            operation="적합도 평가",
-        )
-        fit_report = re.sub(r'^##\s*4\.\s*적합도 리포트[^\n]*\n+', '', fit_result.pop("fit_report_body", "")).strip()
+        # Gemini는 function call 내에 장문 마크다운 생성 시 MALFORMED_FUNCTION_CALL이 발생함.
+        # 구조화 데이터(점수·라벨·강점·갭)만 tool call로 추출하고, 리포트 본문은 complete()로 분리 생성.
+        if get_active_provider() == "gemini":
+            _gemini_fit_schema = {
+                **prompts.EVALUATE_FIT_TOOL_SCHEMA,
+                "properties": {k: v for k, v in prompts.EVALUATE_FIT_TOOL_SCHEMA["properties"].items() if k != "fit_report_body"},
+                "required": [r for r in prompts.EVALUATE_FIT_TOOL_SCHEMA.get("required", []) if r != "fit_report_body"],
+            }
+            fit_result = await high.extract_structured(
+                system=_evaluate_fit_system(),
+                user=user_fit,
+                tool_name=prompts.EVALUATE_FIT_TOOL_NAME,
+                tool_description=prompts.EVALUATE_FIT_TOOL_DESCRIPTION,
+                tool_schema=_gemini_fit_schema,
+                model=high_model,
+                operation="적합도 평가",
+            )
+            logger.info("[4/4] 적합도 리포트 본문 생성 시작 (Gemini 분리 생성)")
+            fit_report = await high.complete(
+                system=_evaluate_fit_system(),
+                user=user_fit + f"\n\n평가 결과 (참고용):\n{json.dumps(fit_result, ensure_ascii=False)}\n\n위 평가 결과를 바탕으로 ## 4. 적합도 리포트 섹션 마크다운만 작성하세요.",
+                model=high_model,
+                operation="적합도 리포트 본문 생성",
+                max_tokens=8192,
+            )
+            fit_report = re.sub(r'^##\s*4\.\s*적합도 리포트[^\n]*\n+', '', fit_report).strip()
+        else:
+            fit_result = await high.extract_structured(
+                system=_evaluate_fit_system(),
+                user=user_fit,
+                tool_name=prompts.EVALUATE_FIT_TOOL_NAME,
+                tool_description=prompts.EVALUATE_FIT_TOOL_DESCRIPTION,
+                tool_schema=prompts.EVALUATE_FIT_TOOL_SCHEMA,
+                model=high_model,
+                operation="적합도 평가",
+            )
+            fit_report = re.sub(r'^##\s*4\.\s*적합도 리포트[^\n]*\n+', '', fit_result.pop("fit_report_body", "")).strip()
         fit_data = fit_result
         logger.info("[4/4] 적합도 평가 완료: %s점 (%s)", fit_data.get("fit_score"), fit_data.get("fit_label"))
     else:
@@ -943,6 +982,7 @@ async def toggle_pin(slug: str):
         raise HTTPException(status_code=404, detail="회사를 찾을 수 없습니다.")
     fm = record.frontmatter.model_copy(update={"pinned": not record.frontmatter.pinned})
     storage.write_company(slug, fm, record.body)
+    logger.info("핀 토글: %s → %s", slug, fm.pinned)
     return {"pinned": fm.pinned}
 
 
@@ -978,18 +1018,42 @@ async def refit_company(slug: str):
         custom_criteria=custom_criteria_section,
     )
     try:
-        fit_result = await high.extract_structured(
-            system=_evaluate_fit_system(),
-            user=user_fit,
-            tool_name=prompts.EVALUATE_FIT_TOOL_NAME,
-            tool_description=prompts.EVALUATE_FIT_TOOL_DESCRIPTION,
-            tool_schema=prompts.EVALUATE_FIT_TOOL_SCHEMA,
-            model=high_model,
-            operation="적합도 재평가",
-        )
+        if get_active_provider() == "gemini":
+            _gemini_fit_schema = {
+                **prompts.EVALUATE_FIT_TOOL_SCHEMA,
+                "properties": {k: v for k, v in prompts.EVALUATE_FIT_TOOL_SCHEMA["properties"].items() if k != "fit_report_body"},
+                "required": [r for r in prompts.EVALUATE_FIT_TOOL_SCHEMA.get("required", []) if r != "fit_report_body"],
+            }
+            fit_result = await high.extract_structured(
+                system=_evaluate_fit_system(),
+                user=user_fit,
+                tool_name=prompts.EVALUATE_FIT_TOOL_NAME,
+                tool_description=prompts.EVALUATE_FIT_TOOL_DESCRIPTION,
+                tool_schema=_gemini_fit_schema,
+                model=high_model,
+                operation="적합도 재평가",
+            )
+            fit_report_raw = await high.complete(
+                system=_evaluate_fit_system(),
+                user=user_fit + f"\n\n평가 결과 (참고용):\n{json.dumps(fit_result, ensure_ascii=False)}\n\n위 평가 결과를 바탕으로 ## 4. 적합도 리포트 섹션 마크다운만 작성하세요.",
+                model=high_model,
+                operation="적합도 리포트 본문 생성",
+                max_tokens=8192,
+            )
+            fit_report = re.sub(r'^##\s*4\.\s*적합도 리포트[^\n]*\n+', '', fit_report_raw).strip()
+        else:
+            fit_result = await high.extract_structured(
+                system=_evaluate_fit_system(),
+                user=user_fit,
+                tool_name=prompts.EVALUATE_FIT_TOOL_NAME,
+                tool_description=prompts.EVALUATE_FIT_TOOL_DESCRIPTION,
+                tool_schema=prompts.EVALUATE_FIT_TOOL_SCHEMA,
+                model=high_model,
+                operation="적합도 재평가",
+            )
+            fit_report = re.sub(r'^##\s*4\.\s*적합도 리포트[^\n]*\n+', '', fit_result.pop("fit_report_body", "")).strip()
     except LLMAPIError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e))
-    fit_report = re.sub(r'^##\s*4\.\s*적합도 리포트[^\n]*\n+', '', fit_result.pop("fit_report_body", "")).strip()
     logger.info("[refit] 완료: %s점 (%s)", fit_result.get("fit_score"), fit_result.get("fit_label"))
 
     # frontmatter에 적합도 필드만 업데이트

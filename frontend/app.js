@@ -1194,7 +1194,7 @@ async function initSettings() {
   const extraNoteEl = document.getElementById('profile-extra-note');
   if (extraNoteEl) extraNoteEl.value = localStorage.getItem('profile-extra-note') || '';
 
-  ['claude-high-model', 'claude-light-model', 'openai-high-model', 'openai-light-model'].forEach(id => {
+  ['claude-high-model', 'claude-light-model', 'openai-high-model', 'openai-light-model', 'gemini-high-model', 'gemini-light-model'].forEach(id => {
     const el = document.getElementById(id);
     const key = id.replace(/-/g, '_');
     if (el) el.value = currentSettings[key] || '';
@@ -1445,15 +1445,15 @@ function renderModelTierView(models, provider) {
   const tierView = document.getElementById('model-tier-view');
   if (!tierView) return;
   const sorted = [...models].sort((a, b) => (getModelPrice(b) ?? 0) - (getModelPrice(a) ?? 0));
-  tierView.innerHTML = '<div style="font-size:12px;color:#6b7280;margin-bottom:8px;font-weight:600">비용 순서 (비쌈 → 저렴)</div>'
+  tierView.innerHTML = '<div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;font-weight:600">비용 순서 (비쌈 → 저렴)</div>'
     + sorted.map(m => {
       const price = getModelPrice(m);
       const { bar, label } = getTierStyle(price);
       const tooltip = price !== null ? `입력 $${price}/1M tokens` : '단가 정보 없음';
-      return `<div title="${tooltip}" style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid #f3f4f6;cursor:default">`
+      return `<div title="${tooltip}" style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);cursor:default">`
         + `<span style="width:4px;height:20px;border-radius:2px;background:${bar};flex-shrink:0"></span>`
-        + `<span style="font-size:13px;color:#111827;flex:1">${escHtml(m)}</span>`
-        + `<span style="font-size:11px;color:#9ca3af;white-space:nowrap">${label}</span>`
+        + `<span style="font-size:13px;color:var(--text-primary);flex:1">${escHtml(m)}</span>`
+        + `<span style="font-size:11px;color:var(--text-muted);white-space:nowrap">${label}</span>`
         + `</div>`;
     }).join('');
 }
