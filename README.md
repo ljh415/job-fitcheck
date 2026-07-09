@@ -12,7 +12,7 @@
 - **지원 현황 관리** — 타임라인·캘린더 뷰, 8가지 상태
 - **내보내기** — ZIP·CSV·자동 백업
 - **로컬 저장** — DB 없음, 데이터 로컬 유지
-- **멀티 LLM** — Claude / OpenAI 전환, 비용 추적
+- **멀티 LLM** — Claude / OpenAI / Gemini 전환, 비용 추적
 
 ## 시작하기
 
@@ -27,7 +27,8 @@ cp .env.example .env
 ```env
 ANTHROPIC_API_KEY=sk-ant-...
 APP_SECRET=your-password       # 로그인 비밀번호
-OPENAI_API_KEY=sk-...          # 선택 (Claude만 써도 됨)
+OPENAI_API_KEY=sk-...          # 선택
+GOOGLE_API_KEY=AIza...         # 선택 (Gemini 무료 티어 사용 가능)
 ```
 
 ### 2. 실행
@@ -54,6 +55,17 @@ docker compose up --build
 | 프로필 추출·적합도 평가·Q&A | claude-sonnet-4-6 | gpt-5 | gemini-2.5-flash |
 
 설정 화면에서 모델을 수동으로 변경할 수 있습니다.
+
+### Gemini 무료 티어
+
+Gemini는 **Google AI Studio 무료 티어**로 API 키 발급 없이 사용 가능합니다. [Google AI Studio](https://aistudio.google.com/apikey)에서 API 키를 발급받아 `GOOGLE_API_KEY`에 설정하세요.
+
+**무료 티어 제한 (2026-07 기준):**
+- 모델당 일일 20회 호출 (프로젝트 × 모델 단위 별도 카운트)
+- 모델이 다르면 할당량 독립 (예: 2.5-flash 소진돼도 3.5-flash 사용 가능)
+- 분당 요청 수(RPM) 제한 있음 — 429 에러 시 자동 재시도 처리됨
+
+> 일일 호출 횟수가 제한적이므로, 공고 분석 시 Claude를 기본으로 사용하고 Gemini는 보조 비교용으로 활용하는 것을 권장합니다.
 
 ## 변경 이력
 

@@ -30,10 +30,10 @@ docker compose up --build -d
 | 키 | 용도 |
 |---|---|
 | `OPENAI_API_KEY` | OpenAI GPT 사용 시 (설정에서 provider 전환) |
-| `GOOGLE_API_KEY` | Google Gemini 사용 시 (설정에서 provider 전환) |
+| `GOOGLE_API_KEY` | Google Gemini 사용 시 (무료 티어 가능, 모델당 일일 20회) |
 | `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` | 분석 완료 시 텔레그램 알림 |
 
-> Claude API 키만 있으면 모든 기능이 동작합니다.
+> Claude API 키만 있으면 모든 기능이 동작합니다. Gemini는 무료 티어로도 활용 가능합니다.
 
 ---
 
