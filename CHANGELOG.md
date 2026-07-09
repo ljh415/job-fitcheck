@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.16.1 — Gemini 전용 프롬프트 + 적합도 평가 최적화 (2026-07-09)
+
+**Gemini 전용 적합도 평가 프롬프트 (v5)**
+- `EVALUATE_FIT_SYSTEM_GEMINI` 신규 추가 (`backend/prompts.py`)
+  - 유사 기술·상위 카테고리로 대체 판정 금지 (step 1)
+  - 비기술 요건(경력 연수·근무지·도메인) 별도 체크 스텝 (step 4)
+  - 갭 완전성 지시: 심각도 무관 전수 보고
+- `_evaluate_fit_system()` gemini 분기 추가 (`backend/main.py`)
+
+**Gemini extract_structured 안정화**
+- `temperature=0.3` 설정 (`backend/llm/gemini.py`): 갭 탐지 stochasticity 감소
+- `location_check → gaps` 자동 브릿지 (`backend/main.py`, Gemini 전용)
+  - location_check가 "조건부/미달"인데 gaps에 근무지 항목 없으면 자동 보정
+  - Claude/OpenAI에는 미적용
+
+**Gemini complete() 개선**
+- Section 5 (종합 의견) 작성 지시 명시: `## 4. 적합도 리포트` ~ `## 5. 종합 의견` 전체 생성
+- 모델 변경 로깅 dedup 처리
+
+**프롬프트 튜닝 실험 결과 (NHN Cloud 기준)**
+- v1(4/5, Judge B) → v2(2/5 퇴보) → v5+bridge(5/5 달성, 60점)
+- 핵심 개선: G4 근무지 탐지율 16% → 100%, G2 Hadoop/ELK 안정화
+
+---
+
 ## v0.15.0 — OpenAI 전용 프롬프트 분리 및 reasoning_effort 확장 (2026-07-07)
 
 **OpenAI 전용 적합도 평가 프롬프트 신설**

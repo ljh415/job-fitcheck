@@ -50,8 +50,11 @@ from llm.router import high_provider, light_provider
 
 def _evaluate_fit_system() -> str:
     """현재 provider에 맞는 EVALUATE_FIT_SYSTEM 반환."""
-    if get_active_provider() == "openai":
+    provider = get_active_provider()
+    if provider == "openai":
         return prompts.EVALUATE_FIT_SYSTEM_OPENAI
+    if provider == "gemini":
+        return prompts.EVALUATE_FIT_SYSTEM_GEMINI
     return prompts.EVALUATE_FIT_SYSTEM
 from models import (
     CandidateProfile,
@@ -197,8 +200,10 @@ async def update_settings(req: SettingsUpdateRequest):
     for key in ("claude_high_model", "claude_light_model", "openai_high_model", "openai_light_model", "openai_reasoning_effort", "gemini_high_model", "gemini_light_model"):
         val = getattr(req, key)
         if val:
+            prev_model = get_model_override(key)
             set_model_override(key, val)
-            logger.info("모델 변경: %s = %s", key, val)
+            if prev_model != val:
+                logger.info("모델 변경: %s = %s", key, val)
     return {"status": "ok", "provider": get_active_provider()}
 
 
@@ -782,10 +787,17 @@ async def _process_company(
                 model=high_model,
                 operation="적합도 평가",
             )
+            # Gemini 전용: location_check → gaps 자동 브릿지
+            _loc = fit_result.get("location_check", "")
+            _gaps = fit_result.get("gaps", [])
+            if _loc and ("조건부" in _loc or "미달" in _loc):
+                if not any(kw in g for g in _gaps for kw in ("근무지", "위치", "출퇴근", "판교", "location")):
+                    fit_result["gaps"] = _gaps + [f"(하) 근무지 조건부 - {_loc}"]
+                    logger.info("  → 근무지 갭 자동 보정: %s", _loc)
             logger.info("[4/4] 적합도 리포트 본문 생성 시작 (Gemini 분리 생성)")
             fit_report = await high.complete(
                 system=_evaluate_fit_system(),
-                user=user_fit + f"\n\n평가 결과 (참고용):\n{json.dumps(fit_result, ensure_ascii=False)}\n\n위 평가 결과를 바탕으로 ## 4. 적합도 리포트 섹션 마크다운만 작성하세요.",
+                user=user_fit + f"\n\n평가 결과 (참고용):\n{json.dumps(fit_result, ensure_ascii=False)}\n\n위 평가 결과를 바탕으로 fit_report_body 전체를 아래 형식에 맞게 작성하세요. ## 4. 적합도 리포트 로 시작하고, ## 5. 종합 의견 (핵심 근거 + 지원 전략)까지 빠짐없이 작성하세요.",
                 model=high_model,
                 operation="적합도 리포트 본문 생성",
                 max_tokens=8192,
@@ -1035,7 +1047,7 @@ async def refit_company(slug: str):
             )
             fit_report_raw = await high.complete(
                 system=_evaluate_fit_system(),
-                user=user_fit + f"\n\n평가 결과 (참고용):\n{json.dumps(fit_result, ensure_ascii=False)}\n\n위 평가 결과를 바탕으로 ## 4. 적합도 리포트 섹션 마크다운만 작성하세요.",
+                user=user_fit + f"\n\n평가 결과 (참고용):\n{json.dumps(fit_result, ensure_ascii=False)}\n\n위 평가 결과를 바탕으로 fit_report_body 전체를 아래 형식에 맞게 작성하세요. ## 4. 적합도 리포트 로 시작하고, ## 5. 종합 의견 (핵심 근거 + 지원 전략)까지 빠짐없이 작성하세요.",
                 model=high_model,
                 operation="적합도 리포트 본문 생성",
                 max_tokens=8192,

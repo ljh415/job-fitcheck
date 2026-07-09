@@ -128,6 +128,7 @@ class GeminiProvider(LLMProvider):
             ),
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
             max_output_tokens=max_tokens,
+            temperature=0.3,
         )
         last_exc: Exception | None = None
         for attempt in range(3):
