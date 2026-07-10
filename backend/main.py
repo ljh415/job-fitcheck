@@ -802,7 +802,7 @@ async def _process_company(
                 operation="적합도 리포트 본문 생성",
                 max_tokens=8192,
             )
-            fit_report = re.sub(r'^##\s*4\.\s*적합도 리포트[^\n]*\n+', '', fit_report).strip()
+            fit_report = re.sub(r'^##\s*4\.\s*적합도 리포트[^\n]*\n+', '', fit_report.strip()).strip()
         else:
             fit_result = await high.extract_structured(
                 system=_evaluate_fit_system(),
@@ -813,7 +813,7 @@ async def _process_company(
                 model=high_model,
                 operation="적합도 평가",
             )
-            fit_report = re.sub(r'^##\s*4\.\s*적합도 리포트[^\n]*\n+', '', fit_result.pop("fit_report_body", "")).strip()
+            fit_report = re.sub(r'^##\s*4\.\s*적합도 리포트[^\n]*\n+', '', fit_result.pop("fit_report_body", "").strip()).strip()
         fit_data = fit_result
         logger.info("[4/4] 적합도 평가 완료: %s점 (%s)", fit_data.get("fit_score"), fit_data.get("fit_label"))
     else:
@@ -1052,7 +1052,7 @@ async def refit_company(slug: str):
                 operation="적합도 리포트 본문 생성",
                 max_tokens=8192,
             )
-            fit_report = re.sub(r'^##\s*4\.\s*적합도 리포트[^\n]*\n+', '', fit_report_raw).strip()
+            fit_report = re.sub(r'^##\s*4\.\s*적합도 리포트[^\n]*\n+', '', fit_report_raw.strip()).strip()
         else:
             fit_result = await high.extract_structured(
                 system=_evaluate_fit_system(),
@@ -1063,7 +1063,7 @@ async def refit_company(slug: str):
                 model=high_model,
                 operation="적합도 재평가",
             )
-            fit_report = re.sub(r'^##\s*4\.\s*적합도 리포트[^\n]*\n+', '', fit_result.pop("fit_report_body", "")).strip()
+            fit_report = re.sub(r'^##\s*4\.\s*적합도 리포트[^\n]*\n+', '', fit_result.pop("fit_report_body", "").strip()).strip()
     except LLMAPIError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e))
     logger.info("[refit] 완료: %s점 (%s)", fit_result.get("fit_score"), fit_result.get("fit_label"))
