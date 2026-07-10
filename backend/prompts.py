@@ -431,7 +431,7 @@ EXTRACT_PROFILE_USER_TEMPLATE = """다음은 후보자의 이력서/포트폴리
 {pdf_text}
 </documents>
 
-{{extra_section}}핵심 정보를 추출하여 extract_candidate_profile 툴(함수)을 호출하세요."""
+{extra_section}핵심 정보를 추출하여 extract_candidate_profile 툴(함수)을 호출하세요."""
 
 EXTRACT_PROFILE_TOOL_NAME = "extract_candidate_profile"
 EXTRACT_PROFILE_TOOL_DESCRIPTION = "이력서/포트폴리오에서 후보자 프로필 정보를 추출하여 저장합니다."

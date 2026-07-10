@@ -404,7 +404,7 @@ async def upload_profile(files: list[UploadFile] = File(...), extra_note: str = 
 
     # 1단계: tool use로 구조화 필드 추출 (name, skills, summary 등)
     logger.info("프로필 구조화 추출 시작 (model=%s)", model)
-    user_extract = prompts.EXTRACT_PROFILE_USER_TEMPLATE.format(pdf_text=pdf_text).replace("{{extra_section}}", extra_section)
+    user_extract = prompts.EXTRACT_PROFILE_USER_TEMPLATE.format(pdf_text=pdf_text, extra_section=extra_section)
     try:
         result = await provider.extract_structured(
             system=prompts.EXTRACT_PROFILE_SYSTEM,
