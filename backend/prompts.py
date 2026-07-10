@@ -480,7 +480,7 @@ EXTRACT_PROFILE_TOOL_SCHEMA = {
         },
         "preferred_employment_type": {"type": ["string", "null"], "description": "선호 고용형태 (예: 정규직)"},
         "preferred_min_salary": {"type": ["integer", "null"], "description": "희망 최소 연봉 (만원 단위)"},
-        "summary": {"type": "string", "description": "Q&A 컨텍스트용 후보자 소개 2~3문장. 총 경력 연수·주요 직무·핵심 기술·경험 도메인을 반드시 포함하여 서술. 예: '백엔드 개발 7년차로 Python·FastAPI 기반 B2B SaaS 플랫폼을 주로 개발했습니다. AWS 인프라 운영과 데이터 파이프라인 구축 경험이 있으며, 핀테크 도메인에서 대규모 트랜잭션 처리 시스템을 설계한 이력이 있습니다.'"},
+        "summary": {"type": "string", "description": "Q&A 컨텍스트용 후보자 소개 2~3문장. 총 경력 연수·주요 직무·핵심 기술·경험 도메인을 문서에서 확인되는 범위 내에서만 포함하여 서술. 문서에 명시되지 않은 경력 연수·직무·기술·도메인은 절대 추측하거나 지어내지 마세요 — 정보가 부족하면 확인되는 내용만으로 짧게 서술하세요. 예: '백엔드 개발 7년차로 Python·FastAPI 기반 B2B SaaS 플랫폼을 주로 개발했습니다. AWS 인프라 운영과 데이터 파이프라인 구축 경험이 있으며, 핀테크 도메인에서 대규모 트랜잭션 처리 시스템을 설계한 이력이 있습니다.'"},
     },
     "required": ["name", "tech_skills", "summary"],
 }
