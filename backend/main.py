@@ -762,7 +762,8 @@ async def _process_company(
         profile_text = storage.read_profile_text() or ""
         eval_criteria = storage.read_eval_criteria().strip()
         custom_criteria_section = (
-            f"\n\n## 추가 평가 기준 (사용자 지정)\n{eval_criteria}" if eval_criteria else ""
+            f"\n\n## 추가 평가 기준 (사용자 지정)\n{eval_criteria}{prompts.CUSTOM_CRITERIA_BOUNDARY_NOTICE}"
+            if eval_criteria else ""
         )
         user_fit = prompts.EVALUATE_FIT_USER_TEMPLATE.format(
             candidate_profile=profile_text,
@@ -1015,7 +1016,8 @@ async def refit_company(slug: str):
     raw_text = storage.read_raw_text(slug) or record.body
     eval_criteria = storage.read_eval_criteria().strip()
     custom_criteria_section = (
-        f"\n\n## 추가 평가 기준 (사용자 지정)\n{eval_criteria}" if eval_criteria else ""
+        f"\n\n## 추가 평가 기준 (사용자 지정)\n{eval_criteria}{prompts.CUSTOM_CRITERIA_BOUNDARY_NOTICE}"
+        if eval_criteria else ""
     )
     # 이전 평가 결과(strengths/gaps/fit_score 등)는 LLM 입력에서 제외 — 자기참조 편향 방지
     _REFIT_EXCLUDE = {"strengths", "gaps", "fit_score", "fit_label", "fit_report_body"}
