@@ -27,6 +27,14 @@ _HEADERS = {
 _MAX_TEXT_CHARS = 24_000
 
 
+def _clean_rich_text(value: str) -> str:
+    """리치텍스트 에디터로 작성된 JSON 필드(주요업무·자격요건 등)에 섞여 있는
+    HTML 태그(<p>, <li>, <br> 등)를 제거하고 순수 텍스트만 남긴다."""
+    if not value or "<" not in value:
+        return value
+    return BeautifulSoup(value, "lxml").get_text(separator="\n", strip=True)
+
+
 async def fetch_url_text(url: str) -> str:
     """URL에서 채용공고 텍스트를 추출한다.
 
@@ -120,12 +128,12 @@ def _parse_wanted(html: str) -> tuple[str | None, int | None]:
         parts = [
             f"회사명: {company.get('company_name', '')}",
             f"직무: {job.get('position', '')}",
-            f"회사 소개: {job.get('intro', '') or company.get('company_description', '')}",
-            f"주요업무: {job.get('main_tasks', '')}",
-            f"자격요건: {job.get('requirements', '')}",
-            f"우대사항: {job.get('preferred_points', '')}",
-            f"혜택 및 복지: {job.get('benefits', '')}",
-            f"채용 전형: {job.get('hire_rounds', '')}",
+            f"회사 소개: {_clean_rich_text(job.get('intro', '') or company.get('company_description', ''))}",
+            f"주요업무: {_clean_rich_text(job.get('main_tasks', ''))}",
+            f"자격요건: {_clean_rich_text(job.get('requirements', ''))}",
+            f"우대사항: {_clean_rich_text(job.get('preferred_points', ''))}",
+            f"혜택 및 복지: {_clean_rich_text(job.get('benefits', ''))}",
+            f"채용 전형: {_clean_rich_text(job.get('hire_rounds', ''))}",
             f"근무지: {job.get('address', {}).get('full_location', '')}",
             f"경력: {career_str}",
             f"고용형태: {employment}",
@@ -201,12 +209,12 @@ def _parse_remember(html: str) -> str | None:
         parts = [
             f"회사명: {org.get('name', '')}",
             f"직무: {posting.get('title', '')}",
-            f"회사 소개: {posting.get('introduction') or posting.get('companyDescription') or ''}",
-            f"주요업무:\n{posting.get('jobDescription', '')}",
-            f"자격요건:\n{posting.get('qualifications', '')}",
-            f"우대사항:\n{posting.get('preferredQualifications', '')}",
-            f"혜택 및 복지:\n{posting.get('additionalInformation', '')}",
-            f"채용절차:\n{posting.get('recruitingProcess', '')}",
+            f"회사 소개: {_clean_rich_text(posting.get('introduction') or posting.get('companyDescription') or '')}",
+            f"주요업무:\n{_clean_rich_text(posting.get('jobDescription', ''))}",
+            f"자격요건:\n{_clean_rich_text(posting.get('qualifications', ''))}",
+            f"우대사항:\n{_clean_rich_text(posting.get('preferredQualifications', ''))}",
+            f"혜택 및 복지:\n{_clean_rich_text(posting.get('additionalInformation', ''))}",
+            f"채용절차:\n{_clean_rich_text(posting.get('recruitingProcess', ''))}",
             f"근무지: {location}",
             f"경력: {career_str}",
             f"연봉: {salary_str}",

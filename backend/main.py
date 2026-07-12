@@ -398,6 +398,8 @@ async def upload_profile(files: list[UploadFile] = File(...), extra_note: str = 
             detail="PDF에서 텍스트를 추출할 수 없습니다. 스캔 이미지 PDF이거나 텍스트가 없는 파일일 수 있습니다.",
         )
     logger.info("PDF 텍스트 추출 완료: %d자", len(pdf_text))
+    pdf_text = prompts.escape_tag_chars(pdf_text)
+    extra_note = prompts.escape_tag_chars(extra_note)
 
     provider, model = high_provider()
     extra_section = f"<candidate_note>\n{extra_note}\n</candidate_note>\n\n" if extra_note.strip() else ""
@@ -684,11 +686,13 @@ async def _process_company(
     job_title_override: str = "",
 ) -> CompanyRecord:
     """텍스트 → 추출 → 잡플래닛 조회 → 본문 생성 → 적합도 평가 → 저장."""
+    # storage에는 원본 raw_text를 그대로 저장해야 하므로, 프롬프트 삽입용 이스케이프 사본을 별도로 둔다.
+    safe_raw_text = prompts.escape_tag_chars(raw_text)
 
     # 1. Lightweight: 공고 텍스트에서 구조화 데이터 추출
     light, light_model = light_provider()
     logger.info("[1/4] 구조화 추출 시작 (model=%s, 텍스트 %d자)", light_model, len(raw_text))
-    user_extract = prompts.EXTRACT_COMPANY_USER_TEMPLATE.format(raw_text=raw_text)
+    user_extract = prompts.EXTRACT_COMPANY_USER_TEMPLATE.format(raw_text=safe_raw_text)
     extracted = await light.extract_structured(
         system=prompts.EXTRACT_COMPANY_SYSTEM,
         user=user_extract,
@@ -743,7 +747,7 @@ async def _process_company(
     logger.info("[3/4] 마크다운 본문 생성 시작")
     user_body = prompts.GENERATE_BODY_USER_TEMPLATE.format(
         company_json=json.dumps(extracted, ensure_ascii=False),
-        raw_text=raw_text[:4000],
+        raw_text=safe_raw_text[:4000],
     )
     body = await light.complete(
         system=prompts.GENERATE_BODY_SYSTEM,
@@ -768,7 +772,7 @@ async def _process_company(
         user_fit = prompts.EVALUATE_FIT_USER_TEMPLATE.format(
             candidate_profile=profile_text,
             company_json=json.dumps(extracted, ensure_ascii=False),
-            raw_text=raw_text[:4000],
+            raw_text=safe_raw_text[:4000],
             custom_criteria=custom_criteria_section,
         )
         # Gemini는 function call 내에 장문 마크다운 생성 시 MALFORMED_FUNCTION_CALL이 발생함.
@@ -1013,7 +1017,7 @@ async def refit_company(slug: str):
     logger.info("[refit] 적합도 재산정 시작 (slug=%s, model=%s)", slug, high_model)
 
     profile_text = storage.read_profile_text() or ""
-    raw_text = storage.read_raw_text(slug) or record.body
+    raw_text = prompts.escape_tag_chars(storage.read_raw_text(slug) or record.body)
     eval_criteria = storage.read_eval_criteria().strip()
     custom_criteria_section = (
         f"\n\n## 추가 평가 기준 (사용자 지정)\n{eval_criteria}{prompts.CUSTOM_CRITERIA_BOUNDARY_NOTICE}"
