@@ -736,7 +736,7 @@ function toggleRefitDropdown(e) {
         document.removeEventListener('click', close);
       }
     };
-    document.addEventListener('click', close, { once: true });
+    document.addEventListener('click', close);
   }
 }
 
@@ -1607,7 +1607,7 @@ function toggleExportDropdown(e) {
         document.removeEventListener('click', close);
       }
     };
-    document.addEventListener('click', close, { once: true });
+    document.addEventListener('click', close);
   }
 }
 

@@ -48,21 +48,29 @@ def _is_blocked_ip(ip_str: str) -> bool:
     )
 
 
-async def _assert_public_url(url: str) -> None:
-    """스킴·호스트·DNS 목적지를 검사해 내부/사설 네트워크로의 요청을 차단한다."""
-    parsed = urlparse(url)
-    if parsed.scheme not in _ALLOWED_SCHEMES:
-        raise SSRFBlockedError(f"허용되지 않은 URL 스킴입니다: {parsed.scheme}")
-    if not parsed.hostname:
-        raise SSRFBlockedError("URL에 호스트가 없습니다.")
+async def _resolve_public_address(hostname: str) -> str:
+    """호스트명의 DNS 응답 중 사설/루프백 등이 하나라도 있으면 차단하고, 검증에 사용한
+    주소를 그대로 반환한다. 검증(DNS 조회)과 실제 연결을 별도로 조회하면 그 사이 응답이
+    바뀌는 DNS 리바인딩으로 SSRF 방어가 무력화될 수 있어, 반환된 주소로 직접 연결해야 한다."""
     try:
-        infos = await asyncio.get_running_loop().getaddrinfo(parsed.hostname, None)
+        infos = await asyncio.get_running_loop().getaddrinfo(hostname, None)
     except OSError as e:
-        raise SSRFBlockedError(f"호스트를 확인할 수 없습니다: {parsed.hostname}") from e
+        raise SSRFBlockedError(f"호스트를 확인할 수 없습니다: {hostname}") from e
+    if not infos:
+        raise SSRFBlockedError(f"호스트를 확인할 수 없습니다: {hostname}")
     for info in infos:
         ip_str = info[4][0]
         if _is_blocked_ip(ip_str):
-            raise SSRFBlockedError(f"내부/사설 네트워크로의 요청은 차단됩니다: {parsed.hostname} → {ip_str}")
+            raise SSRFBlockedError(f"내부/사설 네트워크로의 요청은 차단됩니다: {hostname} → {ip_str}")
+    return infos[0][4][0]
+
+
+def _pin_to_ip(url: str, ip: str) -> str:
+    """URL의 호스트 부분만 검증된 IP로 교체한다 (포트는 유지)."""
+    parsed = urlparse(url)
+    ip_literal = f"[{ip}]" if ":" in ip else ip
+    netloc = f"{ip_literal}:{parsed.port}" if parsed.port else ip_literal
+    return parsed._replace(netloc=netloc).geturl()
 
 
 def is_wanted_host(url: str) -> bool:
@@ -72,13 +80,26 @@ def is_wanted_host(url: str) -> bool:
 
 
 async def _safe_get(client: httpx.AsyncClient, url: str, **kwargs) -> httpx.Response:
-    """SSRF 방지: 요청 전 및 각 redirect마다 스킴/호스트/DNS 목적지를 재검사한다.
+    """SSRF 방지: 요청 전 및 각 redirect마다 스킴/호스트/DNS 목적지를 재검사하고,
+    검증에 사용한 IP로 직접 연결한다 (DNS 리바인딩으로 검증 후 연결 대상이 바뀌는 것을 방지).
+    Host 헤더와 TLS SNI는 원래 호스트명으로 유지해 가상호스팅/인증서 검증이 정상 동작하게 한다.
     응답은 스트리밍으로 받아 _MAX_RESPONSE_BYTES를 넘기면 즉시 중단한다
     (Content-Length가 없거나 거짓인 응답도 실제 수신 바이트 기준으로 막기 위함)."""
     current_url = url
     for _ in range(_MAX_REDIRECTS + 1):
-        await _assert_public_url(current_url)
-        async with client.stream("GET", current_url, follow_redirects=False, **kwargs) as response:
+        parsed = urlparse(current_url)
+        if parsed.scheme not in _ALLOWED_SCHEMES:
+            raise SSRFBlockedError(f"허용되지 않은 URL 스킴입니다: {parsed.scheme}")
+        if not parsed.hostname:
+            raise SSRFBlockedError("URL에 호스트가 없습니다.")
+        ip = await _resolve_public_address(parsed.hostname)
+        pinned_url = _pin_to_ip(current_url, ip)
+        extensions = {"sni_hostname": parsed.hostname} if parsed.scheme == "https" else {}
+        request = client.build_request(
+            "GET", pinned_url, headers={"Host": parsed.netloc}, extensions=extensions, **kwargs
+        )
+        response = await client.send(request, stream=True, follow_redirects=False)
+        try:
             if response.status_code in (301, 302, 303, 307, 308) and "location" in response.headers:
                 current_url = urljoin(current_url, response.headers["location"])
                 continue
@@ -102,6 +123,8 @@ async def _safe_get(client: httpx.AsyncClient, url: str, **kwargs) -> httpx.Resp
                 content=bytes(body),
                 request=response.request,
             )
+        finally:
+            await response.aclose()
     raise SSRFBlockedError("리다이렉트 횟수가 너무 많습니다.")
 
 

@@ -156,6 +156,9 @@
 - ✅ `review_w_codex.md` ④ slug/URL 저장형 XSS 방어 (inline onclick → data-속성 + 이벤트 위임 전환, 캘린더/타임라인 JSON.stringify 파싱 버그도 함께 수정)
 - ✅ `review_w_codex.md` ⑤ Q&A 대화 히스토리가 LLM 호출에 전달 안 되던 버그 수정 (단일/비교 Q&A 모두, 임의 암호코드로 멀티턴 기억 여부 검증)
 - ✅ `review_w_codex.md` ⑥ API 입력 크기/개수 제한 부족 (텍스트/Q&A/PDF/이미지/URL 응답 크기 상한 추가, `_safe_get()` 재구성 시 헤더 이중 디코딩 회귀 버그도 함께 수정)
+- ✅ refill/refit 지원 상태 로그 세분화 — `_append_status_log()` 신설(섹션 없으면 새로 생성), `refit_company()`(적합도만 재평가)가 로그를 남기지 않던 문제 수정, 로그 문구 판정을 `preserved_log_entries` 존재 여부가 아닌 `existing_slug`(refill 호출 여부) 기준으로 변경
+- ✅ v1.0.0 승격 전 전수 코드 리뷰 (Claude 직접 리뷰, `fix/extra-section-placeholder` 브랜치 전체 diff 대상) — 문제 없음, main에 fast-forward 병합
+- ✅ Codex CLI 리뷰(main 24개 커밋 전체 diff 대상) 발견 3건 수정 — SSRF 방어 DNS 리바인딩 우회 가능성(`scraper.py`), Gemini 스트림 재시도 시 응답 중복 출력(`llm/gemini.py`), 드롭다운 바깥 클릭 리스너가 내부 클릭 시 사라지는 버그(`app.js`, 재분석/내보내기 드롭다운 2곳)
 
 ---
 

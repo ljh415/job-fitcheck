@@ -245,6 +245,7 @@ class GeminiProvider(LLMProvider):
         input_tokens = 0
         output_tokens = 0
         last_exc: Exception | None = None
+        yielded_any = False
         for attempt in range(3):
             try:
                 stream_resp = await self._client.aio.models.generate_content_stream(
@@ -257,13 +258,16 @@ class GeminiProvider(LLMProvider):
                         input_tokens = chunk.usage_metadata.prompt_token_count or 0
                         output_tokens = chunk.usage_metadata.candidates_token_count or 0
                     if chunk.text:
+                        yielded_any = True
                         yield chunk.text
                 break
             except LLMAPIError:
                 raise
             except Exception as e:
                 last_exc = e
-                if self._is_retryable(e) and attempt < 2:
+                # 이미 청크를 출력한 뒤라면 처음부터 재시도할 경우 응답이 중복 출력되므로,
+                # 첫 청크 이전 실패에 대해서만 재시도한다.
+                if not yielded_any and self._is_retryable(e) and attempt < 2:
                     wait = 5 * (attempt + 1)
                     logger.warning("Gemini 503 재시도 %d/2 (%d초 대기)", attempt + 1, wait)
                     await asyncio.sleep(wait)
