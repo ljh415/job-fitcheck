@@ -151,7 +151,8 @@
 - ✅ prompts.py 상단 docstring 섹션 번호 설명 오류 수정
 - ✅ injection 방어 회귀 테스트 (실제 LLM 호출로 확인)
 - ✅ `review_w_codex.md` ① refill 전체 재분석 시 사용자 관리 필드(상태/핀/태그/지원경로/생성일) + 지원 상태 로그 이력 초기화 버그 수정
-- ⬜ `review_w_codex.md` 나머지 5항목 — 백업 ZIP 충돌, SSRF, 저장형 XSS, Q&A 대화 미유지, 입력 크기 제한
+- ✅ `review_w_codex.md` ② 다중 삭제 시 백업 ZIP 파일명 충돌(초 단위 → 마이크로초) 수정
+- ⬜ `review_w_codex.md` 나머지 4항목 — SSRF, 저장형 XSS, Q&A 대화 미유지, 입력 크기 제한
 
 ---
 

@@ -326,7 +326,7 @@ def _save_backup_zip() -> None:
     backup_dir.mkdir(exist_ok=True)
     buf = io.BytesIO()
     _build_export_zip(buf)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     (backup_dir / f"backup_{ts}.zip").write_bytes(buf.getvalue())
     existing = sorted(backup_dir.glob("backup_*.zip"), key=lambda p: p.name)
     for old in existing[:-5]:
