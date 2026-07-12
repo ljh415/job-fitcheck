@@ -8,8 +8,11 @@ URL 스크래핑 모듈.
 JS 렌더링이 필요한 사이트(잡코리아, 사람인 등)는 본문이 짧게 나오므로
 ValueError를 raise해 프론트에서 텍스트 붙여넣기를 유도한다.
 """
+import asyncio
+import ipaddress
 import json
 import re
+from urllib.parse import urljoin, urlparse
 
 import httpx
 from bs4 import BeautifulSoup
@@ -25,6 +28,57 @@ _HEADERS = {
 
 # LLM 입력 토큰 절약을 위해 약 6,000 토큰 분량으로 제한
 _MAX_TEXT_CHARS = 24_000
+
+_ALLOWED_SCHEMES = {"http", "https"}
+_MAX_REDIRECTS = 5
+
+
+class SSRFBlockedError(ValueError):
+    """사용자 입력 URL이 내부/사설 네트워크를 가리켜 요청을 차단했을 때 발생."""
+
+
+def _is_blocked_ip(ip_str: str) -> bool:
+    ip = ipaddress.ip_address(ip_str)
+    return (
+        ip.is_private or ip.is_loopback or ip.is_link_local
+        or ip.is_reserved or ip.is_multicast or ip.is_unspecified
+    )
+
+
+async def _assert_public_url(url: str) -> None:
+    """스킴·호스트·DNS 목적지를 검사해 내부/사설 네트워크로의 요청을 차단한다."""
+    parsed = urlparse(url)
+    if parsed.scheme not in _ALLOWED_SCHEMES:
+        raise SSRFBlockedError(f"허용되지 않은 URL 스킴입니다: {parsed.scheme}")
+    if not parsed.hostname:
+        raise SSRFBlockedError("URL에 호스트가 없습니다.")
+    try:
+        infos = await asyncio.get_running_loop().getaddrinfo(parsed.hostname, None)
+    except OSError as e:
+        raise SSRFBlockedError(f"호스트를 확인할 수 없습니다: {parsed.hostname}") from e
+    for info in infos:
+        ip_str = info[4][0]
+        if _is_blocked_ip(ip_str):
+            raise SSRFBlockedError(f"내부/사설 네트워크로의 요청은 차단됩니다: {parsed.hostname} → {ip_str}")
+
+
+def is_wanted_host(url: str) -> bool:
+    """호스트명이 정확히 wanted.co.kr 도메인인지 검사 (부분 문자열 검사 대체)."""
+    host = (urlparse(url).hostname or "").lower()
+    return host == "wanted.co.kr" or host.endswith(".wanted.co.kr")
+
+
+async def _safe_get(client: httpx.AsyncClient, url: str, **kwargs) -> httpx.Response:
+    """SSRF 방지: 요청 전 및 각 redirect마다 스킴/호스트/DNS 목적지를 재검사한다."""
+    current_url = url
+    for _ in range(_MAX_REDIRECTS + 1):
+        await _assert_public_url(current_url)
+        response = await client.get(current_url, follow_redirects=False, **kwargs)
+        if response.status_code in (301, 302, 303, 307, 308) and "location" in response.headers:
+            current_url = urljoin(current_url, response.headers["location"])
+            continue
+        return response
+    raise SSRFBlockedError("리다이렉트 횟수가 너무 많습니다.")
 
 
 def _clean_rich_text(value: str) -> str:
@@ -42,8 +96,8 @@ async def fetch_url_text(url: str) -> str:
         ValueError: JS 렌더링이 필요해 스크래핑이 불가능한 사이트
         httpx.HTTPError: 네트워크 오류 또는 4xx/5xx 응답
     """
-    async with httpx.AsyncClient(headers=_HEADERS, timeout=20, follow_redirects=True) as client:
-        response = await client.get(url)
+    async with httpx.AsyncClient(headers=_HEADERS, timeout=20) as client:
+        response = await _safe_get(client, url)
         response.raise_for_status()
         html = response.text
 
@@ -238,7 +292,8 @@ async def _fetch_wanted_company(client: httpx.AsyncClient, company_id: int) -> s
     실패해도 공고 분석 전체를 막지 않도록 None을 반환한다.
     """
     try:
-        resp = await client.get(
+        resp = await _safe_get(
+            client,
             f"https://www.wanted.co.kr/company/{company_id}",
             timeout=15,
         )
@@ -324,20 +379,20 @@ async def fetch_wanted_facts(source_url: str) -> dict | None:
         corp_class, ticker, main_tags
     실패 시 None.
     """
-    async with httpx.AsyncClient(headers=_HEADERS, timeout=20, follow_redirects=True) as client:
+    async with httpx.AsyncClient(headers=_HEADERS, timeout=20) as client:
         try:
             # /company/{id} URL이면 바로 사용, /wd/{id}면 공고 페이지에서 company_id 추출
             company_match = re.search(r"wanted\.co\.kr/company/(\d+)", source_url)
             if company_match:
                 company_id = int(company_match.group(1))
             else:
-                resp = await client.get(source_url)
+                resp = await _safe_get(client, source_url)
                 resp.raise_for_status()
                 _, company_id = _parse_wanted(resp.text)
                 if not company_id:
                     return None
 
-            resp = await client.get(f"https://www.wanted.co.kr/company/{company_id}")
+            resp = await _safe_get(client, f"https://www.wanted.co.kr/company/{company_id}")
             resp.raise_for_status()
             m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', resp.text, re.DOTALL)
             if not m:

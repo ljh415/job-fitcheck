@@ -611,7 +611,7 @@ async def sync_wanted(slug: str, req: SyncWantedRequest = SyncWantedRequest()):
         raise HTTPException(status_code=404, detail="회사를 찾을 수 없습니다.")
 
     url = req.source_url or existing.frontmatter.source_url
-    if not url or "wanted.co.kr" not in url:
+    if not url or not scraper.is_wanted_host(url):
         raise HTTPException(status_code=400, detail="원티드 URL이 없습니다. 편집 폼에서 source_url을 먼저 입력해주세요.")
 
     facts = await scraper.fetch_wanted_facts(url)

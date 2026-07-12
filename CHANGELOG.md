@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.16.5 — URL 스크래핑 SSRF 방어 (2026-07-12)
+
+**`scraper.py`**
+- `_safe_get()` 신설: 요청 전 및 redirect마다 스킴(http/https만 허용)·호스트·DNS 목적지 검사, loopback/private/link-local/reserved/multicast 주소로의 요청 차단
+- `fetch_url_text()`, `fetch_wanted_facts()`, `_fetch_wanted_company()`의 모든 외부 요청을 `_safe_get()`으로 교체
+- `is_wanted_host()` 신설: `main.py`의 원티드 URL 검사를 부분 문자열 검사(`"wanted.co.kr" not in url`)에서 정확한 hostname 매칭으로 교체 (`evil.com/?x=wanted.co.kr` 등 우회 차단)
+- dev 환경에서 내부 IP·file 스킴·클라우드 메타데이터 주소·도메인 위장 URL 차단 및 정상 원티드 동기화 동작 모두 검증
+
 ## v0.16.4 — 다중 삭제 시 백업 ZIP 파일명 충돌 수정 (2026-07-12)
 
 **`_save_backup_zip`** (`backend/main.py`)
