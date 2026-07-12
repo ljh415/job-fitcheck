@@ -113,6 +113,24 @@ window.addEventListener('popstate', (e) => {
   render();
 });
 
+/* ── 이벤트 위임 (동적으로 렌더링되는 카드/행/칩의 클릭·변경 처리) ──────── */
+// inline onclick/onchange에 slug 값을 직접 문자열로 삽입하면 저장형 XSS 위험이
+// 있으므로, data-* 속성만 사용하고 실제 동작은 #app에 위임한 핸들러가 처리한다.
+// #app은 render()가 innerHTML만 교체할 뿐 엘리먼트 자체는 교체되지 않으므로
+// 뷰가 바뀌어도 리스너가 유지된다.
+document.getElementById('app').addEventListener('click', (e) => {
+  const pinBtn = e.target.closest('[data-action="toggle-pin"]');
+  if (pinBtn) { togglePin(pinBtn.dataset.slug); return; }
+  if (e.target.closest('input, select, a')) return;
+  const navEl = e.target.closest('[data-nav="detail"]');
+  if (navEl) navigate('detail', navEl.dataset.slug);
+});
+
+document.getElementById('app').addEventListener('change', (e) => {
+  if (e.target.matches('.row-check')) { onCheckChange(); return; }
+  if (e.target.matches('[data-action="status-change"]')) onStatusChange(e.target.dataset.slug, e.target);
+});
+
 function render() {
   const app = document.getElementById('app');
   const tpl = document.getElementById(`tpl-${currentView}`);
@@ -224,8 +242,8 @@ function renderPinnedSection(pinnedCompanies) {
     const scoreClass = score == null ? 'score-none' : score >= 70 ? 'score-high' : score >= 50 ? 'score-mid' : 'score-low';
     const scoreText = score != null ? score : '-';
     const slug = escHtml(c.slug);
-    return `<div class="pinned-card" onclick="navigate('detail','${slug}')">
-      <button class="pin-card-btn" onclick="event.stopPropagation();togglePin('${slug}')" title="핀 해제">📌</button>
+    return `<div class="pinned-card" data-slug="${slug}" data-nav="detail">
+      <button class="pin-card-btn" data-slug="${slug}" data-action="toggle-pin" title="핀 해제">📌</button>
       <div class="pinned-card-name">${escHtml(fm.company_name)}</div>
       <div class="pinned-card-job">${escHtml(fm.job_title || '-')}</div>
       <div class="pinned-card-meta">
@@ -260,22 +278,22 @@ function renderMainTable(companies, terminatedCount = 0) {
     const slug = escHtml(c.slug);
     const status = escHtml(fm.status);
     const isPinned = !!fm.pinned;
-    return `<tr class="company-row${isTerminated ? ' terminated-row' : ''}" onclick="navigate('detail','${slug}')">
-      <td onclick="event.stopPropagation()"><input type="checkbox" class="row-check" data-slug="${slug}" onchange="onCheckChange()" /></td>
-      <td onclick="event.stopPropagation()">
-        <button class="pin-btn${isPinned ? ' active' : ''}" onclick="togglePin('${slug}')" title="${isPinned ? '핀 해제' : '즐겨찾기 추가'}">📌</button>
+    return `<tr class="company-row${isTerminated ? ' terminated-row' : ''}" data-slug="${slug}" data-nav="detail">
+      <td><input type="checkbox" class="row-check" data-slug="${slug}" /></td>
+      <td>
+        <button class="pin-btn${isPinned ? ' active' : ''}" data-slug="${slug}" data-action="toggle-pin" title="${isPinned ? '핀 해제' : '즐겨찾기 추가'}">📌</button>
       </td>
       <td>
         <strong>${escHtml(fm.company_name)}</strong>
-        ${fm.source_url ? `<br/><a href="${safeHref(fm.source_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="font-size:11px;color:#4361ee;font-weight:600;">🔗 공고 원문</a>` : ''}
+        ${fm.source_url ? `<br/><a href="${safeHref(fm.source_url)}" target="_blank" rel="noopener" style="font-size:11px;color:#4361ee;font-weight:600;">🔗 공고 원문</a>` : ''}
       </td>
       <td>${escHtml(fm.job_title || '-')}</td>
       <td><span class="score-badge ${scoreClass}">${scoreText}</span></td>
       <td>${escHtml(fm.fit_label || '-')}</td>
       <td>${escHtml(fm.stability || '-')}</td>
       <td>${escHtml(fm.location || '-')}</td>
-      <td onclick="event.stopPropagation()">
-        <select class="status-select status-${status}" onchange="onStatusChange('${slug}', this)">
+      <td>
+        <select class="status-select status-${status}" data-slug="${slug}" data-action="status-change">
           ${['미지원','지원','서류통과','인터뷰','최종','탈락','보류','지원마감'].map(s =>
             `<option value="${s}" ${fm.status === s ? 'selected' : ''}>${s}</option>`
           ).join('')}
@@ -497,7 +515,7 @@ async function initDetail(slug) {
     const items = [fm.stability && `안정성: ${escHtml(fm.stability)}`, escHtml(fm.location), escHtml(fm.employee_count)].filter(Boolean);
     const statusSel = escHtml(fm.status);
     chips.innerHTML = items.map(i => `<span class="chip">${i}</span>`).join('') +
-      `<select class="status-select status-${statusSel}" onchange="onStatusChange('${escHtml(currentSlug)}', this)">
+      `<select class="status-select status-${statusSel}" data-slug="${escHtml(currentSlug)}" data-action="status-change">
         ${['미지원','지원','서류통과','인터뷰','최종','탈락','보류','지원마감'].map(s =>
           `<option value="${s}" ${fm.status === s ? 'selected' : ''}>${s}</option>`
         ).join('')}
@@ -1771,7 +1789,7 @@ function renderTimelineList() {
     for (const e of byMonth[monthKey]) {
       const color = _logColor(e.label);
       const score = e.company.fit_score != null ? `<span class="tl-score">${e.company.fit_score}점</span>` : '';
-      html += `<div class="tl-entry" onclick="navigate('detail', ${JSON.stringify(e.company.slug)})">
+      html += `<div class="tl-entry" data-slug="${escHtml(e.company.slug)}" data-nav="detail">
         <div class="tl-dot" style="background:${color}"></div>
         <div class="tl-entry-meta">
           <span class="tl-date">${e.date.slice(5)}</span>
@@ -1823,7 +1841,7 @@ function renderCalendar() {
     const dayEntries = dateMap[dateStr] || [];
     const chips = dayEntries.slice(0, 3).map(e => {
       const color = _logColor(e.label);
-      return `<div class="cal-chip" style="background:${color}" onclick="event.stopPropagation();navigate('detail',${JSON.stringify(e.company.slug)})" title="${escHtml(e.company.display_name)} — ${escHtml(e.company.job_title)} (${escHtml(e.label)})"><div class="cal-chip-name">${escHtml(e.company.display_name)}</div><div class="cal-chip-job">${escHtml(e.company.job_title)}</div></div>`;
+      return `<div class="cal-chip" style="background:${color}" data-slug="${escHtml(e.company.slug)}" data-nav="detail" title="${escHtml(e.company.display_name)} — ${escHtml(e.company.job_title)} (${escHtml(e.label)})"><div class="cal-chip-name">${escHtml(e.company.display_name)}</div><div class="cal-chip-job">${escHtml(e.company.job_title)}</div></div>`;
     }).join('');
     const more = dayEntries.length > 3 ? `<div class="cal-chip-more">+${dayEntries.length - 3}</div>` : '';
     html += `<div class="cal-cell${isToday ? ' cal-cell--today' : ''}">

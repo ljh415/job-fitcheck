@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.16.6 — slug/URL 저장형 XSS 방어 (2026-07-12)
+
+**`frontend/app.js`**
+- 회사명·slug에 단일 인용부호(`'`)가 포함되면 `onclick="navigate('detail','${slug}')"` 같은 이중 인용부호 HTML 속성 안의 단일 인용부호 JS 문자열을 깨고 임의 스크립트를 주입할 수 있던 저장형 XSS 수정
+- `renderPinnedSection()`, `renderMainTable()`, 상세화면 status-select에서 inline `onclick`/`onchange`에 값을 직접 문자열로 삽입하던 방식을 `data-slug`/`data-action` 속성 + `#app` 위임 이벤트 리스너(`click`/`change`)로 전환 — 값이 단일 컨텍스트(HTML 속성)에만 들어가므로 기존 `escHtml()`만으로 안전
+- 부수 발견: `renderTimelineList()`, `renderCalendar()`의 `onclick="navigate('detail', ${JSON.stringify(slug)})"`가 `JSON.stringify()`의 이중 인용부호 결과와 외부 HTML 속성(역시 이중 인용부호)이 충돌해 슬러그 내용과 무관하게 항상 파싱이 깨지던 기존 버그도 같은 방식(`data-slug`)으로 함께 수정 — 캘린더/타임라인 클릭 시 상세화면 이동이 정상 동작하게 됨
+- `cal-chip`의 불필요한 `event.stopPropagation()` 제거 (부모 요소에 별도 클릭 핸들러 없음을 확인)
+- jsdom으로 `evil'"</script><img src=x onerror=alert(1)>` 페이로드를 slug/회사명에 넣어 파싱 이탈 여부·각 클릭/변경 핸들러 호출 여부를 시뮬레이션 검증 완료
+
 ## v0.16.5 — URL 스크래핑 SSRF 방어 (2026-07-12)
 
 **`scraper.py`**

@@ -153,7 +153,8 @@
 - ✅ `review_w_codex.md` ① refill 전체 재분석 시 사용자 관리 필드(상태/핀/태그/지원경로/생성일) + 지원 상태 로그 이력 초기화 버그 수정
 - ✅ `review_w_codex.md` ② 다중 삭제 시 백업 ZIP 파일명 충돌(초 단위 → 마이크로초) 수정
 - ✅ `review_w_codex.md` ③ URL 스크래핑 SSRF 방어 (스킴/호스트/DNS 검사 + redirect 재검사)
-- ⬜ `review_w_codex.md` 나머지 3항목 — 저장형 XSS, Q&A 대화 미유지, 입력 크기 제한
+- ✅ `review_w_codex.md` ④ slug/URL 저장형 XSS 방어 (inline onclick → data-속성 + 이벤트 위임 전환, 캘린더/타임라인 JSON.stringify 파싱 버그도 함께 수정)
+- ⬜ `review_w_codex.md` 나머지 2항목 — Q&A 대화 미유지, 입력 크기 제한
 
 ---
 
