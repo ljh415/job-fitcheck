@@ -155,7 +155,7 @@
 - ✅ `review_w_codex.md` ③ URL 스크래핑 SSRF 방어 (스킴/호스트/DNS 검사 + redirect 재검사)
 - ✅ `review_w_codex.md` ④ slug/URL 저장형 XSS 방어 (inline onclick → data-속성 + 이벤트 위임 전환, 캘린더/타임라인 JSON.stringify 파싱 버그도 함께 수정)
 - ✅ `review_w_codex.md` ⑤ Q&A 대화 히스토리가 LLM 호출에 전달 안 되던 버그 수정 (단일/비교 Q&A 모두, 임의 암호코드로 멀티턴 기억 여부 검증)
-- ⬜ `review_w_codex.md` ⑥ API 입력 크기/개수 제한 부족
+- ✅ `review_w_codex.md` ⑥ API 입력 크기/개수 제한 부족 (텍스트/Q&A/PDF/이미지/URL 응답 크기 상한 추가, `_safe_get()` 재구성 시 헤더 이중 디코딩 회귀 버그도 함께 수정)
 
 ---
 

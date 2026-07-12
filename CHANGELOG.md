@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.16.8 — API 입력 크기/개수 제한 부족 수정 (2026-07-13)
+
+**`backend/models.py`**
+- `FromTextRequest.text` 100,000자, `QAMessage.text` 20,000자, `QARequest`/`MultiQARequest.question` 2,000자, `history` 40개, `MultiQARequest.slugs` 5개(프론트 비교 뷰의 기존 5개 제한과 동일)로 상한 추가
+
+**`backend/main.py`**
+- `_MAX_UPLOAD_FILES`(10개), `_MAX_PDF_BYTES`(30MB), `_MAX_IMAGE_BYTES`(15MB) 상수 추가
+- `upload_profile()`(PDF)·`add_from_image()`(이미지)에 개수 초과 시 400, 크기 초과 시 413 검사 추가
+- 상한선은 정상 사용의 정확한 한도를 추정한 값이 아니라, 실제 관측치(기존 공고 원문 최대 7.3KB 등) 대비 수배~수십 배 여유를 둔 안전판 — 정상 사용은 걸리지 않고 실수·이상 입력만 차단
+
+**`backend/scraper.py`**
+- `_safe_get()`을 스트리밍(`client.stream()` + `aiter_bytes()`) 방식으로 재작성해 응답을 받는 도중 `_MAX_RESPONSE_BYTES`(10MB) 초과 시 즉시 중단 (Content-Length가 없거나 거짓인 응답도 실제 수신 바이트 기준으로 차단)
+- 재구성한 `httpx.Response`에 원본 `content-encoding`/`content-length` 헤더를 그대로 넘기면, 이미 압축 해제된 바이트를 다시 압축 해제하려다 실패하는(`DecodingError`) 회귀 버그를 발견해 함께 수정 (재구성 시 두 헤더 제거)
+- curl로 Q&A/다중Q&A/from-text 각 제한 초과 시 422 확인, PDF·이미지 11개 업로드 시 400, 16MB 이미지 업로드 시 413 확인, 정상 범위 업로드·실제 원티드 URL 스크래핑 회귀 없음 확인
+
 ## v0.16.7 — Q&A 대화 히스토리 미유지 버그 수정 (2026-07-13)
 
 **`backend/models.py`**

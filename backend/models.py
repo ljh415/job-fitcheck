@@ -128,7 +128,8 @@ class FromTextRequest(BaseModel):
     company_name: str
     job_title: str
     source_url: str | None = None
-    text: str = ""
+    # 정상 공고 텍스트(수 KB)보다 훨씬 넉넉하게 잡아, 실수로 문서 전체를 붙여넣는 경우만 차단
+    text: str = Field("", max_length=100_000)
 
 
 class ManualCompanyRequest(BaseModel):
@@ -146,18 +147,18 @@ class CompanyUpdateRequest(BaseModel):
 
 class QAMessage(BaseModel):
     role: Literal["user", "assistant"]
-    text: str
+    text: str = Field(max_length=20_000)
 
 
 class QARequest(BaseModel):
-    question: str
-    history: list[QAMessage] = []
+    question: str = Field(max_length=2_000)
+    history: list[QAMessage] = Field(default_factory=list, max_length=40)
 
 
 class MultiQARequest(BaseModel):
-    slugs: list[str]
-    question: str
-    history: list[QAMessage] = []
+    slugs: list[str] = Field(max_length=5)
+    question: str = Field(max_length=2_000)
+    history: list[QAMessage] = Field(default_factory=list, max_length=40)
 
 
 class SettingsResponse(BaseModel):

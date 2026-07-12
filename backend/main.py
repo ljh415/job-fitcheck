@@ -92,6 +92,12 @@ app = FastAPI(title="Job FitCheck", version="0.1.0", lifespan=lifespan)
 _MAX_IMAGE_SIDE = 1568  # Anthropic 권장 최대 크기 (이 이상은 서버에서 강제 리사이즈되며 토큰 낭비)
 _ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 
+# 업로드 개수/크기 상한 — 정상 사용 범위를 정밀하게 맞춘 값이 아니라,
+# 정상 사용에서는 절대 걸리지 않을 만큼 넉넉하되 실수·이상 입력만 걸러내는 안전판.
+_MAX_UPLOAD_FILES = 10  # 이력서+포트폴리오 여러 개, 공고 스크린샷 여러 장 정도는 통과
+_MAX_PDF_BYTES = 30 * 1024 * 1024  # 이미지가 많은 포트폴리오 PDF도 통과하는 수준
+_MAX_IMAGE_BYTES = 15 * 1024 * 1024  # 스크린샷/사진 1장 기준 (리사이즈 전 원본)
+
 
 def _resize_image(data: bytes) -> tuple[bytes, str]:
     """이미지를 최대 1568px로 다운샘플링하고 (bytes, media_type) 반환.
@@ -373,12 +379,19 @@ async def update_profile(req: ProfileUpdateRequest):
 async def upload_profile(files: list[UploadFile] = File(...), extra_note: str = Form(""), max_tokens: int = Form(8192)):
     max_tokens = min(max_tokens, 32768)
     """PDF 업로드 → pdfplumber 추출 → High 티어 LLM → candidate_profile.md 생성."""
+    if len(files) > _MAX_UPLOAD_FILES:
+        raise HTTPException(status_code=400, detail=f"PDF는 한 번에 최대 {_MAX_UPLOAD_FILES}개까지 업로드할 수 있습니다.")
     uploaded_paths: list[Path] = []
     filenames: list[str] = []
 
     for file in files:
         if not file.filename or not file.filename.lower().endswith(".pdf"):
             raise HTTPException(status_code=400, detail=f"PDF 파일만 업로드 가능합니다: {file.filename}")
+        if file.size is not None and file.size > _MAX_PDF_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"파일이 너무 큽니다: {file.filename} ({_MAX_PDF_BYTES // (1024*1024)}MB 이하만 가능)",
+            )
         safe_name = Path(file.filename).name  # 디렉토리 경로 제거 (../../ 등 차단)
         dest = (settings.uploads_dir / safe_name).resolve()
         if not dest.is_relative_to(settings.uploads_dir.resolve()):
@@ -934,6 +947,8 @@ async def add_from_image(files: list[UploadFile] = File(...)):
     """이미지(스크린샷/사진) 업로드 → 텍스트 추출 → 공고 분석."""
     if not files:
         raise HTTPException(status_code=400, detail="이미지 파일이 없습니다.")
+    if len(files) > _MAX_UPLOAD_FILES:
+        raise HTTPException(status_code=400, detail=f"이미지는 한 번에 최대 {_MAX_UPLOAD_FILES}장까지 업로드할 수 있습니다.")
 
     image_blocks: list[dict] = []
     for file in files:
@@ -941,6 +956,11 @@ async def add_from_image(files: list[UploadFile] = File(...)):
             raise HTTPException(
                 status_code=400,
                 detail=f"지원하지 않는 형식입니다: {file.filename} ({file.content_type}). JPEG/PNG/WebP/GIF만 가능합니다.",
+            )
+        if file.size is not None and file.size > _MAX_IMAGE_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"이미지가 너무 큽니다: {file.filename} ({_MAX_IMAGE_BYTES // (1024*1024)}MB 이하만 가능)",
             )
         data = await file.read()
         try:

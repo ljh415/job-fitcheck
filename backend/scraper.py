@@ -31,6 +31,9 @@ _MAX_TEXT_CHARS = 24_000
 
 _ALLOWED_SCHEMES = {"http", "https"}
 _MAX_REDIRECTS = 5
+# 채용공고 페이지는 보통 수백 KB~2MB 수준. 그 대비 넉넉하게 잡아 비정상적으로
+# 큰 응답(잘못된 URL, 대용량 파일 등)만 걸러내는 안전판.
+_MAX_RESPONSE_BYTES = 10 * 1024 * 1024
 
 
 class SSRFBlockedError(ValueError):
@@ -69,15 +72,36 @@ def is_wanted_host(url: str) -> bool:
 
 
 async def _safe_get(client: httpx.AsyncClient, url: str, **kwargs) -> httpx.Response:
-    """SSRF 방지: 요청 전 및 각 redirect마다 스킴/호스트/DNS 목적지를 재검사한다."""
+    """SSRF 방지: 요청 전 및 각 redirect마다 스킴/호스트/DNS 목적지를 재검사한다.
+    응답은 스트리밍으로 받아 _MAX_RESPONSE_BYTES를 넘기면 즉시 중단한다
+    (Content-Length가 없거나 거짓인 응답도 실제 수신 바이트 기준으로 막기 위함)."""
     current_url = url
     for _ in range(_MAX_REDIRECTS + 1):
         await _assert_public_url(current_url)
-        response = await client.get(current_url, follow_redirects=False, **kwargs)
-        if response.status_code in (301, 302, 303, 307, 308) and "location" in response.headers:
-            current_url = urljoin(current_url, response.headers["location"])
-            continue
-        return response
+        async with client.stream("GET", current_url, follow_redirects=False, **kwargs) as response:
+            if response.status_code in (301, 302, 303, 307, 308) and "location" in response.headers:
+                current_url = urljoin(current_url, response.headers["location"])
+                continue
+            content_length = response.headers.get("content-length")
+            if content_length and int(content_length) > _MAX_RESPONSE_BYTES:
+                raise ValueError(f"응답 크기가 너무 큽니다 ({int(content_length):,} bytes).")
+            body = bytearray()
+            async for chunk in response.aiter_bytes():
+                body.extend(chunk)
+                if len(body) > _MAX_RESPONSE_BYTES:
+                    raise ValueError(f"응답 크기가 제한({_MAX_RESPONSE_BYTES // (1024*1024)}MB)을 초과했습니다.")
+            # aiter_bytes()는 이미 압축을 해제한 바이트를 반환하므로, 원본 헤더의
+            # content-encoding/content-length를 그대로 넘기면 httpx.Response가 이미 풀린
+            # 데이터를 다시 압축 해제하려다 실패한다 (DecodingError). 재구성 시 제거.
+            headers = httpx.Headers(response.headers)
+            headers.pop("content-encoding", None)
+            headers.pop("content-length", None)
+            return httpx.Response(
+                status_code=response.status_code,
+                headers=headers,
+                content=bytes(body),
+                request=response.request,
+            )
     raise SSRFBlockedError("리다이렉트 횟수가 너무 많습니다.")
 
 
