@@ -49,6 +49,7 @@ let currentSlug = null;
 let allCompanies = [];
 let selectedSlugs = new Set();
 let compareTargets = [];
+let compareQaHistory = [];
 const TERMINATED = new Set(['탈락', '지원마감']);
 let hideTerminated = localStorage.getItem('hide-terminated') !== 'false'; // 기본: 숨김
 let filterPinnedOnly = false;
@@ -797,6 +798,7 @@ async function sendQA() {
   input.value = '';
 
   if (!qaHistory[currentSlug]) qaHistory[currentSlug] = [];
+  const history = qaHistory[currentSlug].slice();
   qaHistory[currentSlug].push({ role: 'user', text: question });
   saveQAHistory();
   appendBubble('qa-messages', question, 'user');
@@ -806,7 +808,7 @@ async function sendQA() {
   const makeFetch = () => fetch(`/api/companies/${encodeURIComponent(currentSlug)}/qa`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(token ? { 'Authorization': `Bearer ${token}` } : {}) },
-    body: JSON.stringify({ question }),
+    body: JSON.stringify({ question, history }),
   });
 
   try {
@@ -826,6 +828,8 @@ async function sendCompareQA() {
   if (!question) return;
   input.value = '';
 
+  const history = compareQaHistory.slice();
+  compareQaHistory.push({ role: 'user', text: question });
   appendBubble('compare-qa-messages', question, 'user');
   const assistantBubble = appendBubble('compare-qa-messages', '', 'assistant');
 
@@ -833,11 +837,12 @@ async function sendCompareQA() {
   const makeFetch = () => fetch('/api/companies/qa', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(token ? { 'Authorization': `Bearer ${token}` } : {}) },
-    body: JSON.stringify({ slugs: compareTargets, question }),
+    body: JSON.stringify({ slugs: compareTargets, question, history }),
   });
 
   try {
-    await streamQA(makeFetch, assistantBubble);
+    const fullText = await streamQA(makeFetch, assistantBubble);
+    if (fullText) compareQaHistory.push({ role: 'assistant', text: fullText });
   } catch (e) {
     assistantBubble.textContent = `오류: ${e.message}`;
   }
@@ -1081,6 +1086,7 @@ async function submitText() {
 
 /* ── 비교 뷰 ─────────────────────────────────────────────────────── */
 async function initCompare(slugs) {
+  compareQaHistory = [];
   let records;
   try {
     records = await api(`/companies/compare?slugs=${slugs.join(',')}`);

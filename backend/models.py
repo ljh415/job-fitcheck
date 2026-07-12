@@ -144,13 +144,20 @@ class CompanyUpdateRequest(BaseModel):
     body: str = ""
 
 
+class QAMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    text: str
+
+
 class QARequest(BaseModel):
     question: str
+    history: list[QAMessage] = []
 
 
 class MultiQARequest(BaseModel):
     slugs: list[str]
     question: str
+    history: list[QAMessage] = []
 
 
 class SettingsResponse(BaseModel):

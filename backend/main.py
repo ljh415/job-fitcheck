@@ -68,6 +68,7 @@ from models import (
     ManualCompanyRequest,
     MultiQARequest,
     ProfileUpdateRequest,
+    QAMessage,
     QARequest,
     SettingsResponse,
     SettingsUpdateRequest,
@@ -1118,6 +1119,30 @@ def _make_sse(gen):
     return StreamingResponse(_wrapped(), media_type="text/event-stream")
 
 
+def _build_qa_messages(context_part: str, history: list[QAMessage], question: str) -> list[dict]:
+    """대화 히스토리를 포함한 멀티턴 메시지 배열 구성. 컨텍스트는 첫 메시지에만 포함하고,
+    연속으로 같은 role이 나오면 하나의 메시지로 합쳐 역할이 user/assistant로 번갈아 나오게 한다."""
+    turns = [{"role": h.role, "text": h.text} for h in history]
+    turns.append({"role": "user", "text": f"## 질문\n{question}"})
+
+    messages: list[dict] = []
+    for turn in turns:
+        if messages and messages[-1]["role"] == turn["role"]:
+            if isinstance(messages[-1]["content"], list):
+                messages[-1]["content"].append({"type": "text", "text": turn["text"]})
+            else:
+                messages[-1]["content"] += "\n\n" + turn["text"]
+            continue
+        if not messages:
+            messages.append({"role": turn["role"], "content": [
+                {"type": "text", "text": context_part, "cache_control": {"type": "ephemeral"}},
+                {"type": "text", "text": turn["text"]},
+            ]})
+        else:
+            messages.append({"role": turn["role"], "content": turn["text"]})
+    return messages
+
+
 @app.post("/api/companies/{slug}/qa")
 async def company_qa(slug: str, req: QARequest):
     """단일 회사 Q&A — 회사 정보 + 후보자 프로필을 컨텍스트로 High 티어 스트리밍."""
@@ -1131,10 +1156,7 @@ async def company_qa(slug: str, req: QARequest):
     provider, model = high_provider()
     gen = provider.stream(
         system=prompts.QA_SYSTEM,
-        messages=[{"role": "user", "content": [
-            {"type": "text", "text": context_part, "cache_control": {"type": "ephemeral"}},
-            {"type": "text", "text": f"## 질문\n{req.question}"},
-        ]}],
+        messages=_build_qa_messages(context_part, req.history, req.question),
         model=model,
         operation="Q&A",
     )
@@ -1162,10 +1184,7 @@ async def multi_company_qa(req: MultiQARequest):
     provider, model = high_provider()
     gen = provider.stream(
         system=prompts.QA_SYSTEM,
-        messages=[{"role": "user", "content": [
-            {"type": "text", "text": context_part, "cache_control": {"type": "ephemeral"}},
-            {"type": "text", "text": f"## 질문\n{req.question}"},
-        ]}],
+        messages=_build_qa_messages(context_part, req.history, req.question),
         model=model,
         operation="Multi Q&A",
     )

@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.16.7 — Q&A 대화 히스토리 미유지 버그 수정 (2026-07-13)
+
+**`backend/models.py`**
+- `QAMessage`(role/text) 모델 추가, `QARequest`/`MultiQARequest`에 `history: list[QAMessage] = []` 필드 추가
+
+**`backend/main.py`**
+- 단일회사 Q&A(`/api/companies/{slug}/qa`)와 비교 Q&A(`/api/companies/qa`) 모두 매 요청을 독립 단일 메시지로만 LLM에 전달해, "그럼 연봉은?" 같은 후속 질문이 이전 대화 맥락 없이 처리되던 문제 수정
+- `_build_qa_messages()` 신설: 히스토리를 user/assistant 교대 메시지로 구성하고 컨텍스트(후보자 프로필+회사 정보)는 첫 메시지에만 포함, 연속 동일 role은 하나로 병합해 역할 교대를 항상 보장
+
+**`frontend/app.js`**
+- `sendQA()`가 기존 `qaHistory[currentSlug]`를 요청에 함께 전송하도록 수정
+- `sendCompareQA()`는 기존에 대화 히스토리를 아예 저장하지 않던 문제도 함께 발견 — 뷰 진입 시 초기화되는 메모리 내 `compareQaHistory` 배열 추가로 같은 방식 적용
+- curl로 임의 암호코드를 1턴에 알려주고 2턴에 되묻는 시나리오로 히스토리 미포함 시(맥락 없음)/포함 시(정확히 기억) 차이를 직접 검증 완료
+
 ## v0.16.6 — slug/URL 저장형 XSS 방어 (2026-07-12)
 
 **`frontend/app.js`**
