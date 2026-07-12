@@ -689,6 +689,27 @@ def _replace_fit_section(body: str, new_section: str) -> str:
     return body.rstrip() + f"\n\n{new_section}"
 
 
+def _append_status_log(body: str, label: str) -> str:
+    """'지원 상태 로그' 섹션 끝에 오늘 날짜로 새 항목을 추가한다. 섹션이 없으면 새로 만든다."""
+    new_line = f"- {date.today().isoformat()}: {label}"
+    lines = body.split("\n")
+    log_header_idx = next(
+        (i for i, line in enumerate(lines) if re.match(r"##\s*\d*\.?\s*지원 상태 로그", line)), None,
+    )
+    if log_header_idx is None:
+        return body.rstrip() + f"\n\n## 지원 상태 로그\n{new_line}"
+
+    insert_idx = len(lines)
+    for i in range(log_header_idx + 1, len(lines)):
+        if lines[i].startswith("## "):
+            insert_idx = i
+            break
+    while insert_idx > log_header_idx + 1 and lines[insert_idx - 1].strip() == "":
+        insert_idx -= 1
+    lines.insert(insert_idx, new_line)
+    return "\n".join(lines)
+
+
 # ── 회사 추가 ─────────────────────────────────────────────────────────────────
 
 async def _process_company(
@@ -854,9 +875,12 @@ async def _process_company(
             fm_data[field] = getattr(preserve_fm, field)
     fm = CompanyFrontmatter(**fm_data)
 
-    # 지원 상태 로그: 기존 이력이 있으면(refill) 그 위에 새 항목을 이어붙이고, 없으면(신규) 한 줄로 시작
+    # 지원 상태 로그: refill(existing_slug 있음)이면 기존 이력 위에 이어붙이고, 신규 생성이면 한 줄로 시작.
+    # preserved_log_entries의 존재 여부가 아니라 호출 종류(existing_slug)로 문구를 판정해야,
+    # 기존 로그가 비어있거나 파싱에 실패한 상태로 refill해도 "재분석 완료"가 정확히 기록된다.
+    is_refill = existing_slug is not None
     log_lines = [f"- {e['date']}: {e['label']}" for e in (preserved_log_entries or [])]
-    log_lines.append(f"- {date.today().isoformat()}: {'재분석 완료' if preserved_log_entries else '분석 완료'}")
+    log_lines.append(f"- {date.today().isoformat()}: {'재분석 완료' if is_refill else '분석 완료'}")
     log_body = "\n".join(log_lines)
 
     # 섹션 추가: 적합도 있으면 4(리포트)+5(종합의견) → 6(로그), 없으면 4(로그)
@@ -1120,6 +1144,7 @@ async def refit_company(slug: str):
     body = record.body
     new_section = f"## 4. 적합도 리포트 — {fit_result.get('fit_score', '?')} / 100\n\n{fit_report}"
     body = _replace_fit_section(body, new_section)
+    body = _append_status_log(body, "적합도 재평가 완료")
 
     record = storage.write_company(slug, fm, body)
     return record

@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.16.9 — refill/refit 지원 상태 로그 세분화 (2026-07-13)
+
+**`backend/main.py`**
+- `_append_status_log()` 신설: "지원 상태 로그" 섹션 끝에 오늘 날짜로 새 항목을 추가(섹션 번호 무관, 없으면 새로 생성)
+- `refit_company()`(적합도만 재평가)가 지금까지 로그를 전혀 남기지 않던 문제 수정 — "적합도 재평가 완료" 항목 추가
+- `_process_company()`의 "재분석 완료" / "분석 완료" 문구 판정을 `preserved_log_entries` truthy 여부가 아니라 `existing_slug` 존재 여부(refill 호출인지)로 변경 — 기존 로그가 없거나 파싱 실패 상태에서 refill해도 문구가 정확히 기록됨
+- 결과적으로 신규 분석/전체 재분석(refill)/적합도만 재평가(refit) 세 가지가 로그에 각각 다른 문구로 구분 기록됨
+
+**`frontend/app.js`**
+- `EXCLUDED_LOG_LABELS`에 `'적합도 재평가 완료'` 추가 — 신규 분석/등록과 마찬가지로 순수 배경 분석 메타데이터로 취급해 타임라인에는 노출하지 않음 (상세페이지 로그 섹션에는 계속 기록됨)
+
 ## v0.16.8 — API 입력 크기/개수 제한 부족 수정 (2026-07-13)
 
 **`backend/models.py`**

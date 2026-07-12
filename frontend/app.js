@@ -1727,7 +1727,7 @@ function switchTimelineTab(tab) {
   if (tab === 'cal') renderCalendar();
 }
 
-const EXCLUDED_LOG_LABELS = new Set(['분석 완료', '등록']);
+const EXCLUDED_LOG_LABELS = new Set(['분석 완료', '등록', '적합도 재평가 완료']);
 const ACTIVE_STATUSES = new Set(['지원', '서류통과', '인터뷰', '최종', '보류']);
 const CLOSED_STATUSES = new Set(['탈락', '지원마감']);
 let _tlShowClosed = false;
