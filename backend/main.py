@@ -684,8 +684,14 @@ async def _process_company(
     existing_slug: str | None = None,
     company_name_override: str = "",
     job_title_override: str = "",
+    preserve_fm: CompanyFrontmatter | None = None,
+    preserved_log_entries: list[dict] | None = None,
 ) -> CompanyRecord:
-    """텍스트 → 추출 → 잡플래닛 조회 → 본문 생성 → 적합도 평가 → 저장."""
+    """텍스트 → 추출 → 잡플래닛 조회 → 본문 생성 → 적합도 평가 → 저장.
+
+    preserve_fm/preserved_log_entries가 주어지면(refill 시) 사용자가 직접 관리하는
+    상태·핀·태그·지원경로·생성일과 지원 상태 로그 이력을 새 분석 결과에 덮어써 보존한다.
+    """
     # storage에는 원본 raw_text를 그대로 저장해야 하므로, 프롬프트 삽입용 이스케이프 사본을 별도로 둔다.
     safe_raw_text = prompts.escape_tag_chars(raw_text)
 
@@ -828,14 +834,23 @@ async def _process_company(
     fm_data = {**extracted, **fit_data, "source_type": source_type, "llm_provider": get_active_provider()}
     if source_url:
         fm_data["source_url"] = source_url
+    if preserve_fm:
+        # 재분석(refill)으로 LLM이 갱신하는 필드가 아니라 사용자가 직접 관리하는 필드는 기존 값을 유지한다.
+        for field in ("status", "pinned", "tags", "application_source", "created_at"):
+            fm_data[field] = getattr(preserve_fm, field)
     fm = CompanyFrontmatter(**fm_data)
+
+    # 지원 상태 로그: 기존 이력이 있으면(refill) 그 위에 새 항목을 이어붙이고, 없으면(신규) 한 줄로 시작
+    log_lines = [f"- {e['date']}: {e['label']}" for e in (preserved_log_entries or [])]
+    log_lines.append(f"- {date.today().isoformat()}: {'재분석 완료' if preserved_log_entries else '분석 완료'}")
+    log_body = "\n".join(log_lines)
 
     # 섹션 추가: 적합도 있으면 4(리포트)+5(종합의견) → 6(로그), 없으면 4(로그)
     if fit_report:
         body += f"\n\n## 4. 적합도 리포트 — {fit_data.get('fit_score', '?')} / 100\n\n{fit_report}"
-        body += f"\n\n## 6. 지원 상태 로그\n- {date.today().isoformat()}: 분석 완료"
+        body += f"\n\n## 6. 지원 상태 로그\n{log_body}"
     else:
-        body += f"\n\n## 4. 지원 상태 로그\n- {date.today().isoformat()}: 분석 완료"
+        body += f"\n\n## 4. 지원 상태 로그\n{log_body}"
 
     slug = existing_slug or storage.make_slug(fm.company_name, fm.job_title or "")
     storage.write_raw_text(slug, raw_text)
@@ -985,8 +1000,12 @@ async def refill_company(slug: str):
         raise HTTPException(status_code=404, detail="회사를 찾을 수 없습니다.")
     raw_text = storage.read_raw_text(slug) or record.body
     source_url = record.frontmatter.source_url
+    preserved_log_entries = _parse_status_log(record.body, slug=slug)
     try:
-        return await _process_company(raw_text, record.frontmatter.source_type, source_url, existing_slug=slug)
+        return await _process_company(
+            raw_text, record.frontmatter.source_type, source_url, existing_slug=slug,
+            preserve_fm=record.frontmatter, preserved_log_entries=preserved_log_entries,
+        )
     except LLMAPIError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e))
 

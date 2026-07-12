@@ -138,6 +138,23 @@
 
 ---
 
+## Phase 6 — v1.0.0 사전 코드/프롬프트 리뷰 (진행중)
+
+> Codex 코드/프롬프트 리뷰(`review_w_codex.md`) 반영, `fix/extra-section-placeholder` 브랜치
+
+- ✅ 프로필 추출 시 추가 메모 placeholder 미치환 버그 수정 (4805088)
+- ✅ 자격요건/우대사항 표기 기준(✅❌🔲) provider 간 불일치 해소 (20b85fd)
+- ✅ 프로필 summary 필드 할루시네이션 방지 지시 강화 (1194510)
+- ✅ 외부 입력 신뢰 경계 — `TRUST_BOUNDARY_NOTICE` 8개 시스템 프롬프트에 추가 (ec168e1)
+- ✅ 사용자 지정 평가 기준 권한 경계 — `CUSTOM_CRITERIA_BOUNDARY_NOTICE` 추가 (0182769)
+- ✅ 태그 탈출 이스케이프(`escape_tag_chars`) + 원티드/리멤버 리치텍스트 HTML 정제(`_clean_rich_text`) (58595d9)
+- ✅ prompts.py 상단 docstring 섹션 번호 설명 오류 수정
+- ✅ injection 방어 회귀 테스트 (실제 LLM 호출로 확인)
+- ✅ `review_w_codex.md` ① refill 전체 재분석 시 사용자 관리 필드(상태/핀/태그/지원경로/생성일) + 지원 상태 로그 이력 초기화 버그 수정
+- ⬜ `review_w_codex.md` 나머지 5항목 — 백업 ZIP 충돌, SSRF, 저장형 XSS, Q&A 대화 미유지, 입력 크기 제한
+
+---
+
 ## 알려진 이슈 / 기술 부채
 
 - ✅ `refill` 엔드포인트: 원문 텍스트(`{slug}.raw.txt`) 별도 보존으로 해결

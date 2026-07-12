@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.16.3 — refill 전체 재분석 시 사용자 데이터 초기화 버그 수정 (2026-07-12)
+
+**`_process_company`/`refill_company`** (`backend/main.py`)
+- 전체 재분석(refill) 시 `status`/`pinned`/`tags`/`application_source`/`created_at`이 LLM 재추출 결과로 덮여 초기화되던 문제 수정 — 기존 frontmatter 값을 그대로 유지
+- 본문 재조립 시 `## N. 지원 상태 로그` 섹션의 기존 날짜별 이력이 통째로 사라지던 문제 수정 — 기존 로그를 파싱해 새 항목 위에 이어붙임
+- `prompts.py` 상단 docstring의 마크다운 섹션 번호 설명 오류 정정 (실제 코드와 불일치)
+- dev 환경에서 refill 실행 후 보존 대상 필드·로그 이력 전부 검증 완료
+
 ## v0.16.2 — Gemini 프롬프트 v7.4 + 공용 스키마 앵커 제거 (2026-07-10)
 
 **Gemini 전용 적합도 평가 프롬프트 v6 → v7.4** (`backend/prompts.py`)
