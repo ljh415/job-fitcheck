@@ -195,3 +195,5 @@
 - ✅ prod 실데이터 오염: NHN·딥파인·다키 3사 리포트가 실험 중 Gemini(v5) 생성본으로 덮어써짐 → Claude(sonnet-4-6) refit 원복 완료 (2026-07-10, 다키 38점 = 실험 전 기준점 일치)
 - ✅ 적합도 리포트 이중 헤더: 모델 출력이 개행으로 시작하면 `re.sub` `^` 앵커 미스매치 → strip 순서 수정 (v0.16.2, main.py 4곳)
 - ⬜ Claude haiku 추출 시 매출 필드에 원문에 없는 연도 날조 1건 관찰 (n=1, 지시문 방어선 있음) → 재발 시 "원문 발췌 문자열만 허용" 제약 검토 (공용 스키마라 타 모델 간섭 주의)
+- ⬜ OpenAI High=`gpt-5`(reasoning_effort=medium)로 `/api/companies/from-url` 실행 시 적합도 평가 단계가 120초를 넘겨 5/5 전부 504 Gateway Timeout (2026-07-13, dev 실측). `_process_company`/`refill_company`의 `asyncio.wait_for(timeout=120)`이 원인. dev에서 타임아웃을 300초로 임시 상향 후 재현 테스트한 결과 실제 호출은 150~180초 내 정상 완료됨(설정값은 그대로 유지, effort를 낮추는 방향은 기각 — 실제 사용 비용 측정 목적과 어긋남). 타임아웃을 180~300초 선으로 늘리는 방향으로 수정 필요(fix 브랜치는 아직 미생성)
+- ✅ Gemini 429 오류 메시지가 실제 원인과 무관하게 항상 "무료 티어 요청 한도 초과"로 고정 출력되던 버그 수정 (2026-07-13). refit 비용 측정 중 유료(prepay) 계정에서 429가 발생했는데도 무료 티어 문구가 나가 사용자 혼선 발생 — docker 로그에서 확인한 구글 원본 오류는 `Your prepayment credits are depleted`(선불 크레딧 소진)였음. `gemini.py` `_raise()`에서 `e.message`(google-genai `APIError`가 원본 메시지를 그대로 담고 있음)를 읽어 "prepay" 포함 시 크레딧 소진 안내로, 그 외 429는 원본 메시지를 함께 노출하도록 수정

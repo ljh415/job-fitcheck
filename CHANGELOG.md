@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.0.4 — Gemini 429 오류 메시지 정확화 + 실제 사용 비용 실측 갱신 (2026-07-13)
+
+**`backend/llm/gemini.py`**
+- `_raise()`가 429/RESOURCE_EXHAUSTED 발생 시 실제 원인과 무관하게 항상 "무료 티어 요청 한도 초과"로 고정 출력하던 버그 수정 — 유료(prepay) 계정에서도 무료 티어 문구가 나가 혼선 발생. google-genai `APIError`가 `e.message`에 담고 있는 원본 메시지를 확인해, "prepay" 포함 시 선불 크레딧 소진 안내로, 그 외 429는 원본 메시지를 함께 노출하도록 수정
+
+**`README.md`**
+- "실제 사용 비용" 표 실측 갱신 — 공고 1건 분석(Claude/OpenAI/Gemini 기본 설정 실측치) + 적합도 재평가(refit) 표(OpenAI gpt-5 $0.0550, Gemini 3.5-flash $0.0595) 반영
+
+**`docs/TODO.md`**
+- 위 429 메시지 버그 수정 항목, OpenAI gpt-5 504 타임아웃 관찰 항목 추가
+
 ## v1.0.3 — Gemini 3.5 Flash / 3.1 Flash-Lite 단가 추가 (2026-07-13)
 
 **`backend/usage_tracker.py`**

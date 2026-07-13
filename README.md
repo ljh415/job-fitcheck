@@ -68,6 +68,32 @@ Gemini는 **Google AI Studio 무료 티어**로 API 키 발급 없이 사용 가
 
 > 일일 호출 횟수가 제한적이므로, 공고 분석 시 Claude를 기본으로 사용하고 Gemini는 보조 비교용으로 활용하는 것을 권장합니다.
 
+### 실제 사용 비용
+
+공고 하나를 넣었을 때 Provider별로 실제 얼마가 나가는지를 정리한 표입니다. 공고 1건 분석은 Light 모델(구조화 추출·본문 생성) + High 모델(적합도 평가) 호출을 합친 값입니다.
+
+**공고 1건 분석**
+
+| Provider | 모델 조합 (Light + High) | 건당 평균 비용 |
+|---|---|---|
+| Claude | haiku-4-5 + sonnet-4-6 | $0.1109 (63건) |
+| OpenAI | gpt-5-mini + gpt-5 | $0.0623 (9건) |
+| Gemini | 3.1-flash-lite + 3.5-flash | $0.0584 (8건) |
+
+**적합도 재평가 (refit)**
+
+| Provider | 모델 (High) | 건당 평균 비용 |
+|---|---|---|
+| Claude | sonnet-4-6 | $0.1027 (18건) |
+| OpenAI | gpt-5 | $0.0550 (10건) |
+| Gemini | 3.5-flash | $0.0595 (7건) |
+
+**프로필 생성**
+
+| Provider | 모델 (High) | 건당 평균 비용 |
+|---|---|---|
+| Claude | sonnet-4-6 | $0.1386 (8건) |
+
 ## 변경 이력
 
 [CHANGELOG.md](CHANGELOG.md)
