@@ -32,8 +32,8 @@ class Settings(BaseSettings):
     openai_high_model: str = "gpt-5"
     openai_light_model: str = "gpt-5-mini"
     openai_reasoning_effort: str = "medium"
-    gemini_high_model: str = "gemini-2.5-flash"
-    gemini_light_model: str = "gemini-2.5-flash-lite"
+    gemini_high_model: str = "gemini-3.5-flash"
+    gemini_light_model: str = "gemini-3.1-flash-lite"
 
     # 로그인 비밀번호 — 비어 있으면 인증 미적용 (로컬 개발용)
     app_secret: str = ""

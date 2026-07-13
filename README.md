@@ -52,8 +52,8 @@ docker compose up --build
 
 | 작업 | Claude | OpenAI | Gemini |
 |---|---|---|---|
-| 공고 구조화·요약 | claude-haiku-4-5 | gpt-5-mini | gemini-2.5-flash-lite |
-| 프로필 추출·적합도 평가·Q&A | claude-sonnet-4-6 | gpt-5 | gemini-2.5-flash |
+| 공고 구조화·요약 | claude-haiku-4-5 | gpt-5-mini | gemini-3.1-flash-lite |
+| 프로필 추출·적합도 평가·Q&A | claude-sonnet-4-6 | gpt-5 | gemini-3.5-flash |
 
 설정 화면에서 모델을 수동으로 변경할 수 있습니다.
 

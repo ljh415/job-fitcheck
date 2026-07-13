@@ -56,7 +56,7 @@ docker compose restart api     # ❌ 이미지가 캐시되어 변경사항 미�
 - **LLM 티어**: Lightweight = 구조화 추출·요약, High = 프로필 추출·적합도 평가·Q&A. 설정 화면에서 모델 수동 변경 가능.
   - Claude 기본: Light=haiku-4-5, High=sonnet-4-6
   - OpenAI 기본: Light=gpt-5-mini, High=gpt-5 (reasoning_effort=medium)
-  - Gemini 기본: Light=gemini-2.5-flash-lite, High=gemini-2.5-flash
+  - Gemini 기본: Light=gemini-3.1-flash-lite, High=gemini-3.5-flash
   - `reasoning_effort`는 gpt-5/gpt-5.x 계열에만 자동 적용. PUT `/api/settings`로 변경 가능.
 - **FastAPI 경로 순서 주의**: `/api/companies/timeline`은 반드시 `/api/companies/{slug}` 앞에 등록해야 충돌하지 않음.
 - **원자적 파일 쓰기**: `.tmp` → `os.replace()` 순서로 처리해 크래시 시 파일 손상 방지.
