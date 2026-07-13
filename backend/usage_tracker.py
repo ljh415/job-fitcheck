@@ -42,6 +42,8 @@ PRICING: dict[str, dict[str, float]] = {
     "gemini-2.5-flash-lite":        {"input": 0.10,  "output":  0.40},
     "gemini-2.0-flash":             {"input": 0.10,  "output":  0.40},
     "gemini-2.0-flash-lite":        {"input": 0.075, "output":  0.30},
+    "gemini-3.5-flash":             {"input": 1.50,  "output":  9.00},
+    "gemini-3.1-flash-lite":        {"input": 0.25,  "output":  1.50},
 }
 
 
