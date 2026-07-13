@@ -11,7 +11,7 @@ import openai as openai_lib
 from openai import AsyncOpenAI
 
 import usage_tracker
-from config import settings
+from config import get_reasoning_effort, settings
 from .base import LLMAPIError, LLMProvider
 
 
@@ -34,11 +34,9 @@ def _reasoning_effort_kwarg(model: str) -> dict:
     gpt-5-mini/nano는 low/medium에서 reasoning_tokens=0 (파라미터 수용, 추론 미작동),
     high에서는 실제 추론이 활성화된다 (D-3 실험 확인).
     gpt-4o 계열은 400 오류가 발생하므로 제외."""
-    from config import get_model_override
     if not (model.startswith("gpt-5") or model.startswith("o1") or model.startswith("o3") or model.startswith("o4")):
         return {}
-    effort = get_model_override("openai_reasoning_effort") or "medium"
-    return {"extra_body": {"reasoning_effort": effort}}
+    return {"extra_body": {"reasoning_effort": get_reasoning_effort()}}
 
 
 class OpenAIProvider(LLMProvider):
