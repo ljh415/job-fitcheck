@@ -12,7 +12,7 @@ cp .env.example .env          # API 키 입력
 docker compose up --build -d
 ```
 
-브라우저에서 `http://localhost` 접속 → 비밀번호(`APP_SECRET`) 입력.
+브라우저에서 `http://localhost:8000` 접속 → 비밀번호(`APP_SECRET`) 입력.
 
 ---
 
