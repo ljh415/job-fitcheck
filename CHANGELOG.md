@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.0.2 — Gemini 기본 모델 갱신 + reasoning_effort 설정 반영 버그 수정 (2026-07-13)
+
+**`backend/config.py`**
+- Gemini 기본 모델을 Phase 2 실험 결론(Exp4, `docs/phase2_gemini_experiment.md`)에 맞춰 갱신 — Light `gemini-2.5-flash-lite`→`gemini-3.1-flash-lite`, High `gemini-2.5-flash`→`gemini-3.5-flash`. 이전 v0.16.x~v1.0.x는 실험 전 베이스라인이 그대로 남아있었음(프롬프트만 v7.4로 반영되고 모델 기본값은 누락)
+
+**`backend/llm/openai.py`**
+- `_reasoning_effort_kwarg()`가 런타임 오버라이드 없을 때 `config.py`의 `openai_reasoning_effort` 기본값을 보지 않고 하드코딩된 `"medium"`으로 fallback하던 버그 수정 — 죽어있던 `get_reasoning_effort()` 헬퍼(`config.py`)를 사용하도록 교체
+
+**`README.md`, `CLAUDE.md`**
+- Gemini 기본 모델 표기를 위 변경에 맞춰 갱신
+
 ## v1.0.1 — Gemini 429(요청 한도 초과) 처리 정확화 (2026-07-13)
 
 **`backend/llm/gemini.py`**
