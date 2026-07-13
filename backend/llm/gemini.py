@@ -84,18 +84,43 @@ class GeminiProvider(LLMProvider):
     def _raise(self, e: Exception) -> NoReturn:
         logger.exception("Gemini API 오류: %s", e)
         msg = str(e)
-        code = getattr(e, "status_code", None)
+        code = getattr(e, "code", None)
         if code in (401, 403) or "API_KEY_INVALID" in msg or "PERMISSION_DENIED" in msg:
             raise LLMAPIError("LLM API 인증 실패 — 설정에서 Google API 키를 확인해주세요.", 401)
-        if code == 429 or "RESOURCE_EXHAUSTED" in msg:
-            raise LLMAPIError("LLM API 요청 한도 초과 — 잠시 후 다시 시도해주세요.", 429)
-        raise LLMAPIError("LLM 서비스 오류 — 잠시 후 다시 시도해주세요.", 503)
+        if self._is_quota_exceeded(e):
+            raise LLMAPIError(
+                "Gemini 무료 티어 요청 한도(분당/일일)를 초과했습니다. "
+                "잠시 후 다시 시도하거나 Google AI Studio에서 한도를 확인해주세요.",
+                429,
+            )
+        raise LLMAPIError("Gemini 서비스 오류 — 잠시 후 다시 시도해주세요.", 503)
+
+    @staticmethod
+    def _is_quota_exceeded(e: Exception) -> bool:
+        return getattr(e, "code", None) == 429 or "RESOURCE_EXHAUSTED" in str(e)
 
     @staticmethod
     def _is_retryable(e: Exception) -> bool:
         msg = str(e)
-        code = getattr(e, "status_code", None)
-        return code == 503 or "UNAVAILABLE" in msg or "high demand" in msg
+        code = getattr(e, "code", None)
+        return (
+            code == 503
+            or "UNAVAILABLE" in msg
+            or "high demand" in msg
+            or GeminiProvider._is_quota_exceeded(e)
+        )
+
+    @staticmethod
+    def _retry_plan(e: Exception, attempt: int) -> tuple[int, int]:
+        """(최대 재시도 횟수, 이번 대기 시간(초))를 반환한다.
+
+        429(요청 한도 초과)는 분당 한도가 짧게 회복되길 기대하며 20초 대기 후 1회만 재시도한다
+        (일일 한도 초과라면 재시도해도 회복되지 않으므로 오래 붙들지 않는다).
+        그 외 일시적 오류(503 등)는 기존대로 5초/10초 간격으로 최대 2회 재시도한다.
+        """
+        if GeminiProvider._is_quota_exceeded(e):
+            return 1, 20
+        return 2, 5 * (attempt + 1)
 
     async def extract_structured(
         self,
@@ -141,9 +166,12 @@ class GeminiProvider(LLMProvider):
                 break
             except Exception as e:
                 last_exc = e
-                if self._is_retryable(e) and attempt < 2:
-                    wait = 5 * (attempt + 1)
-                    logger.warning("Gemini 503 재시도 %d/2 (%d초 대기)", attempt + 1, wait)
+                max_attempts, wait = self._retry_plan(e, attempt)
+                if self._is_retryable(e) and attempt < max_attempts:
+                    kind = "429(요청 한도 초과)" if self._is_quota_exceeded(e) else "일시 오류"
+                    logger.warning(
+                        "Gemini %s 재시도 %d/%d (%d초 대기)", kind, attempt + 1, max_attempts, wait
+                    )
                     await asyncio.sleep(wait)
                 else:
                     self._raise(e)
@@ -196,9 +224,12 @@ class GeminiProvider(LLMProvider):
                 break
             except Exception as e:
                 last_exc = e
-                if self._is_retryable(e) and attempt < 2:
-                    wait = 5 * (attempt + 1)
-                    logger.warning("Gemini 503 재시도 %d/2 (%d초 대기)", attempt + 1, wait)
+                max_attempts, wait = self._retry_plan(e, attempt)
+                if self._is_retryable(e) and attempt < max_attempts:
+                    kind = "429(요청 한도 초과)" if self._is_quota_exceeded(e) else "일시 오류"
+                    logger.warning(
+                        "Gemini %s 재시도 %d/%d (%d초 대기)", kind, attempt + 1, max_attempts, wait
+                    )
                     await asyncio.sleep(wait)
                 else:
                     self._raise(e)
@@ -267,9 +298,12 @@ class GeminiProvider(LLMProvider):
                 last_exc = e
                 # 이미 청크를 출력한 뒤라면 처음부터 재시도할 경우 응답이 중복 출력되므로,
                 # 첫 청크 이전 실패에 대해서만 재시도한다.
-                if not yielded_any and self._is_retryable(e) and attempt < 2:
-                    wait = 5 * (attempt + 1)
-                    logger.warning("Gemini 503 재시도 %d/2 (%d초 대기)", attempt + 1, wait)
+                max_attempts, wait = self._retry_plan(e, attempt)
+                if not yielded_any and self._is_retryable(e) and attempt < max_attempts:
+                    kind = "429(요청 한도 초과)" if self._is_quota_exceeded(e) else "일시 오류"
+                    logger.warning(
+                        "Gemini %s 재시도 %d/%d (%d초 대기)", kind, attempt + 1, max_attempts, wait
+                    )
                     await asyncio.sleep(wait)
                 else:
                     self._raise(e)

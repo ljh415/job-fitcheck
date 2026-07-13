@@ -138,7 +138,7 @@
 
 ---
 
-## Phase 6 — v1.0.0 사전 코드/프롬프트 리뷰 (진행중)
+## Phase 6 — v1.0.0 사전 코드/프롬프트 리뷰 (완료, 2026-07-13 v1.0.0 태깅)
 
 > Codex 코드/프롬프트 리뷰(`review_w_codex.md`) 반영, `fix/extra-section-placeholder` 브랜치
 
@@ -175,6 +175,8 @@
 - ⬜ 대용량 PDF (100페이지+) 처리 시 토큰 초과 가능성 → 청크 분할 처리 검토
 - ✅ SSE 스트리밍 도중 화면 이탈 시 dangling reader 수정 (navigate/popstate에서 cancel 처리)
 - ✅ SSE 스트리밍 도중 연결 끊김 시 자동 재시도 (최대 2회, 지수 백오프)
+- ⬜ 알림 채널 정리 — 현재 텔레그램만 구현(`backend/telegram.py`)되어 있고 README/`.env.example`에는 미기재. 슬랙 등 다른 채널 추가 여부까지 포함해 알림 기능 범위를 먼저 정하고, 확정되면 README에 반영
+- ✅ Gemini 429(요청 한도) 처리 정확화 — `getattr(e, "status_code", None)` → `getattr(e, "code", None)`로 수정(google-genai `APIError`는 `status_code`가 아니라 `code` 속성 사용, 기존엔 항상 None이라 문자열 매칭으로만 우연히 동작하던 죽은 코드였음). 429도 재시도 대상에 포함하되 20초 대기 후 1회만 재시도(RPD 초과 시 재시도해도 무의미하므로 짧게 시도), 503류는 기존대로 최대 2회. 재시도 로그에 "429(요청 한도 초과)"로 명확히 표기. 최종 실패 메시지도 "Gemini 무료 티어 요청 한도(분당/일일)를 초과했습니다..."로 구체화. 프론트엔드(`app.js` `streamQA`)가 429/503 응답의 `err.detail`을 버리고 `HTTP 429`로만 표시하던 버그도 함께 수정 — 이제 백엔드가 보낸 실제 안내 메시지가 채팅 버블에 그대로 표시됨
 - ⬜ provider 런타임 설정: 서버 재시작 시 .env의 DEFAULT_PROVIDER로 리셋 (PoC 단계라 허용)
 - ✅ refill UI: 상세 페이지 `🎯 재분석 ▾` 드롭다운으로 구현 — 적합도만 재평가 / 전체 재분석 선택 가능
 - ✅ prod 실데이터 오염: NHN·딥파인·다키 3사 리포트가 실험 중 Gemini(v5) 생성본으로 덮어써짐 → Claude(sonnet-4-6) refit 원복 완료 (2026-07-10, 다키 38점 = 실험 전 기준점 일치)

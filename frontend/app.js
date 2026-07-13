@@ -871,10 +871,10 @@ async function streamQA(fetchFn, bubble) {
     try {
       const res = await fetchFn();
       if (!res.ok) {
-        if (res.status === 503 || res.status === 429) {
-          throw new Error(`HTTP ${res.status}`);
-        }
         const err = await res.json().catch(() => ({ detail: '서버 오류' }));
+        if (res.status === 503 || res.status === 429) {
+          throw new Error(err.detail || `HTTP ${res.status}`);
+        }
         bubble.textContent = `오류: ${err.detail || '응답 실패'}`;
         return null;
       }
@@ -884,7 +884,7 @@ async function streamQA(fetchFn, bubble) {
       lastError = e;
     }
   }
-  bubble.textContent = `오류: 연결 실패 (${lastError?.message})`;
+  bubble.textContent = `오류: ${lastError?.message || '연결 실패'}`;
   return null;
 }
 

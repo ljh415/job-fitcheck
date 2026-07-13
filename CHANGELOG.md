@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.16.11 — Gemini 429(요청 한도 초과) 처리 정확화 (2026-07-13)
+
+**`backend/llm/gemini.py`**
+- `_raise()`/`_is_retryable()`이 참조하던 `getattr(e, "status_code", None)` 수정 — google-genai `APIError`엔 `status_code` 속성이 없어(`code`가 맞음) 항상 `None`이 되는 죽은 코드였고, 지금까지는 문자열 매칭(`"RESOURCE_EXHAUSTED" in msg` 등)으로만 우연히 동작 중이었음
+- 429도 재시도 대상에 포함(`_retry_plan()` 신설) — 분당 한도 초과는 20초 대기 후 1회만 재시도(일일 한도 초과라면 재시도해도 무의미하므로 오래 붙들지 않음), 503류는 기존대로 5초/10초 간격 최대 2회
+- 재시도 로그를 "429(요청 한도 초과)"/"일시 오류"로 구분 표기, 최종 실패 메시지도 "Gemini 무료 티어 요청 한도(분당/일일)를 초과했습니다..."로 구체화
+
+**`frontend/app.js`**
+- `streamQA()`가 429/503 응답에서 백엔드가 보낸 `err.detail`을 읽지 않고 버린 뒤 "연결 실패 (HTTP 429)"로만 표시하던 버그 수정 — 이제 실제 안내 메시지가 채팅 버블에 그대로 표시됨
+
+**`README.md`**
+- 접속 안내 포트 오타 수정 (`http://localhost` → `http://localhost:8000`)
+- 다크모드 기능 항목 추가
+- Gemini RPM 자동 재시도 설명을 실제 동작(20초 대기 후 1회)에 맞게 수정
+
 ## v0.16.10 — Codex 리뷰 발견 3건 수정 (2026-07-13)
 
 **`backend/scraper.py`**
