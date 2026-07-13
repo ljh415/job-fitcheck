@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.16.11 — Gemini 429(요청 한도 초과) 처리 정확화 (2026-07-13)
+## v1.0.1 — Gemini 429(요청 한도 초과) 처리 정확화 (2026-07-13)
 
 **`backend/llm/gemini.py`**
 - `_raise()`/`_is_retryable()`이 참조하던 `getattr(e, "status_code", None)` 수정 — google-genai `APIError`엔 `status_code` 속성이 없어(`code`가 맞음) 항상 `None`이 되는 죽은 코드였고, 지금까지는 문자열 매칭(`"RESOURCE_EXHAUSTED" in msg` 등)으로만 우연히 동작 중이었음
@@ -15,7 +15,7 @@
 - 다크모드 기능 항목 추가
 - Gemini RPM 자동 재시도 설명을 실제 동작(20초 대기 후 1회)에 맞게 수정
 
-## v0.16.10 — Codex 리뷰 발견 3건 수정 (2026-07-13)
+## v1.0.0 — Codex 리뷰 발견 3건 수정 (2026-07-13)
 
 **`backend/scraper.py`**
 - SSRF 방어 우회 가능성(DNS 리바인딩) 수정: `_assert_public_url()`이 DNS를 검증한 뒤 `client.stream()`이 별도로 다시 DNS를 조회하던 구조라, 검증과 연결 사이에 DNS 응답이 바뀌면 검증은 통과하고 실제로는 차단 대상 IP로 연결될 수 있었음
