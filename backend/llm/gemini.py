@@ -88,9 +88,17 @@ class GeminiProvider(LLMProvider):
         if code in (401, 403) or "API_KEY_INVALID" in msg or "PERMISSION_DENIED" in msg:
             raise LLMAPIError("LLM API 인증 실패 — 설정에서 Google API 키를 확인해주세요.", 401)
         if self._is_quota_exceeded(e):
+            detail = getattr(e, "message", None)
+            if detail and "prepay" in detail.lower():
+                raise LLMAPIError(
+                    "Google AI Studio 선불 크레딧이 소진되었습니다. "
+                    "https://ai.studio/projects 에서 결제 정보를 확인해주세요.",
+                    429,
+                )
             raise LLMAPIError(
-                "Gemini 무료 티어 요청 한도(분당/일일)를 초과했습니다. "
-                "잠시 후 다시 시도하거나 Google AI Studio에서 한도를 확인해주세요.",
+                f"Gemini API 요청 한도(429)를 초과했습니다"
+                f"{f': {detail}' if detail else ''}. "
+                "잠시 후 다시 시도하거나 Google AI Studio에서 한도/결제 상태를 확인해주세요.",
                 429,
             )
         raise LLMAPIError("Gemini 서비스 오류 — 잠시 후 다시 시도해주세요.", 503)
@@ -115,7 +123,7 @@ class GeminiProvider(LLMProvider):
         """(최대 재시도 횟수, 이번 대기 시간(초))를 반환한다.
 
         429(요청 한도 초과)는 분당 한도가 짧게 회복되길 기대하며 20초 대기 후 1회만 재시도한다
-        (일일 한도 초과라면 재시도해도 회복되지 않으므로 오래 붙들지 않는다).
+        (일일 한도 초과나 선불 크레딧 소진이 원인이라면 재시도해도 회복되지 않으므로 오래 붙들지 않는다).
         그 외 일시적 오류(503 등)는 기존대로 5초/10초 간격으로 최대 2회 재시도한다.
         """
         if GeminiProvider._is_quota_exceeded(e):
