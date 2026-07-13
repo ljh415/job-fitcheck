@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.0.3 — Gemini 3.5 Flash / 3.1 Flash-Lite 단가 추가 (2026-07-13)
+
+**`backend/usage_tracker.py`**
+- `PRICING` dict에 `gemini-3.5-flash`(입력 $1.50 / 출력 $9.00), `gemini-3.1-flash-lite`(입력 $0.25 / 출력 $1.50) 단가 추가 — 유료 티어 Standard 기준, per 1M tokens. 두 모델이 이미 기본 모델로 설정돼 있었으나 단가 미등록으로 비용 계산이 누락되던 상태였음
+
 ## v1.0.2 — Gemini 기본 모델 갱신 + reasoning_effort 설정 반영 버그 수정 (2026-07-13)
 
 **`backend/config.py`**
