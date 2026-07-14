@@ -175,8 +175,8 @@
    - 검증: 실제 로그인 흐름으로 `GET`/`PUT /api/settings` 라운드트립 확인 + 텍스트 붙여넣기로 실제 회사 분석 실행해 강화된 알림이 슬랙/디스코드/텔레그램에 정상 도착하는 것까지 확인
 3. ✅ 채널별 포맷팅 커스터마이즈 — 알림 "재료"(회사명/직무/점수/라벨/강점/갭/잡플래닛/임직원수)를 `main.py`에서 dict로 조립하고, `backend/notify_format.py`의 `build_message(materials, bold)` 공통 빌더 하나를 텔레그램(`<b>` + `parse_mode=HTML`)·슬랙(`*굵게*`)·디스코드(`**굵게**`)가 각자 다른 `bold` 함수만 주입해서 재사용. `notify.py`는 여전히 순수 fan-out(`asyncio.gather`)만 담당
    - 검증: 실제 컨테이너 안에서 `notify.send_notification(materials)`를 직접 호출해 3채널 실제 전송, 텔레그램 굵게/슬랙 굵게/디스코드 굵게 정상 렌더링 확인
-4. ✅ 주간 지원 현황 요약 알림 (신규 트리거, 즉시 발송이 아닌 주기 알림) — `main.py`에 `_weekly_summary_loop()` 백그라운드 태스크 추가(`lifespan`에서 시작, 매주 월요일 09:00에 실행). `_build_weekly_summary_materials()`가 이번 주(월~오늘) 신규 등록 건수·현재 상태별 개수·방치된 항목(활성 상태 회사 중 상태 로그 마지막 갱신일로부터 7일 이상 경과)을 집계해 `kind: "weekly_summary"` 재료로 조립, `notify_format.py`의 `build_message()`가 `kind`로 분기해 렌더링(텔레그램/슬랙/디스코드 서식 재사용). 설정 화면에 온/오프 체크박스 추가(`notify_weekly_summary`, 기본 OFF). 새 스케줄러 라이브러리 추가 없이 `asyncio.sleep` 기반 루프로 구현
-   - 검증: `GET`/`PUT /api/settings` 라운드트립 확인 + 컨테이너 안에서 `_build_weekly_summary_materials()` + `notify.send_notification()` 직접 호출해 실제 데이터 기준 3채널 정상 도착 확인
+4. ✅ 주간 지원 현황 요약 알림 (신규 트리거, 즉시 발송이 아닌 주기 알림) — `main.py`에 `_weekly_summary_loop()` 백그라운드 태스크 추가(`lifespan`에서 시작, 설정된 요일·시각에 실행). `_build_weekly_summary_materials()`가 이번 주(월~오늘) 신규 등록 건수·현재 상태별 개수·방치된 항목(활성 상태 회사 중 상태 로그 마지막 갱신일로부터 7일 이상 경과)을 집계해 `kind: "weekly_summary"` 재료로 조립, `notify_format.py`의 `build_message()`가 `kind`로 분기해 렌더링(텔레그램/슬랙/디스코드 서식 재사용). 설정 화면에 온/오프 체크박스(`notify_weekly_summary`, 기본 OFF) + 요일·시각 선택 UI(`weekly_summary_weekday`/`weekly_summary_time`, 기본 월요일 09:00) 추가, 별도 "📅 주간 지원 현황 요약 알림" 섹션으로 분리(분석완료 알림 내용 섹션과 트리거 방식이 달라 사용자 지적으로 분리). 새 스케줄러 라이브러리 추가 없이 `asyncio.sleep` 기반 루프로 구현. 분석완료 알림 메시지도 함께 압축(헤더 한 줄 합침, 강점/갭 쉼표 나열)하고, 체크박스가 세로로 쌓여 빈 공간이 커지던 CSS 버그(`label` 전역 `flex-direction:column`이 `.export-check-item`에 상속)도 수정
+   - 검증: `GET`/`PUT /api/settings` 라운드트립(요일/시각 포함, 잘못된 값 400 검증) + 컨테이너 안에서 `_build_weekly_summary_materials()` + `notify.send_notification()` 직접 호출해 실제 데이터 기준 3채널 정상 도착 확인 + Playwright로 설정 화면 렌더링 스크린샷 확인
    - 미포함: "다가오는 일정"(마감일·면접일 알림)은 위 "캘린더 일정 연동" 항목(마감일·면접 날짜 필드+UI 선행 필요)이 끝난 뒤 이어서 추가
 
 ---
