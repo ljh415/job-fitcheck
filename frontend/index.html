@@ -434,6 +434,35 @@
     </section>
 
     <section class="settings-section">
+      <h3>🔔 분석 완료 알림 내용</h3>
+      <p style="font-size:13px;color:#6b7280;margin:0 0 8px">회사명·직무·점수·라벨은 항상 포함됩니다. 아래 항목을 켜고 끌 수 있어요. 4개 모두 끄면 기본 메시지만 전송됩니다.</p>
+      <label class="export-check-item"><input type="checkbox" id="notify-strengths"> 강점 요약 (👍)</label>
+      <label class="export-check-item"><input type="checkbox" id="notify-gaps"> 갭 요약 (👎)</label>
+      <label class="export-check-item"><input type="checkbox" id="notify-jobplanet-rating"> 잡플래닛 평점 (⭐)</label>
+      <label class="export-check-item"><input type="checkbox" id="notify-employee-count"> 임직원 수 (👥)</label>
+      <button onclick="saveSettings()" class="btn-primary" style="margin-top:8px">설정 저장</button>
+    </section>
+
+    <section class="settings-section">
+      <h3>📅 주간 지원 현황 요약 알림</h3>
+      <p style="font-size:13px;color:#6b7280;margin:0 0 8px">신규 등록 건수·상태별 현황·방치된 항목(7일 이상 진행 없음)을 정해진 요일·시각에 요약해서 보냅니다.</p>
+      <label class="export-check-item"><input type="checkbox" id="notify-weekly-summary"> 주간 요약 알림 받기</label>
+      <div style="display:flex;flex-direction:row;align-items:center;gap:8px;font-size:13px;margin:8px 0 0">
+        <select id="weekly-summary-weekday">
+          <option value="0">월요일</option>
+          <option value="1">화요일</option>
+          <option value="2">수요일</option>
+          <option value="3">목요일</option>
+          <option value="4">금요일</option>
+          <option value="5">토요일</option>
+          <option value="6">일요일</option>
+        </select>
+        <input type="time" id="weekly-summary-time">
+      </div>
+      <button onclick="saveSettings()" class="btn-primary" style="margin-top:8px">설정 저장</button>
+    </section>
+
+    <section class="settings-section">
       <h3>💰 사용 이력</h3>
       <div id="usage-summary" class="usage-summary"></div>
       <div class="table-wrap usage-table-scroll" style="margin-top:12px">

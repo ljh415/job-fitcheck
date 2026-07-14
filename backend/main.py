@@ -36,13 +36,17 @@ import usage_tracker
 from jobplanet import fetch_jobplanet_score
 from llm.base import LLMAPIError
 from pdf_parser import PDFExtractError
-from telegram import send_notification
+from notify import send_notification
 from config import (
     ensure_dirs,
     get_active_provider,
     get_model_override,
+    get_notify_pref,
+    get_weekly_summary_schedule,
     set_active_provider,
     set_model_override,
+    set_notify_pref,
+    set_weekly_summary_schedule,
     settings,
 )
 from llm.router import high_provider, light_provider
@@ -82,7 +86,9 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     ensure_dirs()
+    task = asyncio.create_task(_weekly_summary_loop())
     yield
+    task.cancel()
 
 
 app = FastAPI(title="Job FitCheck", version="0.1.0", lifespan=lifespan)
@@ -191,6 +197,13 @@ async def get_settings():
         openai_reasoning_effort=_m("openai_reasoning_effort", settings.openai_reasoning_effort),
         gemini_high_model=_m("gemini_high_model", settings.gemini_high_model),
         gemini_light_model=_m("gemini_light_model", settings.gemini_light_model),
+        notify_strengths=get_notify_pref("notify_strengths"),
+        notify_gaps=get_notify_pref("notify_gaps"),
+        notify_jobplanet_rating=get_notify_pref("notify_jobplanet_rating"),
+        notify_employee_count=get_notify_pref("notify_employee_count"),
+        notify_weekly_summary=get_notify_pref("notify_weekly_summary"),
+        weekly_summary_weekday=get_weekly_summary_schedule()["weekday"],
+        weekly_summary_time="{hour:02d}:{minute:02d}".format(**get_weekly_summary_schedule()),
     )
 
 
@@ -211,6 +224,24 @@ async def update_settings(req: SettingsUpdateRequest):
             set_model_override(key, val)
             if prev_model != val:
                 logger.info("모델 변경: %s = %s", key, val)
+    for key in ("notify_strengths", "notify_gaps", "notify_jobplanet_rating", "notify_employee_count", "notify_weekly_summary"):
+        val = getattr(req, key)
+        if val is not None:
+            set_notify_pref(key, val)
+    if req.weekly_summary_weekday is not None or req.weekly_summary_time is not None:
+        schedule = get_weekly_summary_schedule()
+        if req.weekly_summary_weekday is not None:
+            if not (0 <= req.weekly_summary_weekday <= 6):
+                raise HTTPException(status_code=400, detail="요일은 0(월)~6(일) 사이여야 합니다.")
+            schedule["weekday"] = req.weekly_summary_weekday
+        if req.weekly_summary_time is not None:
+            try:
+                hour, minute = (int(p) for p in req.weekly_summary_time.split(":", 1))
+                assert 0 <= hour <= 23 and 0 <= minute <= 59
+            except (ValueError, AssertionError):
+                raise HTTPException(status_code=400, detail="시간 형식은 HH:MM 이어야 합니다.")
+            schedule["hour"], schedule["minute"] = hour, minute
+        set_weekly_summary_schedule(schedule["weekday"], schedule["hour"], schedule["minute"])
     return {"status": "ok", "provider": get_active_provider()}
 
 
@@ -541,6 +572,75 @@ def _parse_status_log(body: str, slug: str = "") -> list[dict]:
             if m:
                 entries.append({"date": m.group(1), "label": m.group(2).strip()})
     return entries
+
+
+_NEGLECTED_DAYS = 7  # 이 기간 동안 상태 변경 없으면 "방치된 항목"으로 콜아웃
+_ACTIVE_STATUSES = {"지원", "서류통과", "인터뷰", "최종", "보류"}  # 미지원/탈락/지원마감은 방치 대상 아님
+
+
+def _build_weekly_summary_materials() -> dict:
+    """주간 지원 현황 요약 알림 재료를 조립한다: 신규 등록/상태별 개수/방치된 항목."""
+    metas = storage.list_companies()
+    today = date.today()
+    week_start = today - timedelta(days=today.weekday())
+
+    new_count = 0
+    status_counts: dict[str, int] = {}
+    neglected = []
+
+    for meta in metas:
+        fm = meta.frontmatter
+        status_counts[fm.status] = status_counts.get(fm.status, 0) + 1
+
+        if fm.created_at:
+            try:
+                if datetime.fromisoformat(fm.created_at).date() >= week_start:
+                    new_count += 1
+            except ValueError:
+                pass
+
+        if fm.status in _ACTIVE_STATUSES:
+            record = storage.read_company(meta.slug)
+            if not record:
+                continue
+            log_entries = _parse_status_log(record.body, slug=meta.slug)
+            if not log_entries:
+                continue
+            last_date = date.fromisoformat(log_entries[-1]["date"])
+            days_elapsed = (today - last_date).days
+            if days_elapsed >= _NEGLECTED_DAYS:
+                neglected.append({
+                    "name": fm.display_name or fm.company_name,
+                    "status": fm.status,
+                    "days": days_elapsed,
+                })
+
+    return {
+        "kind": "weekly_summary",
+        "period": f"{week_start.isoformat()} ~ {today.isoformat()}",
+        "new_count": new_count,
+        "status_counts": status_counts,
+        "neglected": neglected,
+    }
+
+
+async def _weekly_summary_loop():
+    """설정된 요일·시각(기본 월요일 09:00)에 지원 현황 요약 알림을 발송한다."""
+    while True:
+        now = datetime.now()
+        schedule = get_weekly_summary_schedule()
+        days_ahead = (schedule["weekday"] - now.weekday()) % 7
+        next_run = (now + timedelta(days=days_ahead)).replace(
+            hour=schedule["hour"], minute=schedule["minute"], second=0, microsecond=0
+        )
+        if next_run <= now:
+            next_run += timedelta(days=7)
+        await asyncio.sleep((next_run - now).total_seconds())
+        if get_notify_pref("notify_weekly_summary"):
+            try:
+                await send_notification(_build_weekly_summary_materials())
+            except Exception as e:
+                logger.warning("주간 요약 알림 전송 실패: %s", e)
 
 
 @app.get("/api/companies/timeline")
@@ -894,12 +994,22 @@ async def _process_company(
     storage.write_raw_text(slug, raw_text)
     record = storage.write_company(slug, fm, body)
 
-    label = fit_data.get("fit_label", "")
-    score = fit_data.get("fit_score", "")
-    score_str = f" ({score}점, {label})" if score else ""
-    await send_notification(
-        f"✅ <b>{fm.display_name or fm.company_name}</b> 분석 완료{score_str}\n{fm.job_title or ''}"
-    )
+    materials = {
+        "company": fm.display_name or fm.company_name,
+        "job_title": fm.job_title or "",
+        "score": fit_data.get("fit_score", ""),
+        "label": fit_data.get("fit_label", ""),
+    }
+    if get_notify_pref("notify_strengths") and fm.strengths:
+        materials["strengths"] = [item.split(" - ", 1)[0].strip() for item in fm.strengths[:2]]
+    if get_notify_pref("notify_gaps") and fm.gaps:
+        materials["gaps"] = [item.split(" - ", 1)[0].strip() for item in fm.gaps[:2]]
+    if get_notify_pref("notify_jobplanet_rating") and fm.jobplanet_score:
+        materials["jobplanet"] = fm.jobplanet_score
+    if get_notify_pref("notify_employee_count") and fm.employee_count:
+        materials["employee_count"] = fm.employee_count
+
+    await send_notification(materials)
     return record
 
 

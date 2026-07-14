@@ -170,6 +170,13 @@ class SettingsResponse(BaseModel):
     openai_reasoning_effort: str
     gemini_high_model: str
     gemini_light_model: str
+    notify_strengths: bool
+    notify_gaps: bool
+    notify_jobplanet_rating: bool
+    notify_employee_count: bool
+    notify_weekly_summary: bool
+    weekly_summary_weekday: int
+    weekly_summary_time: str
 
 
 class SettingsUpdateRequest(BaseModel):
@@ -181,6 +188,13 @@ class SettingsUpdateRequest(BaseModel):
     openai_reasoning_effort: str | None = None
     gemini_high_model: str | None = None
     gemini_light_model: str | None = None
+    notify_strengths: bool | None = None
+    notify_gaps: bool | None = None
+    notify_jobplanet_rating: bool | None = None
+    notify_employee_count: bool | None = None
+    notify_weekly_summary: bool | None = None
+    weekly_summary_weekday: int | None = None
+    weekly_summary_time: str | None = None
 
 
 class ProfileUpdateRequest(BaseModel):

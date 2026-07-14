@@ -390,7 +390,7 @@ label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-w
 @keyframes toast-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
 
 .export-checklist { display: flex; flex-direction: column; gap: 8px; }
-.export-check-item { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+.export-check-item { display: flex; flex-direction: row; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
 .export-check-item input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--primary); flex-shrink: 0; }
 .export-check-required { color: var(--text-muted); cursor: default; }
 .export-check-path { font-size: 11px; color: var(--text-dimmed); font-family: monospace; margin-left: 2px; }

@@ -42,6 +42,12 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
 
+    # 슬랙 알림 — Incoming Webhook URL, 비어 있으면 미전송
+    slack_webhook_url: str = ""
+
+    # 디스코드 알림 — Incoming Webhook URL, 비어 있으면 미전송
+    discord_webhook_url: str = ""
+
     # 데이터 루트 디렉토리 (Docker에서는 볼륨 마운트 경로)
     data_dir: Path = Path(__file__).parent.parent / "data"
 
@@ -87,6 +93,38 @@ def set_model_override(key: str, model: str) -> None:
 
 def get_reasoning_effort() -> str:
     return _runtime_models.get("openai_reasoning_effort") or settings.openai_reasoning_effort
+
+
+# 분석 완료 알림 메시지에 포함할 항목 토글 (재시작 시 기본값으로 리셋)
+_notify_pref_defaults: dict = {
+    "notify_strengths": True,
+    "notify_gaps": True,
+    "notify_jobplanet_rating": False,
+    "notify_employee_count": False,
+    "notify_weekly_summary": False,
+}
+_runtime_notify_prefs: dict = {}
+
+
+def get_notify_pref(key: str) -> bool:
+    return _runtime_notify_prefs.get(key, _notify_pref_defaults[key])
+
+
+def set_notify_pref(key: str, value: bool) -> None:
+    _runtime_notify_prefs[key] = value
+
+
+# 주간 요약 알림 발송 시각 (요일 0=월~6=일, 시:분) — 재시작 시 기본값(월요일 09:00)으로 리셋
+_weekly_summary_schedule_defaults: dict = {"weekday": 0, "hour": 9, "minute": 0}
+_runtime_weekly_summary_schedule: dict = {}
+
+
+def get_weekly_summary_schedule() -> dict:
+    return {**_weekly_summary_schedule_defaults, **_runtime_weekly_summary_schedule}
+
+
+def set_weekly_summary_schedule(weekday: int, hour: int, minute: int) -> None:
+    _runtime_weekly_summary_schedule.update(weekday=weekday, hour=hour, minute=minute)
 
 
 def ensure_dirs() -> None:
