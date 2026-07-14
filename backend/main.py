@@ -904,37 +904,22 @@ async def _process_company(
     storage.write_raw_text(slug, raw_text)
     record = storage.write_company(slug, fm, body)
 
-    label = fit_data.get("fit_label", "")
-    score = fit_data.get("fit_score", "")
-    base_message = f"✅ {fm.display_name or fm.company_name} 분석 완료\n{fm.job_title or ''}"
-    if score:
-        base_message += f"\n{score}점, {label}"
+    materials = {
+        "company": fm.display_name or fm.company_name,
+        "job_title": fm.job_title or "",
+        "score": fit_data.get("fit_score", ""),
+        "label": fit_data.get("fit_label", ""),
+    }
+    if get_notify_pref("notify_strengths") and fm.strengths:
+        materials["strengths"] = [item.split(" - ", 1)[0].strip() for item in fm.strengths[:2]]
+    if get_notify_pref("notify_gaps") and fm.gaps:
+        materials["gaps"] = [item.split(" - ", 1)[0].strip() for item in fm.gaps[:2]]
+    if get_notify_pref("notify_jobplanet_rating") and fm.jobplanet_score:
+        materials["jobplanet"] = fm.jobplanet_score
+    if get_notify_pref("notify_employee_count") and fm.employee_count:
+        materials["employee_count"] = fm.employee_count
 
-    show_strengths = get_notify_pref("notify_strengths")
-    show_gaps = get_notify_pref("notify_gaps")
-    show_jobplanet = get_notify_pref("notify_jobplanet_rating")
-    show_employee_count = get_notify_pref("notify_employee_count")
-
-    if not (show_strengths or show_gaps or show_jobplanet or show_employee_count):
-        message = base_message
-    else:
-        blocks = [base_message]
-        if show_strengths and fm.strengths:
-            titles = "\n".join(f"• {item.split(' - ', 1)[0].strip()}" for item in fm.strengths[:2])
-            blocks.append(f"👍 강점\n{titles}")
-        if show_gaps and fm.gaps:
-            titles = "\n".join(f"• {item.split(' - ', 1)[0].strip()}" for item in fm.gaps[:2])
-            blocks.append(f"👎 갭\n{titles}")
-        extra = []
-        if show_jobplanet and fm.jobplanet_score:
-            extra.append(f"⭐ 잡플래닛 {fm.jobplanet_score}")
-        if show_employee_count and fm.employee_count:
-            extra.append(f"👥 임직원 {fm.employee_count}")
-        if extra:
-            blocks.append("\n".join(extra))
-        message = "\n\n".join(blocks)
-
-    await send_notification(message)
+    await send_notification(materials)
     return record
 
 
