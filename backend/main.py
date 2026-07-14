@@ -605,7 +605,12 @@ async def update_company(slug: str, req: CompanyUpdateRequest):
 
 @app.delete("/api/companies/{slug}")
 async def delete_company(slug: str):
-    if not storage.delete_company(slug, pre_delete_hook=_save_backup_zip):
+    try:
+        deleted = storage.delete_company(slug, pre_delete_hook=_save_backup_zip)
+    except Exception as e:
+        logger.error("삭제 전 백업 실패로 삭제 중단 (slug=%s): %s", slug, e)
+        raise HTTPException(status_code=500, detail="삭제 전 백업에 실패해 삭제가 취소되었습니다. 잠시 후 다시 시도해주세요.")
+    if not deleted:
         raise HTTPException(status_code=404, detail="회사를 찾을 수 없습니다.")
     logger.info("공고 삭제: %s", slug)
     return {"status": "deleted"}
