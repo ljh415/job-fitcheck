@@ -175,6 +175,8 @@ class SettingsResponse(BaseModel):
     notify_jobplanet_rating: bool
     notify_employee_count: bool
     notify_weekly_summary: bool
+    weekly_summary_weekday: int
+    weekly_summary_time: str
 
 
 class SettingsUpdateRequest(BaseModel):
@@ -191,6 +193,8 @@ class SettingsUpdateRequest(BaseModel):
     notify_jobplanet_rating: bool | None = None
     notify_employee_count: bool | None = None
     notify_weekly_summary: bool | None = None
+    weekly_summary_weekday: int | None = None
+    weekly_summary_time: str | None = None
 
 
 class ProfileUpdateRequest(BaseModel):

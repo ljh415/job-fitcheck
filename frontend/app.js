@@ -1230,6 +1230,11 @@ async function initSettings() {
     if (el) el.checked = !!currentSettings[key];
   });
 
+  const weekdaySelect = document.getElementById('weekly-summary-weekday');
+  if (weekdaySelect) weekdaySelect.value = String(currentSettings.weekly_summary_weekday ?? 0);
+  const timeInput = document.getElementById('weekly-summary-time');
+  if (timeInput) timeInput.value = currentSettings.weekly_summary_time || '09:00';
+
   try {
     const criteriaData = await api('/eval-criteria');
     const criteriaEl = document.getElementById('eval-criteria-input');
@@ -1576,6 +1581,8 @@ async function saveSettings() {
     notify_jobplanet_rating: document.getElementById('notify-jobplanet-rating')?.checked ?? null,
     notify_employee_count: document.getElementById('notify-employee-count')?.checked ?? null,
     notify_weekly_summary: document.getElementById('notify-weekly-summary')?.checked ?? null,
+    weekly_summary_weekday: document.getElementById('weekly-summary-weekday') ? parseInt(document.getElementById('weekly-summary-weekday').value, 10) : null,
+    weekly_summary_time: document.getElementById('weekly-summary-time')?.value || null,
   };
   try {
     await api('/settings', { method: 'PUT', body: JSON.stringify(payload) });

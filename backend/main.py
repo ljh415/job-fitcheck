@@ -42,9 +42,11 @@ from config import (
     get_active_provider,
     get_model_override,
     get_notify_pref,
+    get_weekly_summary_schedule,
     set_active_provider,
     set_model_override,
     set_notify_pref,
+    set_weekly_summary_schedule,
     settings,
 )
 from llm.router import high_provider, light_provider
@@ -200,6 +202,8 @@ async def get_settings():
         notify_jobplanet_rating=get_notify_pref("notify_jobplanet_rating"),
         notify_employee_count=get_notify_pref("notify_employee_count"),
         notify_weekly_summary=get_notify_pref("notify_weekly_summary"),
+        weekly_summary_weekday=get_weekly_summary_schedule()["weekday"],
+        weekly_summary_time="{hour:02d}:{minute:02d}".format(**get_weekly_summary_schedule()),
     )
 
 
@@ -224,6 +228,20 @@ async def update_settings(req: SettingsUpdateRequest):
         val = getattr(req, key)
         if val is not None:
             set_notify_pref(key, val)
+    if req.weekly_summary_weekday is not None or req.weekly_summary_time is not None:
+        schedule = get_weekly_summary_schedule()
+        if req.weekly_summary_weekday is not None:
+            if not (0 <= req.weekly_summary_weekday <= 6):
+                raise HTTPException(status_code=400, detail="요일은 0(월)~6(일) 사이여야 합니다.")
+            schedule["weekday"] = req.weekly_summary_weekday
+        if req.weekly_summary_time is not None:
+            try:
+                hour, minute = (int(p) for p in req.weekly_summary_time.split(":", 1))
+                assert 0 <= hour <= 23 and 0 <= minute <= 59
+            except (ValueError, AssertionError):
+                raise HTTPException(status_code=400, detail="시간 형식은 HH:MM 이어야 합니다.")
+            schedule["hour"], schedule["minute"] = hour, minute
+        set_weekly_summary_schedule(schedule["weekday"], schedule["hour"], schedule["minute"])
     return {"status": "ok", "provider": get_active_provider()}
 
 
@@ -607,11 +625,14 @@ def _build_weekly_summary_materials() -> dict:
 
 
 async def _weekly_summary_loop():
-    """매주 월요일 09:00에 지원 현황 요약 알림을 발송한다."""
+    """설정된 요일·시각(기본 월요일 09:00)에 지원 현황 요약 알림을 발송한다."""
     while True:
         now = datetime.now()
-        days_ahead = (0 - now.weekday()) % 7  # 0 = 월요일
-        next_run = (now + timedelta(days=days_ahead)).replace(hour=9, minute=0, second=0, microsecond=0)
+        schedule = get_weekly_summary_schedule()
+        days_ahead = (schedule["weekday"] - now.weekday()) % 7
+        next_run = (now + timedelta(days=days_ahead)).replace(
+            hour=schedule["hour"], minute=schedule["minute"], second=0, microsecond=0
+        )
         if next_run <= now:
             next_run += timedelta(days=7)
         await asyncio.sleep((next_run - now).total_seconds())

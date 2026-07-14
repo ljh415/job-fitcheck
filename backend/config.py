@@ -114,6 +114,19 @@ def set_notify_pref(key: str, value: bool) -> None:
     _runtime_notify_prefs[key] = value
 
 
+# 주간 요약 알림 발송 시각 (요일 0=월~6=일, 시:분) — 재시작 시 기본값(월요일 09:00)으로 리셋
+_weekly_summary_schedule_defaults: dict = {"weekday": 0, "hour": 9, "minute": 0}
+_runtime_weekly_summary_schedule: dict = {}
+
+
+def get_weekly_summary_schedule() -> dict:
+    return {**_weekly_summary_schedule_defaults, **_runtime_weekly_summary_schedule}
+
+
+def set_weekly_summary_schedule(weekday: int, hour: int, minute: int) -> None:
+    _runtime_weekly_summary_schedule.update(weekday=weekday, hour=hour, minute=minute)
+
+
 def ensure_dirs() -> None:
     """앱 시작 시 필요한 디렉토리를 생성한다."""
     settings.companies_dir.mkdir(parents=True, exist_ok=True)
