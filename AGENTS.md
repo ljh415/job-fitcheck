@@ -9,6 +9,8 @@ Claude가 주 구현자이고 Codex는 계획·리뷰를 맡는다. Claude 사�
 3. 요청과 관련된 `README.md`, `CHANGELOG.md`, `docs/` 문서와 가장 최근의 `review*_codex*.md`만 추가로 읽는다.
 4. 코드 변경 전 현재 기준점, 진행 중인 변경, 다음 할 일, 충돌 위험을 짧게 정리한다.
 
+> **리뷰 요청 시 전달 정보**: 위 1~3단계를 Codex가 스스로 수행하므로, 인계자(Claude/사용자)는 diff·커밋 로그·CHANGELOG 정도만 넘기면 충분하다. CLAUDE.md·TODO.md·git 상태를 별도로 요약해서 붙여줄 필요 없음.
+
 ## 이어서 작업할 때
 
 - 사용자가 전달한 Claude 인계 내용을 최우선으로 삼되 Git과 파일의 실제 상태로 검증한다.
