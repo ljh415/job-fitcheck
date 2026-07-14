@@ -128,7 +128,7 @@ document.getElementById('app').addEventListener('click', (e) => {
 });
 
 document.getElementById('app').addEventListener('change', (e) => {
-  if (e.target.matches('.row-check')) { onCheckChange(); return; }
+  if (e.target.matches('.row-check')) { onCheckChange(e.target); return; }
   if (e.target.matches('[data-action="status-change"]')) onStatusChange(e.target.dataset.slug, e.target);
 });
 
@@ -394,10 +394,20 @@ function applyFilters() {
 function filterTable() { applyFilters(); }
 function sortTable() { applyFilters(); }
 
-function onCheckChange() {
+function onCheckChange(changedEl) {
   selectedSlugs = new Set(
     [...document.querySelectorAll('.row-check:checked')].map(el => el.dataset.slug)
   );
+  if (selectedSlugs.size > 5) {
+    if (changedEl) {
+      changedEl.checked = false;
+      selectedSlugs.delete(changedEl.dataset.slug);
+    } else {
+      document.querySelectorAll('.row-check:checked').forEach(c => { c.checked = false; });
+      selectedSlugs.clear();
+    }
+    showToast('비교는 한 번에 최대 5개까지 선택할 수 있습니다.', 'error');
+  }
   const compareBtn = document.getElementById('compare-btn');
   if (compareBtn) {
     if (selectedSlugs.size >= 2) compareBtn.classList.remove('hidden');
@@ -798,7 +808,7 @@ async function sendQA() {
   input.value = '';
 
   if (!qaHistory[currentSlug]) qaHistory[currentSlug] = [];
-  const history = qaHistory[currentSlug].slice();
+  const history = qaHistory[currentSlug].slice(-40);
   qaHistory[currentSlug].push({ role: 'user', text: question });
   saveQAHistory();
   appendBubble('qa-messages', question, 'user');
@@ -828,7 +838,7 @@ async function sendCompareQA() {
   if (!question) return;
   input.value = '';
 
-  const history = compareQaHistory.slice();
+  const history = compareQaHistory.slice(-40);
   compareQaHistory.push({ role: 'user', text: question });
   appendBubble('compare-qa-messages', question, 'user');
   const assistantBubble = appendBubble('compare-qa-messages', '', 'assistant');
