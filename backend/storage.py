@@ -145,10 +145,7 @@ def delete_company(slug: str, pre_delete_hook=None) -> bool:
     if not path.exists():
         return False
     if pre_delete_hook:
-        try:
-            pre_delete_hook()
-        except Exception as e:
-            logger.warning("삭제 전 백업 실패 (slug=%s): %s — 삭제는 계속 진행합니다", slug, e)
+        pre_delete_hook()  # 백업 실패 시 예외를 그대로 전파해 삭제를 중단시킨다 (fail-closed)
     path.unlink()
     invalidate_companies_cache()
     raw_path = _safe_company_path(slug, ".raw.txt")

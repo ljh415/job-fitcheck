@@ -24,7 +24,7 @@ from pathlib import Path
 import httpx
 import jwt
 
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, Query, Request, UploadFile, File, Form
 from pydantic import BaseModel
 from fastapi.responses import JSONResponse, StreamingResponse
 
@@ -541,9 +541,9 @@ async def export_companies_csv():
 
 
 @app.get("/api/companies/compare")
-async def compare_companies(slugs: str):
-    """쉼표로 구분된 slug 목록을 받아 여러 회사 데이터를 반환."""
-    slug_list = [s.strip() for s in slugs.split(",") if s.strip()]
+async def compare_companies(slugs: list[str] = Query(...)):
+    """slug 목록(반복 query parameter)을 받아 여러 회사 데이터를 반환."""
+    slug_list = [s.strip() for s in slugs if s.strip()]
     if len(slug_list) > 5:
         raise HTTPException(status_code=422, detail="한 번에 최대 5개 회사까지 비교할 수 있습니다.")
     results = []
@@ -705,7 +705,12 @@ async def update_company(slug: str, req: CompanyUpdateRequest):
 
 @app.delete("/api/companies/{slug}")
 async def delete_company(slug: str):
-    if not storage.delete_company(slug, pre_delete_hook=_save_backup_zip):
+    try:
+        deleted = storage.delete_company(slug, pre_delete_hook=_save_backup_zip)
+    except Exception as e:
+        logger.error("삭제 전 백업 실패로 삭제 중단 (slug=%s): %s", slug, e)
+        raise HTTPException(status_code=500, detail="삭제 전 백업에 실패해 삭제가 취소되었습니다. 잠시 후 다시 시도해주세요.")
+    if not deleted:
         raise HTTPException(status_code=404, detail="회사를 찾을 수 없습니다.")
     logger.info("공고 삭제: %s", slug)
     return {"status": "deleted"}
@@ -1040,9 +1045,9 @@ async def add_from_url(req: FromUrlRequest):
     except Exception:
         raise HTTPException(status_code=502, detail="URL 접근 실패: 네트워크 연결 오류. URL을 다시 확인해주세요.")
     try:
-        return await asyncio.wait_for(_process_company(raw_text, "url", req.url), timeout=120)
+        return await asyncio.wait_for(_process_company(raw_text, "url", req.url), timeout=300)
     except asyncio.TimeoutError:
-        raise HTTPException(status_code=504, detail="분석 시간이 초과되었습니다 (120초). 잠시 후 다시 시도해주세요.")
+        raise HTTPException(status_code=504, detail="분석 시간이 초과되었습니다 (300초). 잠시 후 다시 시도해주세요.")
     except LLMAPIError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e))
 
@@ -1068,10 +1073,10 @@ async def add_from_text(req: FromTextRequest):
                 company_name_override=req.company_name,
                 job_title_override=req.job_title,
             ),
-            timeout=120,
+            timeout=300,
         )
     except asyncio.TimeoutError:
-        raise HTTPException(status_code=504, detail="분석 시간이 초과되었습니다 (120초). 잠시 후 다시 시도해주세요.")
+        raise HTTPException(status_code=504, detail="분석 시간이 초과되었습니다 (300초). 잠시 후 다시 시도해주세요.")
     except LLMAPIError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e))
 
@@ -1125,9 +1130,9 @@ async def add_from_image(files: list[UploadFile] = File(...)):
     logger.info("이미지 텍스트 추출 완료: %d자", len(raw_text))
 
     try:
-        return await asyncio.wait_for(_process_company(raw_text, "image", None), timeout=120)
+        return await asyncio.wait_for(_process_company(raw_text, "image", None), timeout=300)
     except asyncio.TimeoutError:
-        raise HTTPException(status_code=504, detail="분석 시간이 초과되었습니다 (120초). 잠시 후 다시 시도해주세요.")
+        raise HTTPException(status_code=504, detail="분석 시간이 초과되었습니다 (300초). 잠시 후 다시 시도해주세요.")
     except LLMAPIError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e))
 

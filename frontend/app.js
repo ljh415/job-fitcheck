@@ -62,6 +62,12 @@ function saveQAHistory() {
   catch (e) { console.warn('QA 히스토리 저장 실패(용량 초과):', e); }
 }
 
+function localDateString(d = new Date()) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 function escHtml(s) {
   return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
@@ -128,7 +134,7 @@ document.getElementById('app').addEventListener('click', (e) => {
 });
 
 document.getElementById('app').addEventListener('change', (e) => {
-  if (e.target.matches('.row-check')) { onCheckChange(); return; }
+  if (e.target.matches('.row-check')) { onCheckChange(e.target); return; }
   if (e.target.matches('[data-action="status-change"]')) onStatusChange(e.target.dataset.slug, e.target);
 });
 
@@ -315,7 +321,7 @@ function renderMainTable(companies, terminatedCount = 0) {
 
 async function togglePin(slug) {
   try {
-    const result = await api(`/companies/${slug}/pin`, { method: 'POST', body: '{}' });
+    const result = await api(`/companies/${encodeURIComponent(slug)}/pin`, { method: 'POST', body: '{}' });
     const company = allCompanies.find(c => c.slug === slug);
     if (company) company.frontmatter.pinned = result.pinned;
     applyFilters();
@@ -394,10 +400,20 @@ function applyFilters() {
 function filterTable() { applyFilters(); }
 function sortTable() { applyFilters(); }
 
-function onCheckChange() {
+function onCheckChange(changedEl) {
   selectedSlugs = new Set(
     [...document.querySelectorAll('.row-check:checked')].map(el => el.dataset.slug)
   );
+  if (selectedSlugs.size > 5) {
+    if (changedEl) {
+      changedEl.checked = false;
+      selectedSlugs.delete(changedEl.dataset.slug);
+    } else {
+      document.querySelectorAll('.row-check:checked').forEach(c => { c.checked = false; });
+      selectedSlugs.clear();
+    }
+    showToast('비교는 한 번에 최대 5개까지 선택할 수 있습니다.', 'error');
+  }
   const compareBtn = document.getElementById('compare-btn');
   if (compareBtn) {
     if (selectedSlugs.size >= 2) compareBtn.classList.remove('hidden');
@@ -413,7 +429,7 @@ function onCheckChange() {
 async function deleteSelected() {
   if (!confirm(`선택한 ${selectedSlugs.size}개 회사를 삭제하시겠습니까?`)) return;
   const results = await Promise.allSettled(
-    [...selectedSlugs].map(slug => api(`/companies/${slug}`, { method: 'DELETE' }))
+    [...selectedSlugs].map(slug => api(`/companies/${encodeURIComponent(slug)}`, { method: 'DELETE' }))
   );
   const failed = results.filter(r => r.status === 'rejected').length;
   if (failed > 0) showToast(`${failed}개 삭제 실패`, 'error');
@@ -433,7 +449,7 @@ async function onStatusChange(slug, selectEl) {
   selectEl.className = `status-select status-${newStatus}`;
   let record;
   try {
-    record = await api(`/companies/${slug}`);
+    record = await api(`/companies/${encodeURIComponent(slug)}`);
   } catch (e) {
     selectEl.className = prevClass;
     selectEl.value = prevValue;
@@ -443,7 +459,7 @@ async function onStatusChange(slug, selectEl) {
   record.frontmatter.status = newStatus;
 
   // 지원 상태 로그 섹션에 날짜 자동 기록
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateString();
   const logEntry = `- ${today}: ${newStatus}`;
   const logPattern = /(##\s*\d*\.?\s*지원 상태 로그)/;
   if (logPattern.test(record.body)) {
@@ -488,7 +504,7 @@ function goCompare() {
 async function initDetail(slug) {
   let record;
   try {
-    record = await api(`/companies/${slug}`);
+    record = await api(`/companies/${encodeURIComponent(slug)}`);
   } catch (e) {
     showToast('회사 정보 로딩 실패: ' + e.message, 'error');
     navigate('dashboard');
@@ -798,7 +814,7 @@ async function sendQA() {
   input.value = '';
 
   if (!qaHistory[currentSlug]) qaHistory[currentSlug] = [];
-  const history = qaHistory[currentSlug].slice();
+  const history = qaHistory[currentSlug].slice(-40);
   qaHistory[currentSlug].push({ role: 'user', text: question });
   saveQAHistory();
   appendBubble('qa-messages', question, 'user');
@@ -828,7 +844,7 @@ async function sendCompareQA() {
   if (!question) return;
   input.value = '';
 
-  const history = compareQaHistory.slice();
+  const history = compareQaHistory.slice(-40);
   compareQaHistory.push({ role: 'user', text: question });
   appendBubble('compare-qa-messages', question, 'user');
   const assistantBubble = appendBubble('compare-qa-messages', '', 'assistant');
@@ -1089,7 +1105,9 @@ async function initCompare(slugs) {
   compareQaHistory = [];
   let records;
   try {
-    records = await api(`/companies/compare?slugs=${slugs.join(',')}`);
+    const params = new URLSearchParams();
+    slugs.forEach(s => params.append('slugs', s));
+    records = await api(`/companies/compare?${params}`);
   } catch (e) {
     showToast('비교 데이터 로딩 실패: ' + e.message, 'error');
     navigate('dashboard');
@@ -1643,7 +1661,7 @@ async function exportZip() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `job-fitcheck_backup_${new Date().toISOString().slice(0, 10)}.zip`;
+    a.download = `job-fitcheck_backup_${localDateString()}.zip`;
     a.click();
     URL.revokeObjectURL(url);
     showToast('백업 ZIP 다운로드 완료');
@@ -1663,7 +1681,7 @@ async function exportCSV() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `companies_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `companies_${localDateString()}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   } catch (e) {
@@ -1745,7 +1763,7 @@ function switchTimelineTab(tab) {
   if (tab === 'cal') renderCalendar();
 }
 
-const EXCLUDED_LOG_LABELS = new Set(['분석 완료', '등록', '적합도 재평가 완료']);
+const EXCLUDED_LOG_LABELS = new Set(['분석 완료', '재분석 완료', '등록', '적합도 재평가 완료']);
 const ACTIVE_STATUSES = new Set(['지원', '서류통과', '인터뷰', '최종', '보류']);
 const CLOSED_STATUSES = new Set(['탈락', '지원마감']);
 let _tlShowClosed = false;
@@ -1853,7 +1871,7 @@ function renderCalendar() {
   // First day of month weekday (0=Sun)
   const firstDay = new Date(_calYear, _calMonth, 1).getDay();
   const daysInMonth = new Date(_calYear, _calMonth + 1, 0).getDate();
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateString();
 
   let html = '';
   // Leading empty cells
