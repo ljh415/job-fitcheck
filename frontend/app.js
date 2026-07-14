@@ -62,6 +62,12 @@ function saveQAHistory() {
   catch (e) { console.warn('QA 히스토리 저장 실패(용량 초과):', e); }
 }
 
+function localDateString(d = new Date()) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 function escHtml(s) {
   return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
@@ -453,7 +459,7 @@ async function onStatusChange(slug, selectEl) {
   record.frontmatter.status = newStatus;
 
   // 지원 상태 로그 섹션에 날짜 자동 기록
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateString();
   const logEntry = `- ${today}: ${newStatus}`;
   const logPattern = /(##\s*\d*\.?\s*지원 상태 로그)/;
   if (logPattern.test(record.body)) {
@@ -1637,7 +1643,7 @@ async function exportZip() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `job-fitcheck_backup_${new Date().toISOString().slice(0, 10)}.zip`;
+    a.download = `job-fitcheck_backup_${localDateString()}.zip`;
     a.click();
     URL.revokeObjectURL(url);
     showToast('백업 ZIP 다운로드 완료');
@@ -1657,7 +1663,7 @@ async function exportCSV() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `companies_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `companies_${localDateString()}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   } catch (e) {
@@ -1847,7 +1853,7 @@ function renderCalendar() {
   // First day of month weekday (0=Sun)
   const firstDay = new Date(_calYear, _calMonth, 1).getDay();
   const daysInMonth = new Date(_calYear, _calMonth + 1, 0).getDate();
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateString();
 
   let html = '';
   // Leading empty cells
