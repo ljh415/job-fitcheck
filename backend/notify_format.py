@@ -6,19 +6,18 @@ def build_message(materials: dict, bold=lambda s: s) -> str:
 
 
 def _build_analysis(materials: dict, bold) -> str:
-    header = [bold(f"✅ {materials['company']} 분석 완료")]
+    title = materials["company"]
     if materials.get("job_title"):
-        header.append(materials["job_title"])
+        title += f" — {materials['job_title']}"
+    header = [bold(f"✅ {title}")]
     if materials.get("score"):
         header.append(f"{materials['score']}점, {materials.get('label', '')}")
     blocks = ["\n".join(header)]
 
     if materials.get("strengths"):
-        titles = "\n".join(f"• {t}" for t in materials["strengths"])
-        blocks.append(f"{bold('👍 강점')}\n{titles}")
+        blocks.append(f"{bold('👍 강점')}: " + ", ".join(materials["strengths"]))
     if materials.get("gaps"):
-        titles = "\n".join(f"• {t}" for t in materials["gaps"])
-        blocks.append(f"{bold('👎 갭')}\n{titles}")
+        blocks.append(f"{bold('👎 갭')}: " + ", ".join(materials["gaps"]))
 
     extra = []
     if materials.get("jobplanet"):
@@ -26,7 +25,7 @@ def _build_analysis(materials: dict, bold) -> str:
     if materials.get("employee_count"):
         extra.append(f"👥 임직원 {materials['employee_count']}")
     if extra:
-        blocks.append("\n".join(extra))
+        blocks.append("  ".join(extra))
 
     return "\n\n".join(blocks)
 
