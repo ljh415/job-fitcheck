@@ -63,6 +63,8 @@ DISCORD_WEBHOOK_URL=...  # 디스코드 Incoming Webhook URL
 - 강점 요약 / 갭 요약 (기본 ON)
 - 잡플래닛 평점 / 임직원 수 (기본 OFF)
 
+채널별로 굵게 표시 문법(텔레그램 HTML `<b>`, 슬랙 `*mrkdwn*`, 디스코드 `**markdown**`)을 자동 적용해 각 앱에서 헤더가 굵게 보입니다.
+
 ## LLM 모델
 
 작업 성격에 따라 자동으로 적절한 모델을 선택합니다.
