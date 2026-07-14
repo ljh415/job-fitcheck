@@ -1,5 +1,26 @@
 # Changelog
 
+## v1.1.0 — 메신저 알림 기능 개선 (Phase 7) (2026-07-15)
+
+**채널 확장**
+- 슬랙·디스코드 Incoming Webhook 알림 채널 추가(`backend/slack.py`, `backend/discord.py` 신설). 텔레그램과 동일하게 설정돼 있으면 전송, 없으면 스킵하는 독립 토글 구조이며 `backend/notify.py`가 `asyncio.gather`로 3채널 병렬 전송
+
+**알림 내용 커스터마이즈**
+- 설정 화면에 강점 요약(기본 ON)·갭 요약(기본 ON)·잡플래닛 평점(기본 OFF)·임직원 수(기본 OFF) 체크박스 추가, 4개 모두 끄면 기본 메시지만 전송
+- `strengths`/`gaps` 등급 표기를 (강/중/약)·(상/중/하)로 다르게 쓰던 것을 (상/중/하)로 통일하고, `prompts.py`에 강점 등급 판정 기준 신규 추가
+
+**채널별 포맷팅**
+- 알림 재료(회사명/직무/점수/라벨/강점/갭/잡플래닛/임직원수)를 dict로 조립하고 `backend/notify_format.py`의 `build_message()` 공통 빌더가 텔레그램(HTML `<b>`)·슬랙(`*mrkdwn*`)·디스코드(`**markdown**`)별 굵게 문법만 주입해 재사용
+- 분석 완료 메시지 레이아웃을 압축(헤더 한 줄 합침, 강점/갭 쉼표 나열)
+
+**주간 지원 현황 요약 알림**
+- `_weekly_summary_loop()` 백그라운드 태스크(새 스케줄러 의존성 없이 `asyncio.sleep` 기반)가 설정된 요일·시각(기본 월요일 09:00)에 신규 등록 건수·상태별 현황·방치된 항목(7일 이상 진행 없음)을 요약해 발송
+- 설정 화면에 온/오프 토글 + 요일·시각 선택 UI 추가, "분석 완료 알림" 섹션과는 트리거 방식이 달라 별도 섹션으로 분리
+
+**기타**
+- 설정 페이지 체크박스가 세로로 쌓여 빈 공간이 커지던 CSS 버그 수정(`label` 전역 `flex-direction:column` 상속 문제)
+- `.env.example`/README에 `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`/`SLACK_WEBHOOK_URL`/`DISCORD_WEBHOOK_URL` 및 "알림 설정" 섹션 신규 문서화
+
 ## v1.0.5 — README 사용 비용 표기 정정 (2026-07-14)
 
 **`README.md`**
