@@ -42,6 +42,12 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
 
+    # 슬랙 알림 — Incoming Webhook URL, 비어 있으면 미전송
+    slack_webhook_url: str = ""
+
+    # 디스코드 알림 — Incoming Webhook URL, 비어 있으면 미전송
+    discord_webhook_url: str = ""
+
     # 데이터 루트 디렉토리 (Docker에서는 볼륨 마운트 경로)
     data_dir: Path = Path(__file__).parent.parent / "data"
 

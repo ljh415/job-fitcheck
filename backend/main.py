@@ -36,7 +36,7 @@ import usage_tracker
 from jobplanet import fetch_jobplanet_score
 from llm.base import LLMAPIError
 from pdf_parser import PDFExtractError
-from telegram import send_notification
+from notify import send_notification
 from config import (
     ensure_dirs,
     get_active_provider,
@@ -898,7 +898,7 @@ async def _process_company(
     score = fit_data.get("fit_score", "")
     score_str = f" ({score}점, {label})" if score else ""
     await send_notification(
-        f"✅ <b>{fm.display_name or fm.company_name}</b> 분석 완료{score_str}\n{fm.job_title or ''}"
+        f"✅ {fm.display_name or fm.company_name} 분석 완료{score_str}\n{fm.job_title or ''}"
     )
     return record
 
