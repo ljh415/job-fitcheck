@@ -1224,7 +1224,7 @@ async function initSettings() {
     if (el) el.value = currentSettings[key] || '';
   });
 
-  ['notify-strengths', 'notify-gaps', 'notify-jobplanet-rating', 'notify-employee-count'].forEach(id => {
+  ['notify-strengths', 'notify-gaps', 'notify-jobplanet-rating', 'notify-employee-count', 'notify-weekly-summary'].forEach(id => {
     const el = document.getElementById(id);
     const key = id.replace(/-/g, '_');
     if (el) el.checked = !!currentSettings[key];
@@ -1575,6 +1575,7 @@ async function saveSettings() {
     notify_gaps: document.getElementById('notify-gaps')?.checked ?? null,
     notify_jobplanet_rating: document.getElementById('notify-jobplanet-rating')?.checked ?? null,
     notify_employee_count: document.getElementById('notify-employee-count')?.checked ?? null,
+    notify_weekly_summary: document.getElementById('notify-weekly-summary')?.checked ?? null,
   };
   try {
     await api('/settings', { method: 'PUT', body: JSON.stringify(payload) });

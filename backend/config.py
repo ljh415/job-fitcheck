@@ -101,6 +101,7 @@ _notify_pref_defaults: dict = {
     "notify_gaps": True,
     "notify_jobplanet_rating": False,
     "notify_employee_count": False,
+    "notify_weekly_summary": False,
 }
 _runtime_notify_prefs: dict = {}
 

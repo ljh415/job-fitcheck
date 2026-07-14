@@ -84,7 +84,9 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     ensure_dirs()
+    task = asyncio.create_task(_weekly_summary_loop())
     yield
+    task.cancel()
 
 
 app = FastAPI(title="Job FitCheck", version="0.1.0", lifespan=lifespan)
@@ -197,6 +199,7 @@ async def get_settings():
         notify_gaps=get_notify_pref("notify_gaps"),
         notify_jobplanet_rating=get_notify_pref("notify_jobplanet_rating"),
         notify_employee_count=get_notify_pref("notify_employee_count"),
+        notify_weekly_summary=get_notify_pref("notify_weekly_summary"),
     )
 
 
@@ -217,7 +220,7 @@ async def update_settings(req: SettingsUpdateRequest):
             set_model_override(key, val)
             if prev_model != val:
                 logger.info("모델 변경: %s = %s", key, val)
-    for key in ("notify_strengths", "notify_gaps", "notify_jobplanet_rating", "notify_employee_count"):
+    for key in ("notify_strengths", "notify_gaps", "notify_jobplanet_rating", "notify_employee_count", "notify_weekly_summary"):
         val = getattr(req, key)
         if val is not None:
             set_notify_pref(key, val)
@@ -551,6 +554,72 @@ def _parse_status_log(body: str, slug: str = "") -> list[dict]:
             if m:
                 entries.append({"date": m.group(1), "label": m.group(2).strip()})
     return entries
+
+
+_NEGLECTED_DAYS = 7  # 이 기간 동안 상태 변경 없으면 "방치된 항목"으로 콜아웃
+_ACTIVE_STATUSES = {"지원", "서류통과", "인터뷰", "최종", "보류"}  # 미지원/탈락/지원마감은 방치 대상 아님
+
+
+def _build_weekly_summary_materials() -> dict:
+    """주간 지원 현황 요약 알림 재료를 조립한다: 신규 등록/상태별 개수/방치된 항목."""
+    metas = storage.list_companies()
+    today = date.today()
+    week_start = today - timedelta(days=today.weekday())
+
+    new_count = 0
+    status_counts: dict[str, int] = {}
+    neglected = []
+
+    for meta in metas:
+        fm = meta.frontmatter
+        status_counts[fm.status] = status_counts.get(fm.status, 0) + 1
+
+        if fm.created_at:
+            try:
+                if datetime.fromisoformat(fm.created_at).date() >= week_start:
+                    new_count += 1
+            except ValueError:
+                pass
+
+        if fm.status in _ACTIVE_STATUSES:
+            record = storage.read_company(meta.slug)
+            if not record:
+                continue
+            log_entries = _parse_status_log(record.body, slug=meta.slug)
+            if not log_entries:
+                continue
+            last_date = date.fromisoformat(log_entries[-1]["date"])
+            days_elapsed = (today - last_date).days
+            if days_elapsed >= _NEGLECTED_DAYS:
+                neglected.append({
+                    "name": fm.display_name or fm.company_name,
+                    "status": fm.status,
+                    "days": days_elapsed,
+                })
+
+    return {
+        "kind": "weekly_summary",
+        "period": f"{week_start.isoformat()} ~ {today.isoformat()}",
+        "new_count": new_count,
+        "status_counts": status_counts,
+        "neglected": neglected,
+    }
+
+
+async def _weekly_summary_loop():
+    """매주 월요일 09:00에 지원 현황 요약 알림을 발송한다."""
+    while True:
+        now = datetime.now()
+        days_ahead = (0 - now.weekday()) % 7  # 0 = 월요일
+        next_run = (now + timedelta(days=days_ahead)).replace(hour=9, minute=0, second=0, microsecond=0)
+        if next_run <= now:
+            next_run += timedelta(days=7)
+        await asyncio.sleep((next_run - now).total_seconds())
+        if get_notify_pref("notify_weekly_summary"):
+            try:
+                await send_notification(_build_weekly_summary_materials())
+            except Exception as e:
+                logger.warning("주간 요약 알림 전송 실패: %s", e)
 
 
 @app.get("/api/companies/timeline")

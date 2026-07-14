@@ -174,6 +174,7 @@ class SettingsResponse(BaseModel):
     notify_gaps: bool
     notify_jobplanet_rating: bool
     notify_employee_count: bool
+    notify_weekly_summary: bool
 
 
 class SettingsUpdateRequest(BaseModel):
@@ -189,6 +190,7 @@ class SettingsUpdateRequest(BaseModel):
     notify_gaps: bool | None = None
     notify_jobplanet_rating: bool | None = None
     notify_employee_count: bool | None = None
+    notify_weekly_summary: bool | None = None
 
 
 class ProfileUpdateRequest(BaseModel):
