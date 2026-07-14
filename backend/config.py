@@ -95,6 +95,24 @@ def get_reasoning_effort() -> str:
     return _runtime_models.get("openai_reasoning_effort") or settings.openai_reasoning_effort
 
 
+# 분석 완료 알림 메시지에 포함할 항목 토글 (재시작 시 기본값으로 리셋)
+_notify_pref_defaults: dict = {
+    "notify_strengths": True,
+    "notify_gaps": True,
+    "notify_jobplanet_rating": False,
+    "notify_employee_count": False,
+}
+_runtime_notify_prefs: dict = {}
+
+
+def get_notify_pref(key: str) -> bool:
+    return _runtime_notify_prefs.get(key, _notify_pref_defaults[key])
+
+
+def set_notify_pref(key: str, value: bool) -> None:
+    _runtime_notify_prefs[key] = value
+
+
 def ensure_dirs() -> None:
     """앱 시작 시 필요한 디렉토리를 생성한다."""
     settings.companies_dir.mkdir(parents=True, exist_ok=True)

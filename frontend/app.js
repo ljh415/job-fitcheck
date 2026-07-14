@@ -1224,6 +1224,12 @@ async function initSettings() {
     if (el) el.value = currentSettings[key] || '';
   });
 
+  ['notify-strengths', 'notify-gaps', 'notify-jobplanet-rating', 'notify-employee-count'].forEach(id => {
+    const el = document.getElementById(id);
+    const key = id.replace(/-/g, '_');
+    if (el) el.checked = !!currentSettings[key];
+  });
+
   try {
     const criteriaData = await api('/eval-criteria');
     const criteriaEl = document.getElementById('eval-criteria-input');
@@ -1565,6 +1571,10 @@ async function saveSettings() {
     openai_light_model: document.getElementById('openai-light-model')?.value || null,
     gemini_high_model: document.getElementById('gemini-high-model')?.value || null,
     gemini_light_model: document.getElementById('gemini-light-model')?.value || null,
+    notify_strengths: document.getElementById('notify-strengths')?.checked ?? null,
+    notify_gaps: document.getElementById('notify-gaps')?.checked ?? null,
+    notify_jobplanet_rating: document.getElementById('notify-jobplanet-rating')?.checked ?? null,
+    notify_employee_count: document.getElementById('notify-employee-count')?.checked ?? null,
   };
   try {
     await api('/settings', { method: 'PUT', body: JSON.stringify(payload) });

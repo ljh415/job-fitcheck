@@ -41,8 +41,10 @@ from config import (
     ensure_dirs,
     get_active_provider,
     get_model_override,
+    get_notify_pref,
     set_active_provider,
     set_model_override,
+    set_notify_pref,
     settings,
 )
 from llm.router import high_provider, light_provider
@@ -191,6 +193,10 @@ async def get_settings():
         openai_reasoning_effort=_m("openai_reasoning_effort", settings.openai_reasoning_effort),
         gemini_high_model=_m("gemini_high_model", settings.gemini_high_model),
         gemini_light_model=_m("gemini_light_model", settings.gemini_light_model),
+        notify_strengths=get_notify_pref("notify_strengths"),
+        notify_gaps=get_notify_pref("notify_gaps"),
+        notify_jobplanet_rating=get_notify_pref("notify_jobplanet_rating"),
+        notify_employee_count=get_notify_pref("notify_employee_count"),
     )
 
 
@@ -211,6 +217,10 @@ async def update_settings(req: SettingsUpdateRequest):
             set_model_override(key, val)
             if prev_model != val:
                 logger.info("모델 변경: %s = %s", key, val)
+    for key in ("notify_strengths", "notify_gaps", "notify_jobplanet_rating", "notify_employee_count"):
+        val = getattr(req, key)
+        if val is not None:
+            set_notify_pref(key, val)
     return {"status": "ok", "provider": get_active_provider()}
 
 
@@ -896,10 +906,35 @@ async def _process_company(
 
     label = fit_data.get("fit_label", "")
     score = fit_data.get("fit_score", "")
-    score_str = f" ({score}점, {label})" if score else ""
-    await send_notification(
-        f"✅ {fm.display_name or fm.company_name} 분석 완료{score_str}\n{fm.job_title or ''}"
-    )
+    base_message = f"✅ {fm.display_name or fm.company_name} 분석 완료\n{fm.job_title or ''}"
+    if score:
+        base_message += f"\n{score}점, {label}"
+
+    show_strengths = get_notify_pref("notify_strengths")
+    show_gaps = get_notify_pref("notify_gaps")
+    show_jobplanet = get_notify_pref("notify_jobplanet_rating")
+    show_employee_count = get_notify_pref("notify_employee_count")
+
+    if not (show_strengths or show_gaps or show_jobplanet or show_employee_count):
+        message = base_message
+    else:
+        blocks = [base_message]
+        if show_strengths and fm.strengths:
+            titles = "\n".join(f"• {item.split(' - ', 1)[0].strip()}" for item in fm.strengths[:2])
+            blocks.append(f"👍 강점\n{titles}")
+        if show_gaps and fm.gaps:
+            titles = "\n".join(f"• {item.split(' - ', 1)[0].strip()}" for item in fm.gaps[:2])
+            blocks.append(f"👎 갭\n{titles}")
+        extra = []
+        if show_jobplanet and fm.jobplanet_score:
+            extra.append(f"⭐ 잡플래닛 {fm.jobplanet_score}")
+        if show_employee_count and fm.employee_count:
+            extra.append(f"👥 임직원 {fm.employee_count}")
+        if extra:
+            blocks.append("\n".join(extra))
+        message = "\n\n".join(blocks)
+
+    await send_notification(message)
     return record
 
 
