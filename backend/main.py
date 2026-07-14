@@ -930,9 +930,9 @@ async def add_from_url(req: FromUrlRequest):
     except Exception:
         raise HTTPException(status_code=502, detail="URL 접근 실패: 네트워크 연결 오류. URL을 다시 확인해주세요.")
     try:
-        return await asyncio.wait_for(_process_company(raw_text, "url", req.url), timeout=120)
+        return await asyncio.wait_for(_process_company(raw_text, "url", req.url), timeout=300)
     except asyncio.TimeoutError:
-        raise HTTPException(status_code=504, detail="분석 시간이 초과되었습니다 (120초). 잠시 후 다시 시도해주세요.")
+        raise HTTPException(status_code=504, detail="분석 시간이 초과되었습니다 (300초). 잠시 후 다시 시도해주세요.")
     except LLMAPIError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e))
 
@@ -958,10 +958,10 @@ async def add_from_text(req: FromTextRequest):
                 company_name_override=req.company_name,
                 job_title_override=req.job_title,
             ),
-            timeout=120,
+            timeout=300,
         )
     except asyncio.TimeoutError:
-        raise HTTPException(status_code=504, detail="분석 시간이 초과되었습니다 (120초). 잠시 후 다시 시도해주세요.")
+        raise HTTPException(status_code=504, detail="분석 시간이 초과되었습니다 (300초). 잠시 후 다시 시도해주세요.")
     except LLMAPIError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e))
 
@@ -1015,9 +1015,9 @@ async def add_from_image(files: list[UploadFile] = File(...)):
     logger.info("이미지 텍스트 추출 완료: %d자", len(raw_text))
 
     try:
-        return await asyncio.wait_for(_process_company(raw_text, "image", None), timeout=120)
+        return await asyncio.wait_for(_process_company(raw_text, "image", None), timeout=300)
     except asyncio.TimeoutError:
-        raise HTTPException(status_code=504, detail="분석 시간이 초과되었습니다 (120초). 잠시 후 다시 시도해주세요.")
+        raise HTTPException(status_code=504, detail="분석 시간이 초과되었습니다 (300초). 잠시 후 다시 시도해주세요.")
     except LLMAPIError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e))
 
