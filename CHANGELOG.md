@@ -1,5 +1,30 @@
 # Changelog
 
+## v1.1.1 — Codex 코드 리뷰 발견 8건 수정 (2026-07-15)
+
+> `review_w_codex_2026-07-14_v1.0.5.md` 반영, `fix/analysis-timeout-300s` 브랜치
+
+**`backend/main.py`**
+- 신규 공고 분석(URL/텍스트/이미지) 타임아웃을 120초 → 300초로 상향 — 기본 OpenAI(gpt-5, effort=medium) 조합이 실제로 150~180초 걸려 504가 발생하던 문제. nginx 일반 API 제한(300초)과 통일
+- `/api/companies/compare`가 쉼표 구분 문자열 대신 반복 query parameter(`slugs=a&slugs=b`)를 받도록 변경 — slug에 쉼표가 있으면 두 회사로 잘못 분리되던 문제 해결
+- 삭제 전 백업(`_save_backup_zip`) 실패 시 삭제 API가 500을 반환하도록 변경(fail-closed) — 기존엔 백업 실패해도 경고 로그만 남기고 삭제가 계속 진행됨
+
+**`backend/storage.py`**
+- `delete_company()`의 백업 실패 예외 흡수(swallow) 제거 — 위 fail-closed 동작의 근거
+
+**`backend/telegram.py`**
+- `client.post()` 응답에 `raise_for_status()` 추가 — 잘못된 chat ID, 인증 실패, rate limit 등으로 텔레그램이 4xx/5xx를 반환해도 감지되지 않던 문제 수정
+
+**`frontend/app.js`**
+- slug를 사용하는 모든 API 호출 경로(핀 토글·상태변경 전 조회·상세 조회·다중 삭제)에 `encodeURIComponent()` 누락분 적용 — 직무명에 `#`,`,`,`&` 등 URL 예약문자가 있으면 상세/핀/삭제/비교가 실패하던 문제
+- Q&A 전송 시 저장된 히스토리 전체가 아닌 최근 40개만 보내도록 수정 — 21회 완료 후 프론트가 40개 제한을 넘겨 계속 422가 발생하던 문제
+- 비교 화면 체크박스가 5개를 초과하면 방금 선택한 항목을 자동 해제하고 안내 — 기존엔 6개 이상 선택해도 비교 화면 진입 후에야 422 발생
+- 타임라인 제외 라벨(`EXCLUDED_LOG_LABELS`)에 "재분석 완료" 추가 — refill 이벤트가 지원 이벤트로 잘못 노출되던 문제
+- UTC 기준 `toISOString().slice(0,10)` 대신 로컬 타임존 기준 `localDateString()` 헬퍼로 교체(상태 로그 날짜, 캘린더 오늘 표시, 백업/CSV 파일명)
+
+**`docker-compose.yml`**
+- API 컨테이너에 `TZ=Asia/Seoul` 환경변수 추가 — 한국 시간 자정~오전 9시 사이 `date.today()`가 UTC 기준으로 하루 전 날짜를 반환하던 문제 해결
+
 ## v1.1.0 — 메신저 알림 기능 개선 (Phase 7) (2026-07-15)
 
 **채널 확장**
