@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Review Report"
+  short_description: "코드 리뷰를 버전별 Markdown 보고서로 저장"
+  default_prompt: "Use $codex-review-report to review the current repository and save a versioned Markdown report."
