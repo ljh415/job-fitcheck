@@ -24,7 +24,7 @@ from pathlib import Path
 import httpx
 import jwt
 
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, Query, Request, UploadFile, File, Form
 from pydantic import BaseModel
 from fastapi.responses import JSONResponse, StreamingResponse
 
@@ -510,9 +510,9 @@ async def export_companies_csv():
 
 
 @app.get("/api/companies/compare")
-async def compare_companies(slugs: str):
-    """쉼표로 구분된 slug 목록을 받아 여러 회사 데이터를 반환."""
-    slug_list = [s.strip() for s in slugs.split(",") if s.strip()]
+async def compare_companies(slugs: list[str] = Query(...)):
+    """slug 목록(반복 query parameter)을 받아 여러 회사 데이터를 반환."""
+    slug_list = [s.strip() for s in slugs if s.strip()]
     if len(slug_list) > 5:
         raise HTTPException(status_code=422, detail="한 번에 최대 5개 회사까지 비교할 수 있습니다.")
     results = []

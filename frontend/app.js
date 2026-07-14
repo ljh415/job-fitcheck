@@ -315,7 +315,7 @@ function renderMainTable(companies, terminatedCount = 0) {
 
 async function togglePin(slug) {
   try {
-    const result = await api(`/companies/${slug}/pin`, { method: 'POST', body: '{}' });
+    const result = await api(`/companies/${encodeURIComponent(slug)}/pin`, { method: 'POST', body: '{}' });
     const company = allCompanies.find(c => c.slug === slug);
     if (company) company.frontmatter.pinned = result.pinned;
     applyFilters();
@@ -413,7 +413,7 @@ function onCheckChange() {
 async function deleteSelected() {
   if (!confirm(`선택한 ${selectedSlugs.size}개 회사를 삭제하시겠습니까?`)) return;
   const results = await Promise.allSettled(
-    [...selectedSlugs].map(slug => api(`/companies/${slug}`, { method: 'DELETE' }))
+    [...selectedSlugs].map(slug => api(`/companies/${encodeURIComponent(slug)}`, { method: 'DELETE' }))
   );
   const failed = results.filter(r => r.status === 'rejected').length;
   if (failed > 0) showToast(`${failed}개 삭제 실패`, 'error');
@@ -433,7 +433,7 @@ async function onStatusChange(slug, selectEl) {
   selectEl.className = `status-select status-${newStatus}`;
   let record;
   try {
-    record = await api(`/companies/${slug}`);
+    record = await api(`/companies/${encodeURIComponent(slug)}`);
   } catch (e) {
     selectEl.className = prevClass;
     selectEl.value = prevValue;
@@ -488,7 +488,7 @@ function goCompare() {
 async function initDetail(slug) {
   let record;
   try {
-    record = await api(`/companies/${slug}`);
+    record = await api(`/companies/${encodeURIComponent(slug)}`);
   } catch (e) {
     showToast('회사 정보 로딩 실패: ' + e.message, 'error');
     navigate('dashboard');
@@ -1089,7 +1089,9 @@ async function initCompare(slugs) {
   compareQaHistory = [];
   let records;
   try {
-    records = await api(`/companies/compare?slugs=${slugs.join(',')}`);
+    const params = new URLSearchParams();
+    slugs.forEach(s => params.append('slugs', s));
+    records = await api(`/companies/compare?${params}`);
   } catch (e) {
     showToast('비교 데이터 로딩 실패: ' + e.message, 'error');
     navigate('dashboard');
