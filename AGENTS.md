@@ -6,7 +6,7 @@ Claude가 주 구현자이고 Codex는 계획·리뷰를 맡는다. Claude 사�
 
 1. `CLAUDE.md`와 `docs/TODO.md`를 읽는다.
 2. `git status --short --branch`, `git diff --stat`, `git diff`, `git diff --cached`, `git log -10 --oneline --decorate`로 브랜치·미커밋 변경·최근 작업을 확인한다.
-3. 요청과 관련된 `README.md`, `CHANGELOG.md`, `docs/` 문서와 가장 최근의 `review*_codex*.md`만 추가로 읽는다.
+3. 요청과 관련된 `README.md`, `CHANGELOG.md`, `docs/` 문서와 `docs/review-w-codex/`의 가장 최근 `review_w_codex_*.md`만 추가로 읽는다.
 4. 코드 변경 전 현재 기준점, 진행 중인 변경, 다음 할 일, 충돌 위험을 짧게 정리한다.
 
 > **리뷰 요청 시 전달 정보**: 위 1~3단계를 Codex가 스스로 수행하므로, 인계자(Claude/사용자)는 diff·커밋 로그·CHANGELOG 정도만 넘기면 충분하다. CLAUDE.md·TODO.md·git 상태를 별도로 요약해서 붙여줄 필요 없음.

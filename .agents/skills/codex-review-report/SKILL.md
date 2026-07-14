@@ -9,7 +9,7 @@ Perform a read-only code review and write the result to `docs/review-w-codex/`. 
 
 ## Workflow
 
-1. Follow the repository `AGENTS.md` startup procedure. Read only the newest relevant `review*_codex*.md` in addition to the required project and Git context.
+1. Follow the repository `AGENTS.md` startup procedure. Read only the newest relevant `docs/review-w-codex/review_w_codex_*.md` in addition to the required project and Git context.
 2. Determine the review baseline from the current branch, `HEAD`, latest applicable Git tag, and newest `CHANGELOG.md` version. Treat code and tests as authoritative when documentation differs.
 3. Review the requested scope end to end. For a general review, include changed code since the previous report and adjacent callers, data flows, error paths, configuration, and user-visible behavior.
 4. Re-check every proposed finding against the current code before reporting it. Do not repeat resolved findings, accepted product decisions, intentional untracked review files, or speculative improvements as bugs.
