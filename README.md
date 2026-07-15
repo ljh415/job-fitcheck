@@ -120,3 +120,7 @@ Gemini는 **Google AI Studio 무료 티어**로 API 키 발급 없이 사용 가
 ## 변경 이력
 
 [CHANGELOG.md](CHANGELOG.md)
+
+## 라이선스
+
+[MIT](LICENSE)
