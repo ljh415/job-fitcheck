@@ -1,6 +1,12 @@
-/* ── marked 확장: ==텍스트== → <mark> 하이라이트 ───────────────────── */
+/* ── marked 확장: 단일 줄바꿈도 <br>로 렌더링 + ==텍스트== → <mark> 하이라이트 ── */
+marked.setOptions({ breaks: true });
+
 function parseMarkdown(text) {
-  let html = marked.parse(text || '');
+  // "**따옴표**뒤텍스트"처럼 닫는 **의 앞이 구두점이고 뒤에 공백 없이 글자가 바로 이어지면
+  // CommonMark 강조(emphasis) 판정 규칙상 marked가 볼드로 인식하지 못해 **가 그대로 노출되는
+  // 경우가 있어(한국어 LLM 응답에서 자주 발생), marked 파싱 전에 **쌍을 직접 <strong>으로 치환한다.
+  const normalized = (text || '').replace(/\*\*([^*\n]+?)\*\*/g, '<strong>$1</strong>');
+  let html = marked.parse(normalized);
   html = html.replace(/==([^=\n]+)==/g, '<mark class="mark-pos">$1</mark>');
   html = html.replace(/!!([^!\n]+)!!/g, '<mark class="mark-neg">$1</mark>');
   return DOMPurify.sanitize(html, { ADD_ATTR: ['class'] });
@@ -867,7 +873,7 @@ async function sendCompareQA() {
 function appendBubble(containerId, text, role) {
   const container = document.getElementById(containerId);
   const bubble = document.createElement('div');
-  bubble.className = `qa-bubble ${role}`;
+  bubble.className = role === 'assistant' ? 'qa-bubble assistant markdown-body' : 'qa-bubble user';
   if (role === 'assistant' && text) bubble.innerHTML = parseMarkdown(text);
   else bubble.textContent = text;
   container.appendChild(bubble);
