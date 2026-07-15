@@ -1,5 +1,27 @@
 # Changelog
 
+## v1.1.6 — Gemini 기본 provider 전환 + 원클릭 설치 스크립트 + 저장소 정리 (2026-07-15)
+
+**`backend/config.py`**
+- 기본 provider를 Claude에서 Gemini로 변경 — 무료 티어로 별도 결제 없이 바로 체험 가능. 더 정확한 분석을 원하면 Claude API 키를 추가하고 설정에서 전환하도록 안내
+
+**`.env.example`, `CLAUDE.md`, `README.md`, `GETTING_STARTED.md`**
+- Gemini(`GOOGLE_API_KEY`)를 필수/기본 키로, Claude(`ANTHROPIC_API_KEY`)를 "선택(추천)"으로 재정렬. Gemini 무료 티어 관련 안내 문구도 "보조 비교용"에서 "기본, 품질 원하면 Claude 추천"으로 수정
+
+**`run/`** (신규 폴더)
+- `setup.command`/`setup.bat` — 더블클릭으로 Gemini/Claude API 키·로그인 비밀번호를 입력받아 `.env`를 자동 생성(터미널 명령어 불필요)
+- `start.command`/`start.bat` — `docker compose up --build` 래퍼
+- `stop.command`/`stop.bat` — `docker compose down` 래퍼
+
+**`docker/`** (신규 폴더)
+- 저장소 루트의 `Dockerfile`, `nginx.conf`를 이동, `docker-compose.yml`의 `build`/`volumes` 경로 갱신
+
+**`GETTING_STARTED.md`**
+- Docker Desktop 설치 중 계정 로그인/스킵 옵션 안내 추가
+- API 키 발급 순서를 Gemini(기본, 무료) 우선 → Claude(선택, 추천) 순으로 재구성
+- `run/` 폴더 스크립트 기반 흐름을 기본 경로로, 터미널 직접 사용법은 별도 선택 섹션으로 분리
+- 스크린샷 자리 표시 9곳 + `assets/guide/` 캡처 목록 추가
+
 ## v1.1.5 — 완전 초보자용 시작 가이드 추가 (2026-07-15)
 
 **`GETTING_STARTED.md`** (신규)
