@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.1.2 — Claude-Codex 인계 워크플로우 + 리뷰 문서 정리 (2026-07-15)
+
+**`AGENTS.md`** (신규)
+- Claude가 주 구현자, Codex는 계획·리뷰 및 Claude 사용량 제한/긴급 시 인계 담당이라는 워크플로우 문서화
+- 작업 시작 시 `CLAUDE.md`/`docs/TODO.md`/git 상태/최근 리뷰 문서를 스스로 확인하도록 명시, 리뷰 요청 시 diff·커밋 로그·CHANGELOG 정도만 넘기면 충분하다는 원칙 추가
+
+**`docs/review-w-codex/`**
+- 저장소 루트에 흩어져 있던 Codex 리뷰 문서 5개를 한 디렉토리로 정리. 단, 이 문서들은 기존부터 의도적으로 git 미추적 대상이라 `.gitignore`에 등록(실수로 한 번 커밋됐던 이력은 이후 히스토리에서 완전히 제거함)
+
+**`.agents/skills/codex-review-report/`**
+- Codex가 리뷰 보고서를 버전별 Markdown으로 저장하는 자체 스킬 정의를 git 추적 대상으로 추가, 저장 경로를 `docs/review-w-codex/` 기준으로 갱신
+
 ## v1.1.1 — Codex 코드 리뷰 발견 8건 수정 (2026-07-15)
 
 > `review_w_codex_2026-07-14_v1.0.5.md` 반영, `fix/analysis-timeout-300s` 브랜치
