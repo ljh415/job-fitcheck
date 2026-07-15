@@ -1,5 +1,5 @@
 #!/bin/bash
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 if [ -f .env ]; then
   echo ".env 파일이 이미 있습니다. 새로 설정하려면 .env 파일을 지우고 다시 실행해주세요."
@@ -26,7 +26,7 @@ else
   fi
 
   echo ""
-  echo "설정 완료! 이제 start.command를 더블클릭해서 실행하세요."
+  echo "설정 완료! 이제 run/start.command를 더블클릭해서 실행하세요."
 fi
 
 echo ""

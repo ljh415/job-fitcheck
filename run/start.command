@@ -1,8 +1,8 @@
 #!/bin/bash
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 if [ ! -f .env ]; then
-  echo ".env 파일이 없습니다. 먼저 setup.command를 더블클릭해서 실행해주세요."
+  echo ".env 파일이 없습니다. 먼저 run/setup.command를 더블클릭해서 실행해주세요."
   read -p "엔터를 누르면 창이 닫힙니다..." _
   exit 1
 fi

@@ -12,8 +12,8 @@
 > 4. `04-gemini-api-key.png` — Google AI Studio에서 API 키 생성된 화면
 > 5. `05-anthropic-signup.png` (선택) — Anthropic Console 가입/로그인 화면
 > 6. `06-anthropic-api-key.png` (선택) — API Keys 메뉴에서 `Create Key` 클릭 후 키 생성된 화면
-> 7. `07-setup-script.png` — `setup.command`/`setup.bat` 더블클릭 후 API 키를 입력받는 터미널 창
-> 8. `08-start-script.png` — `start.command`/`start.bat` 실행 후 로그가 흐르는 터미널 창
+> 7. `07-setup-script.png` — `run/setup.command`/`run/setup.bat` 더블클릭 후 API 키를 입력받는 터미널 창
+> 8. `08-start-script.png` — `run/start.command`/`run/start.bat` 실행 후 로그가 흐르는 터미널 창
 > 9. `09-login-screen.png` — 브라우저에서 `http://localhost:8000` 접속 후 나오는 로그인 화면
 
 ---
@@ -89,7 +89,7 @@ Gemini보다 분석 품질이 더 정확한 편입니다. 나중에 설정 화�
 
 ## 4단계. 초기 설정
 
-2단계에서 압축을 푼 폴더를 열어보면 `setup.command`(Mac) 또는 `setup.bat`(Windows) 파일이 있습니다. 이걸 **더블클릭**하세요.
+2단계에서 압축을 푼 폴더를 열어보면 `run` 폴더 안에 `setup.command`(Mac) 또는 `setup.bat`(Windows) 파일이 있습니다. 이걸 **더블클릭**하세요.
 
 - 검은 화면(터미널)이 뜨면서 순서대로 물어봅니다.
 - **Gemini API 키**: 3단계에서 복사해둔 키를 붙여넣고 Enter
@@ -106,7 +106,7 @@ Gemini보다 분석 품질이 더 정확한 편입니다. 나중에 설정 화�
 
 ## 5단계. 앱 실행
 
-같은 폴더에서 이번엔 `start.command`(Mac) 또는 `start.bat`(Windows)을 **더블클릭**하세요.
+같은 `run` 폴더에서 이번엔 `start.command`(Mac) 또는 `start.bat`(Windows)을 **더블클릭**하세요.
 
 검은 화면에 로그가 계속 흘러가다가 멈추는 듯한 상태가 되면(예: `Uvicorn running on...` 같은 문구가 보이면) 준비된 겁니다. 처음 실행할 때는 필요한 파일들을 받느라 2~5분 정도 걸릴 수 있습니다.
 
@@ -135,8 +135,8 @@ Gemini보다 분석 품질이 더 정확한 편입니다. 나중에 설정 화�
 
 ## 앱을 끄고/다시 켜고 싶을 때
 
-- **끄기**: 5단계에서 실행해둔 창에서 `Control + C`를 누르거나, `stop.command`(Mac)/`stop.bat`(Windows)을 더블클릭
-- **다시 켜기**: `start.command`/`start.bat`을 다시 더블클릭 (설정 파일과 데이터는 그대로 남아있습니다)
+- **끄기**: 5단계에서 실행해둔 창에서 `Control + C`를 누르거나, `run` 폴더의 `stop.command`(Mac)/`stop.bat`(Windows)을 더블클릭
+- **다시 켜기**: `run` 폴더의 `start.command`/`start.bat`을 다시 더블클릭 (설정 파일과 데이터는 그대로 남아있습니다)
 
 ---
 
@@ -160,5 +160,5 @@ Gemini보다 분석 품질이 더 정확한 편입니다. 나중에 설정 화�
 | `docker: command not found` 또는 비슷한 오류 | Docker Desktop이 실행 중이 아닙니다. 아이콘을 찾아 실행한 뒤 다시 시도 |
 | `port is already allocated` 같은 오류 | 8000번 포트를 다른 프로그램이 쓰고 있습니다. 컴퓨터를 재시작하거나, 다른 프로그램을 종료 후 재시도 |
 | 로그인이 안 됨 | 4단계에서 정한 비밀번호를 정확히 입력했는지 확인 (대소문자 구분) |
-| 공고 분석 시 "인증" 관련 오류 | API 키가 정확히 입력됐는지 확인 — 다시 설정하려면 `.env` 파일을 지우고 `setup.command`/`setup.bat`을 다시 실행 |
+| 공고 분석 시 "인증" 관련 오류 | API 키가 정확히 입력됐는지 확인 — 다시 설정하려면 `.env` 파일을 지우고 `run` 폴더의 `setup.command`/`setup.bat`을 다시 실행 |
 | 그 외 궁금한 점 | [README.md](README.md)에 기능별 설명이 더 자세히 있습니다 |

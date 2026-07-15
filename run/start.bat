@@ -1,8 +1,8 @@
 @echo off
-cd /d "%~dp0"
+cd /d "%~dp0\.."
 
 if not exist .env (
-  echo .env 파일이 없습니다. 먼저 setup.bat을 더블클릭해서 실행해주세요.
+  echo .env 파일이 없습니다. 먼저 run\setup.bat을 더블클릭해서 실행해주세요.
   pause
   exit /b 1
 )

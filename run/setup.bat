@@ -1,5 +1,5 @@
 @echo off
-cd /d "%~dp0"
+cd /d "%~dp0\.."
 
 if exist .env (
   echo .env 파일이 이미 있습니다. 새로 설정하려면 .env 파일을 지우고 다시 실행해주세요.
@@ -18,7 +18,7 @@ if exist .env (
   )
 
   echo.
-  echo 설정 완료! 이제 start.bat을 더블클릭해서 실행하세요.
+  echo 설정 완료! 이제 run\start.bat을 더블클릭해서 실행하세요.
 )
 
 echo.
