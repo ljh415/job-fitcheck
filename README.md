@@ -30,10 +30,10 @@ cp .env.example .env
 `.env` 파일에 API 키 입력:
 
 ```env
-ANTHROPIC_API_KEY=sk-ant-...
-APP_SECRET=your-password       # 로그인 비밀번호
-OPENAI_API_KEY=sk-...          # 선택
-GOOGLE_API_KEY=AIza...         # 선택 (Gemini 무료 티어 사용 가능)
+GOOGLE_API_KEY=AIza...          # 기본 provider, 무료 티어로 바로 체험 가능
+APP_SECRET=your-password        # 로그인 비밀번호
+ANTHROPIC_API_KEY=sk-ant-...    # 선택 (추천 — 더 정확한 분석 원하면 설정에서 Claude로 전환)
+OPENAI_API_KEY=sk-...           # 선택
 ```
 
 ### 2. 실행
@@ -80,16 +80,16 @@ DISCORD_WEBHOOK_URL=...  # 디스코드 Incoming Webhook URL
 
 설정 화면에서 모델을 수동으로 변경할 수 있습니다.
 
-### Gemini 무료 티어
+### Gemini 무료 티어 (기본 provider)
 
-Gemini는 **Google AI Studio 무료 티어**로 API 키 발급 없이 사용 가능합니다. [Google AI Studio](https://aistudio.google.com/apikey)에서 API 키를 발급받아 `GOOGLE_API_KEY`에 설정하세요.
+기본 provider는 Gemini입니다 — **Google AI Studio 무료 티어**로 별도 결제 없이 바로 체험할 수 있습니다. [Google AI Studio](https://aistudio.google.com/apikey)에서 API 키를 발급받아 `GOOGLE_API_KEY`에 설정하세요.
 
 **무료 티어 제한 (2026-07 기준):**
 - 모델당 일일 20회 호출 (프로젝트 × 모델 단위 별도 카운트)
 - 모델이 다르면 할당량 독립 (예: 2.5-flash 소진돼도 3.5-flash 사용 가능)
 - 분당 요청 수(RPM) 제한 있음 — 429 에러 발생 시 20초 대기 후 1회 자동 재시도, 그래도 실패하면 한도 초과 안내와 함께 즉시 실패 처리됨
 
-> 일일 호출 횟수가 제한적이므로, 공고 분석 시 Claude를 기본으로 사용하고 Gemini는 보조 비교용으로 활용하는 것을 권장합니다.
+> 일일 호출 횟수가 제한적이고 분석 품질도 Claude가 더 정확한 편이라, 무료로 가볍게 시작하고 싶다면 Gemini 그대로, 더 정확한 분석을 원하면 `ANTHROPIC_API_KEY`를 추가하고 설정 화면에서 provider를 Claude로 전환하는 것을 추천합니다.
 
 ### 사용 비용 추정치
 
