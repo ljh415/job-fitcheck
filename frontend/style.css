@@ -500,4 +500,14 @@ label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-w
   .settings-page-header { flex-wrap: wrap; gap: 8px; }
   .export-dropdown-panel { min-width: unset; width: max-content; max-width: calc(100vw - 48px); }
   .profile-upload-footer { flex-direction: column; align-items: flex-start; }
+
+  /* 마크다운 본문 테이블: 데스크톱 고정폭이 좁은 화면에서 근거/내용 칸을 과도하게 압박하지 않도록 3:2:4 비율로 조정 */
+  .markdown-body table.fit-check-table th:first-child,
+  .markdown-body table.fit-check-table td:first-child { width: 33.3%; }
+  .markdown-body table.fit-check-table th:nth-child(2),
+  .markdown-body table.fit-check-table td:nth-child(2) { width: 22.2%; }
+  .markdown-body table.fit-check-table th:nth-child(3),
+  .markdown-body table.fit-check-table td:nth-child(3) { width: 44.5%; }
+  .markdown-body table.info-table th:first-child,
+  .markdown-body table.info-table td:first-child { width: 84px; }
 }
