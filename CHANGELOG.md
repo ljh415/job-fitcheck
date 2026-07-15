@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.1.3 — Q&A 채팅 마크다운 렌더링 수정 (2026-07-15)
+
+**`frontend/app.js`**
+- `marked.setOptions({ breaks: true })` 추가 — 단일 줄바꿈이 그냥 공백으로 합쳐지던 문제 수정
+- Q&A 채팅 버블(`appendBubble`)에 `markdown-body` 클래스 누락 수정 — 다른 마크다운 렌더링 위치와 달리 이 클래스가 없어서 헤더·리스트·문단 여백이 전부 0으로 표시되던 문제
+- `**"강조"**뒤텍스트`처럼 닫는 `**` 바로 앞이 따옴표이고 뒤에 공백 없이 글자가 이어지면 CommonMark 강조 판정 규칙상 볼드로 인식되지 않던 문제 — marked 파싱 전에 `**` 쌍을 직접 `<strong>`으로 치환하도록 수정 (한국어 LLM 응답에서 자주 발생하는 패턴)
+
+**`frontend/style.css`**
+- `.qa-bubble.user`에 `white-space: pre-wrap` 추가 — 여러 줄로 입력한 질문의 줄바꿈이 사라지던 문제 수정
+
 ## v1.1.2 — Claude-Codex 인계 워크플로우 + 리뷰 문서 정리 (2026-07-15)
 
 **`AGENTS.md`** (신규)
