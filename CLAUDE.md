@@ -22,20 +22,25 @@ docker compose up --build -d
 
 | 키 | 용도 | 발급처 |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | Claude API (기본 provider) | https://console.anthropic.com |
+| `GOOGLE_API_KEY` | Gemini API (기본 provider, 무료 티어로 바로 체험 가능) | https://aistudio.google.com/apikey |
 | `APP_SECRET` | 로그인 비밀번호 (자유롭게 설정) | 직접 지정 |
+
+### 선택 (추천)
+
+| 키 | 용도 | 발급처 |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | Claude API — 더 정확한 분석 품질을 원하면 추천, 설정에서 provider를 Claude로 전환 | https://console.anthropic.com |
 
 ### 선택
 
 | 키 | 용도 |
 |---|---|
 | `OPENAI_API_KEY` | OpenAI GPT 사용 시 (설정에서 provider 전환) |
-| `GOOGLE_API_KEY` | Google Gemini 사용 시 (무료 티어 가능, 모델당 일일 20회) |
 | `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` | 분석 완료 시 텔레그램 알림 |
 | `SLACK_WEBHOOK_URL` | 분석 완료 시 슬랙 알림 (Incoming Webhook) |
 | `DISCORD_WEBHOOK_URL` | 분석 완료 시 디스코드 알림 (Incoming Webhook) |
 
-> Claude API 키만 있으면 모든 기능이 동작합니다. Gemini는 무료 티어로도 활용 가능합니다.
+> Gemini 키만 있어도 기본 기능은 모두 동작합니다(무료 티어는 모델당 일일 20회 제한). 더 정확한 분석을 원하면 Claude API 사용을 추천합니다.
 
 ---
 

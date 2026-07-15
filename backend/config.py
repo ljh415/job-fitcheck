@@ -24,7 +24,8 @@ class Settings(BaseSettings):
     google_api_key: str = ""
 
     # 기본 provider: "claude" | "openai" | "gemini"
-    default_provider: str = "claude"
+    # Gemini 무료 티어로 바로 체험 가능하도록 기본값으로 설정 (품질은 Claude 권장)
+    default_provider: str = "gemini"
 
     # 모델 티어 기본값 (설정 뷰에서 런타임 변경 가능)
     claude_high_model: str = "claude-sonnet-4-6"
