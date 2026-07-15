@@ -1,4 +1,6 @@
-/* ── marked 확장: ==텍스트== → <mark> 하이라이트 ───────────────────── */
+/* ── marked 확장: 단일 줄바꿈도 <br>로 렌더링 + ==텍스트== → <mark> 하이라이트 ── */
+marked.setOptions({ breaks: true });
+
 function parseMarkdown(text) {
   let html = marked.parse(text || '');
   html = html.replace(/==([^=\n]+)==/g, '<mark class="mark-pos">$1</mark>');
@@ -867,7 +869,7 @@ async function sendCompareQA() {
 function appendBubble(containerId, text, role) {
   const container = document.getElementById(containerId);
   const bubble = document.createElement('div');
-  bubble.className = `qa-bubble ${role}`;
+  bubble.className = role === 'assistant' ? 'qa-bubble assistant markdown-body' : 'qa-bubble user';
   if (role === 'assistant' && text) bubble.innerHTML = parseMarkdown(text);
   else bubble.textContent = text;
   container.appendChild(bubble);
