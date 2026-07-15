@@ -181,6 +181,21 @@
 
 ---
 
+## Phase 8 — 오픈소스 공개 준비 (진행중, 2026-07-15)
+
+private 저장소를 지인 대상 셀프호스팅 공개로 전환하기 위한 작업. 커밋은 로컬 main에 있고(`v1.1.4`~`v1.1.6`) 아직 origin에 push 안 함.
+
+- ✅ 히스토리 점검 — `.env`/API 키/개인정보가 git 히스토리에 커밋된 적 있는지 전수 검색, 깨끗함 확인(`docs/review-w-codex/`가 실수로 커밋됐던 건은 `git-filter-repo`로 히스토리에서 완전 제거, Phase 7 문서 참고)
+- ✅ `LICENSE`(MIT) 추가, README에 라이선스 섹션 추가
+- 🔧 `GETTING_STARTED.md` — 완전 비전공자 대상 설치 가이드. **아직 사용자가 계속 리뷰·수정 중** — 다음 세션에서 이어서 다듬을 것. 현재까지 반영된 것:
+  - Docker Desktop 설치(계정 로그인/스킵 안내 포함) → 프로젝트 다운로드 → API 키 발급(Gemini 기본/무료 우선, Claude 선택/추천) → `run/` 폴더 스크립트로 초기설정·실행 → 로그인 → 첫 사용 순서
+  - 터미널 직접 사용법은 별도 "선택" 섹션으로 분리
+  - `assets/guide/`에 스크린샷 9장 자리 표시 + 캡처 목록(파일명 지정) — **사용자가 직접 캡처해서 넣기로 함, 아직 미완료**
+- ✅ `run/setup.command`·`run/setup.bat` — 더블클릭으로 Gemini/Claude API 키·로그인 비밀번호를 입력받아 `.env` 자동 생성(터미널 명령어 불필요). `run/start.*`/`run/stop.*`도 함께 추가
+- ✅ 기본 provider를 Claude→Gemini로 변경(`backend/config.py`) — 무료 티어로 바로 체험 가능, Claude는 "추천" 옵션으로 재배치(`.env.example`/`CLAUDE.md`/`README.md`/`GETTING_STARTED.md` 전부 반영)
+- ✅ 저장소 루트 정리 — `Dockerfile`/`nginx.conf` → `docker/`, 설치·실행 스크립트 → `run/` (docker-compose.yml 경로 갱신 후 실제 재빌드로 검증 완료)
+- ⬜ **다음에 할 일**: (1) GETTING_STARTED.md 추가 피드백 반영, (2) 사용자가 스크린샷 9장 캡처해서 `assets/guide/`에 넣기, (3) `v1.1.4`~`v1.1.6` 태그 origin push, (4) 실제로 GitHub 저장소를 private→public 전환(사용자가 GitHub 설정에서 직접 해야 함), (5) 지인들에게 링크 공유
+
 ## 알려진 이슈 / 기술 부채
 
 - ✅ `refill` 엔드포인트: 원문 텍스트(`{slug}.raw.txt`) 별도 보존으로 해결
