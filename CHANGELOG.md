@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.1.8 — LLM provider 전역 상태 경쟁조건 수정 (2026-07-16)
+
+**`backend/llm/router.py`**
+- `LLMSnapshot`(provider/모델/reasoning_effort 고정 스냅샷) + `capture_snapshot()`/`light_from_snapshot()`/`high_from_snapshot()` 추가 — 회사 분석 파이프라인 1회 실행 도중 설정이 바뀌어도 그 실행 안에서는 시작 시점의 provider로 일관되게 처리
+
+**`backend/llm/base.py`, `backend/llm/openai.py`, `backend/llm/anthropic.py`, `backend/llm/gemini.py`**
+- `extract_structured`/`complete`에 `reasoning_effort` 파라미터 추가(OpenAI만 실제 사용, 나머지는 시그니처 일치용 no-op)
+
+**`backend/main.py`**
+- `_process_company()`, `refit_company()` 시작 시점에 `capture_snapshot()` 호출, 이후 모든 provider/모델 재조회를 스냅샷 참조로 교체 — 분석 도중 설정 화면에서 provider를 바꿔도 회사 1건의 결과(구조화 추출/본문 생성/적합도 평가)가 서로 다른 provider로 섞이지 않음
+
 ## v1.1.7 — 모바일 적합도 체크 테이블 레이아웃 개선 (2026-07-16)
 
 **`frontend/style.css`**
