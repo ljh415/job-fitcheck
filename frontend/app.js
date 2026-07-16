@@ -571,12 +571,18 @@ async function initDetail(slug) {
         if (el?.tagName === 'TABLE') el.classList.add('info-table');
       }
     }
-    // 충족 현황 테이블 열 너비 고정
+    // 충족 현황 테이블 열 너비 고정 + 2번째 칸(이모지+라벨) 이모지 뒤 줄바꿈, 라벨은 줄바꿈 없이
     for (const h3 of bodyEl.querySelectorAll('h3')) {
       if (h3.textContent.includes('충족 현황')) {
         let el = h3.nextElementSibling;
         while (el && el.tagName !== 'TABLE' && el.tagName !== 'H3') el = el.nextElementSibling;
-        if (el?.tagName === 'TABLE') el.classList.add('fit-check-table');
+        if (el?.tagName === 'TABLE') {
+          el.classList.add('fit-check-table');
+          el.querySelectorAll('tbody tr td:nth-child(2)').forEach(td => {
+            const m = td.textContent.trim().match(/^(\S+)\s+(.+)$/);
+            if (m) td.innerHTML = `${escHtml(m[1])}<br><span style="white-space:nowrap">${escHtml(m[2])}</span>`;
+          });
+        }
       }
     }
   }
