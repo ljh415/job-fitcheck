@@ -29,14 +29,15 @@ _NO_TEMPERATURE_MODELS = frozenset({
 })
 
 
-def _reasoning_effort_kwarg(model: str) -> dict:
+def _reasoning_effort_kwarg(model: str, reasoning_effort: str | None = None) -> dict:
     """gpt-5 계열(하이픈/점 모두) 및 o-series 모델에 reasoning_effort를 적용한다.
     gpt-5-mini/nano는 low/medium에서 reasoning_tokens=0 (파라미터 수용, 추론 미작동),
     high에서는 실제 추론이 활성화된다 (D-3 실험 확인).
-    gpt-4o 계열은 400 오류가 발생하므로 제외."""
+    gpt-4o 계열은 400 오류가 발생하므로 제외.
+    reasoning_effort가 주어지면(파이프라인 스냅샷) 그 값을 쓰고, 없으면 현재 설정을 조회한다."""
     if not (model.startswith("gpt-5") or model.startswith("o1") or model.startswith("o3") or model.startswith("o4")):
         return {}
-    return {"extra_body": {"reasoning_effort": get_reasoning_effort()}}
+    return {"extra_body": {"reasoning_effort": reasoning_effort or get_reasoning_effort()}}
 
 
 class OpenAIProvider(LLMProvider):
@@ -54,9 +55,10 @@ class OpenAIProvider(LLMProvider):
         model: str,
         operation: str = "",
         max_tokens: int = 8192,
+        reasoning_effort: str | None = None,
     ) -> dict:
         temperature_kwarg = {} if model in _NO_TEMPERATURE_MODELS else {"temperature": 0.5}
-        reasoning_kwarg = _reasoning_effort_kwarg(model)
+        reasoning_kwarg = _reasoning_effort_kwarg(model, reasoning_effort)
         # reasoning 모델은 max_completion_tokens 한도를 충분히 줘야 reasoning 후 출력 가능
         if reasoning_kwarg:
             max_tokens = max(max_tokens, 16384)
@@ -124,9 +126,10 @@ class OpenAIProvider(LLMProvider):
         operation: str = "",
         content: list[dict] | None = None,
         max_tokens: int = 4096,
+        reasoning_effort: str | None = None,
     ) -> str:
         msg_content = self._to_openai_content(content) if content is not None else user
-        reasoning_kwarg = _reasoning_effort_kwarg(model)
+        reasoning_kwarg = _reasoning_effort_kwarg(model, reasoning_effort)
         if reasoning_kwarg:
             max_tokens = max(max_tokens, 8192)
         try:

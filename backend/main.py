@@ -49,12 +49,17 @@ from config import (
     set_weekly_summary_schedule,
     settings,
 )
-from llm.router import high_provider, light_provider
+from llm.router import (
+    capture_snapshot,
+    high_from_snapshot,
+    high_provider,
+    light_from_snapshot,
+    light_provider,
+)
 
 
-def _evaluate_fit_system() -> str:
-    """현재 provider에 맞는 EVALUATE_FIT_SYSTEM 반환."""
-    provider = get_active_provider()
+def _evaluate_fit_system(provider: str) -> str:
+    """주어진 provider에 맞는 EVALUATE_FIT_SYSTEM 반환."""
     if provider == "openai":
         return prompts.EVALUATE_FIT_SYSTEM_OPENAI
     if provider == "gemini":
@@ -835,8 +840,11 @@ async def _process_company(
     # storage에는 원본 raw_text를 그대로 저장해야 하므로, 프롬프트 삽입용 이스케이프 사본을 별도로 둔다.
     safe_raw_text = prompts.escape_tag_chars(raw_text)
 
+    # 파이프라인 시작 시점에 provider/모델을 스냅샷 떠서 이후 실행 도중 설정이 바뀌어도 섞이지 않게 한다.
+    snap = capture_snapshot()
+
     # 1. Lightweight: 공고 텍스트에서 구조화 데이터 추출
-    light, light_model = light_provider()
+    light, light_model = light_from_snapshot(snap)
     logger.info("[1/4] 구조화 추출 시작 (model=%s, 텍스트 %d자)", light_model, len(raw_text))
     user_extract = prompts.EXTRACT_COMPANY_USER_TEMPLATE.format(raw_text=safe_raw_text)
     extracted = await light.extract_structured(
@@ -847,6 +855,7 @@ async def _process_company(
         tool_schema=prompts.EXTRACT_COMPANY_TOOL_SCHEMA,
         model=light_model,
         operation="공고 추출",
+        reasoning_effort=snap.reasoning_effort,
     )
     logger.info("[1/4] 추출 완료: %s / %s", extracted.get("company_name"), extracted.get("job_title"))
 
@@ -900,6 +909,7 @@ async def _process_company(
         user=user_body,
         model=light_model,
         operation="본문 생성",
+        reasoning_effort=snap.reasoning_effort,
     )
     logger.info("[3/4] 본문 생성 완료: %d자", len(body))
 
@@ -907,7 +917,7 @@ async def _process_company(
     fit_data: dict = {}
     fit_report = ""
     if storage.profile_exists():
-        high, high_model = high_provider()
+        high, high_model = high_from_snapshot(snap)
         logger.info("[4/4] 적합도 평가 시작 (model=%s)", high_model)
         profile_text = storage.read_profile_text() or ""
         eval_criteria = storage.read_eval_criteria().strip()
@@ -923,20 +933,21 @@ async def _process_company(
         )
         # Gemini는 function call 내에 장문 마크다운 생성 시 MALFORMED_FUNCTION_CALL이 발생함.
         # 구조화 데이터(점수·라벨·강점·갭)만 tool call로 추출하고, 리포트 본문은 complete()로 분리 생성.
-        if get_active_provider() == "gemini":
+        if snap.provider_name == "gemini":
             _gemini_fit_schema = {
                 **prompts.EVALUATE_FIT_TOOL_SCHEMA,
                 "properties": {k: v for k, v in prompts.EVALUATE_FIT_TOOL_SCHEMA["properties"].items() if k != "fit_report_body"},
                 "required": [r for r in prompts.EVALUATE_FIT_TOOL_SCHEMA.get("required", []) if r != "fit_report_body"],
             }
             fit_result = await high.extract_structured(
-                system=_evaluate_fit_system(),
+                system=_evaluate_fit_system(snap.provider_name),
                 user=user_fit,
                 tool_name=prompts.EVALUATE_FIT_TOOL_NAME,
                 tool_description=prompts.EVALUATE_FIT_TOOL_DESCRIPTION,
                 tool_schema=_gemini_fit_schema,
                 model=high_model,
                 operation="적합도 평가",
+                reasoning_effort=snap.reasoning_effort,
             )
             # Gemini 전용: location_check → gaps 자동 브릿지
             _loc = fit_result.get("location_check", "")
@@ -947,22 +958,24 @@ async def _process_company(
                     logger.info("  → 근무지 갭 자동 보정: %s", _loc)
             logger.info("[4/4] 적합도 리포트 본문 생성 시작 (Gemini 분리 생성)")
             fit_report = await high.complete(
-                system=_evaluate_fit_system(),
+                system=_evaluate_fit_system(snap.provider_name),
                 user=user_fit + f"\n\n평가 결과 (참고용):\n{json.dumps(fit_result, ensure_ascii=False)}\n\n위 평가 결과를 바탕으로 fit_report_body 전체를 아래 형식에 맞게 작성하세요. ## 4. 적합도 리포트 로 시작하고, ## 5. 종합 의견 (핵심 근거 + 지원 전략)까지 빠짐없이 작성하세요.",
                 model=high_model,
                 operation="적합도 리포트 본문 생성",
                 max_tokens=8192,
+                reasoning_effort=snap.reasoning_effort,
             )
             fit_report = re.sub(r'^##\s*4\.\s*적합도 리포트[^\n]*\n+', '', fit_report.strip()).strip()
         else:
             fit_result = await high.extract_structured(
-                system=_evaluate_fit_system(),
+                system=_evaluate_fit_system(snap.provider_name),
                 user=user_fit,
                 tool_name=prompts.EVALUATE_FIT_TOOL_NAME,
                 tool_description=prompts.EVALUATE_FIT_TOOL_DESCRIPTION,
                 tool_schema=prompts.EVALUATE_FIT_TOOL_SCHEMA,
                 model=high_model,
                 operation="적합도 평가",
+                reasoning_effort=snap.reasoning_effort,
             )
             fit_report = re.sub(r'^##\s*4\.\s*적합도 리포트[^\n]*\n+', '', fit_result.pop("fit_report_body", "").strip()).strip()
         fit_data = fit_result
@@ -971,7 +984,7 @@ async def _process_company(
         logger.info("[4/4] 프로필 없음 — 적합도 평가 생략")
 
     # 5. frontmatter 조립 및 저장
-    fm_data = {**extracted, **fit_data, "source_type": source_type, "llm_provider": get_active_provider()}
+    fm_data = {**extracted, **fit_data, "source_type": source_type, "llm_provider": snap.provider_name}
     if source_url:
         fm_data["source_url"] = source_url
     if preserve_fm:
@@ -1192,7 +1205,8 @@ async def refit_company(slug: str):
     if not storage.profile_exists():
         raise HTTPException(status_code=400, detail="프로필이 없습니다. 먼저 이력서를 업로드해주세요.")
 
-    high, high_model = high_provider()
+    snap = capture_snapshot()
+    high, high_model = high_from_snapshot(snap)
     logger.info("[refit] 적합도 재산정 시작 (slug=%s, model=%s)", slug, high_model)
 
     profile_text = storage.read_profile_text() or ""
@@ -1215,38 +1229,41 @@ async def refit_company(slug: str):
         custom_criteria=custom_criteria_section,
     )
     try:
-        if get_active_provider() == "gemini":
+        if snap.provider_name == "gemini":
             _gemini_fit_schema = {
                 **prompts.EVALUATE_FIT_TOOL_SCHEMA,
                 "properties": {k: v for k, v in prompts.EVALUATE_FIT_TOOL_SCHEMA["properties"].items() if k != "fit_report_body"},
                 "required": [r for r in prompts.EVALUATE_FIT_TOOL_SCHEMA.get("required", []) if r != "fit_report_body"],
             }
             fit_result = await high.extract_structured(
-                system=_evaluate_fit_system(),
+                system=_evaluate_fit_system(snap.provider_name),
                 user=user_fit,
                 tool_name=prompts.EVALUATE_FIT_TOOL_NAME,
                 tool_description=prompts.EVALUATE_FIT_TOOL_DESCRIPTION,
                 tool_schema=_gemini_fit_schema,
                 model=high_model,
                 operation="적합도 재평가",
+                reasoning_effort=snap.reasoning_effort,
             )
             fit_report_raw = await high.complete(
-                system=_evaluate_fit_system(),
+                system=_evaluate_fit_system(snap.provider_name),
                 user=user_fit + f"\n\n평가 결과 (참고용):\n{json.dumps(fit_result, ensure_ascii=False)}\n\n위 평가 결과를 바탕으로 fit_report_body 전체를 아래 형식에 맞게 작성하세요. ## 4. 적합도 리포트 로 시작하고, ## 5. 종합 의견 (핵심 근거 + 지원 전략)까지 빠짐없이 작성하세요.",
                 model=high_model,
                 operation="적합도 리포트 본문 생성",
                 max_tokens=8192,
+                reasoning_effort=snap.reasoning_effort,
             )
             fit_report = re.sub(r'^##\s*4\.\s*적합도 리포트[^\n]*\n+', '', fit_report_raw.strip()).strip()
         else:
             fit_result = await high.extract_structured(
-                system=_evaluate_fit_system(),
+                system=_evaluate_fit_system(snap.provider_name),
                 user=user_fit,
                 tool_name=prompts.EVALUATE_FIT_TOOL_NAME,
                 tool_description=prompts.EVALUATE_FIT_TOOL_DESCRIPTION,
                 tool_schema=prompts.EVALUATE_FIT_TOOL_SCHEMA,
                 model=high_model,
                 operation="적합도 재평가",
+                reasoning_effort=snap.reasoning_effort,
             )
             fit_report = re.sub(r'^##\s*4\.\s*적합도 리포트[^\n]*\n+', '', fit_result.pop("fit_report_body", "").strip()).strip()
     except LLMAPIError as e:

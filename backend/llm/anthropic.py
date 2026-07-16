@@ -28,6 +28,7 @@ class AnthropicProvider(LLMProvider):
         model: str,
         operation: str = "",
         max_tokens: int = 8192,
+        reasoning_effort: str | None = None,  # ponytail: OpenAI 전용, Anthropic은 미사용. ABC 시그니처 일치용
     ) -> dict:
         tool_def = anthropic.types.ToolParam(
             name=tool_name,
@@ -78,6 +79,7 @@ class AnthropicProvider(LLMProvider):
         operation: str = "",
         content: list[dict] | None = None,
         max_tokens: int = 4096,
+        reasoning_effort: str | None = None,  # ponytail: OpenAI 전용, Anthropic은 미사용. ABC 시그니처 일치용
     ) -> str:
         msg_content: str | list = content if content is not None else user
         try:
