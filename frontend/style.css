@@ -138,6 +138,8 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--p
 /* ── 네비게이션 ──────────────────────────────────────────────────── */
 .navbar { display: flex; align-items: center; justify-content: space-between; padding: 0 24px; height: 52px; background: var(--navbar-bg); color: var(--text-inverse); position: sticky; top: 0; z-index: 100; }
 .navbar-brand { font-size: 17px; font-weight: 700; cursor: pointer; }
+.navbar-left { display: flex; align-items: center; gap: 10px; }
+.in-progress-banner { font-size: 12px; padding: 3px 10px; background: rgba(255,255,255,.15); border-radius: 999px; white-space: nowrap; }
 .navbar-links { display: flex; gap: 10px; }
 .navbar-links button { background: rgba(255,255,255,.12); color: var(--text-inverse); }
 .navbar-links button:hover { background: rgba(255,255,255,.22); }

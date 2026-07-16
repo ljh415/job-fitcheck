@@ -187,6 +187,12 @@ async def health():
     }
 
 
+@app.get("/api/analysis-in-progress")
+async def get_analysis_in_progress():
+    """진행 중인 회사 분석 건수 — 페이지 이동 후에도 프론트가 배너로 표시할 수 있도록 제공."""
+    return {"count": _in_progress_count}
+
+
 # ── 설정 ─────────────────────────────────────────────────────────────────────
 
 @app.get("/api/settings", response_model=SettingsResponse)
@@ -822,6 +828,23 @@ def _append_status_log(body: str, label: str) -> str:
 
 # ── 회사 추가 ─────────────────────────────────────────────────────────────────
 
+_in_progress_count = 0
+
+
+def _track_in_progress(fn):
+    """분석 파이프라인 실행 중 건수를 추적한다.
+    페이지를 나갔다가 돌아와도(프론트가 리셋돼도) 진행 상태를 조회할 수 있도록 서버에 건수를 남겨둔다."""
+    async def wrapper(*args, **kwargs):
+        global _in_progress_count
+        _in_progress_count += 1
+        try:
+            return await fn(*args, **kwargs)
+        finally:
+            _in_progress_count -= 1
+    return wrapper
+
+
+@_track_in_progress
 async def _process_company(
     raw_text: str,
     source_type: str,
