@@ -140,6 +140,7 @@ class GeminiProvider(LLMProvider):
         model: str,
         operation: str = "",
         max_tokens: int = 8192,
+        reasoning_effort: str | None = None,  # ponytail: OpenAI 전용, Gemini는 미사용. ABC 시그니처 일치용
     ) -> dict:
         tool = types.Tool(
             function_declarations=[
@@ -215,6 +216,7 @@ class GeminiProvider(LLMProvider):
         operation: str = "",
         content: list[dict] | None = None,
         max_tokens: int = 4096,
+        reasoning_effort: str | None = None,  # ponytail: OpenAI 전용, Gemini는 미사용. ABC 시그니처 일치용
     ) -> str:
         parts = self._to_parts(content) if content is not None else [types.Part.from_text(text=user)]
         config = types.GenerateContentConfig(

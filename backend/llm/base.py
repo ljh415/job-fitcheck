@@ -29,6 +29,7 @@ class LLMProvider(ABC):
         model: str,
         operation: str = "",
         max_tokens: int = 8192,
+        reasoning_effort: str | None = None,
     ) -> dict:
         """Tool use / Function calling으로 구조화 JSON을 반환한다.
         Anthropic은 tool_use, OpenAI는 function calling으로 각각 구현."""
@@ -43,6 +44,7 @@ class LLMProvider(ABC):
         operation: str = "",
         content: list[dict] | None = None,
         max_tokens: int = 4096,
+        reasoning_effort: str | None = None,
     ) -> str:
         """단순 텍스트 완성 — 마크다운 본문 생성 등에 사용.
         content가 주어지면 user 대신 멀티모달 블록(텍스트+이미지)으로 전송."""
