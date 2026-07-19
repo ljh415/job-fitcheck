@@ -12,6 +12,7 @@ FastAPI 앱 진입점.
 import asyncio
 import base64
 import csv
+import functools
 import io
 import json
 import logging
@@ -836,8 +837,11 @@ _in_progress_count = 0
 
 
 def _track_in_progress(fn):
-    """분석 파이프라인 실행 중 건수를 추적한다.
-    페이지를 나갔다가 돌아와도(프론트가 리셋돼도) 진행 상태를 조회할 수 있도록 서버에 건수를 남겨둔다."""
+    """분석 요청 전체(URL 스크래핑·이미지 OCR 같은 선행 구간 포함) 실행 중 건수를 추적한다.
+    페이지를 나갔다가 돌아와도(프론트가 리셋돼도) 진행 상태를 조회할 수 있도록 서버에 건수를 남겨둔다.
+    FastAPI 라우트 핸들러에 직접 씌우므로 functools.wraps로 원래 시그니처를 보존해야
+    FastAPI가 파라미터(요청 바디 등)를 정상적으로 인식한다."""
+    @functools.wraps(fn)
     async def wrapper(*args, **kwargs):
         global _in_progress_count
         _in_progress_count += 1
@@ -848,7 +852,6 @@ def _track_in_progress(fn):
     return wrapper
 
 
-@_track_in_progress
 async def _process_company(
     raw_text: str,
     source_type: str,
@@ -1059,6 +1062,7 @@ async def _process_company(
 
 
 @app.post("/api/companies/from-url")
+@_track_in_progress
 async def add_from_url(req: FromUrlRequest):
     # 동일 URL이 이미 등록되어 있으면 기존 슬러그 반환
     duplicate = next(
@@ -1093,6 +1097,7 @@ async def add_from_url(req: FromUrlRequest):
 
 
 @app.post("/api/companies/from-text")
+@_track_in_progress
 async def add_from_text(req: FromTextRequest):
     if not req.text.strip():
         # 텍스트 없이 기본 정보만 입력한 경우 — LLM 없이 수동 저장
@@ -1122,6 +1127,7 @@ async def add_from_text(req: FromTextRequest):
 
 
 @app.post("/api/companies/from-image")
+@_track_in_progress
 async def add_from_image(files: list[UploadFile] = File(...)):
     """이미지(스크린샷/사진) 업로드 → 텍스트 추출 → 공고 분석."""
     if not files:
@@ -1192,6 +1198,7 @@ async def add_manual(req: ManualCompanyRequest):
 
 
 @app.post("/api/companies/{slug}/refill")
+@_track_in_progress
 async def refill_company(slug: str):
     """저장된 원문으로 회사 정보를 전체 재분석한다 (구조화 추출 → 잡플래닛 → 본문 → 적합도).
     원문이 없는 기존 항목은 마크다운 본문으로 폴백한다."""
