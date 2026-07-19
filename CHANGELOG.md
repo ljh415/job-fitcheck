@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.1.9 — 분석 진행 중 표시 배너 + provider/reasoning_effort 경쟁조건 후속 수정 (2026-07-20)
+
+**`backend/main.py`, `frontend/index.html`, `frontend/app.js`, `frontend/style.css`**
+- 회사 분석 진행 중 표시 배너 추가 — `_track_in_progress` 데코레이터로 진행 건수를 서버에 기록하고 `GET /api/analysis-in-progress`로 조회, 프론트가 7초 주기로 폴링해 네비게이션 바에 "N건 분석 중..." 배너 표시. 페이지를 이동해도 유지되어 실수로 같은 분석을 중복 제출하는 것을 방지
+
+Codex 리뷰(`docs/review-w-codex/review_w_codex_2026-07-20_v1.1.8.md`)에서 발견된 후속 이슈 3건 수정:
+
+**`backend/main.py`**
+- 이미지 분석(OCR)과 뒤이은 회사 분석 단계가 서로 다른 provider를 쓸 수 있던 경쟁조건 수정 — `add_from_image()`에서 스냅샷을 한 번 떠서 OCR 호출과 `_process_company()` 양쪽에 전달
+- 프로필 생성 1·2단계 사이 OpenAI reasoning_effort가 바뀔 수 있던 경쟁조건 수정 — 프로필 업로드도 스냅샷을 떠서 두 호출에 동일하게 전달
+- 진행 배너 카운터가 URL 스크래핑·이미지 OCR 구간을 못 세던 문제 수정 — 카운터를 `_process_company()`가 아니라 `add_from_text`/`add_from_url`/`add_from_image`/`refill` 네 API 진입점 자체로 옮겨, 요청 전체 구간을 포함하도록 확장
+
 ## v1.1.8 — LLM provider 전역 상태 경쟁조건 수정 (2026-07-16)
 
 **`backend/llm/router.py`**
