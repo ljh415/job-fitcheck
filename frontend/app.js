@@ -176,6 +176,7 @@ async function api(path, opts = {}) {
   });
   if (res.status === 401) {
     localStorage.removeItem(TOKEN_KEY);
+    stopInProgressPolling();
     navigate('login', null, true);
     throw new Error('인증이 필요합니다.');
   }
@@ -184,6 +185,36 @@ async function api(path, opts = {}) {
     throw new Error(err.detail || '요청 실패');
   }
   return res.json();
+}
+
+/* ── 진행 중 분석 배너 ────────────────────────────────────────────── */
+let _inProgressTimer = null;
+
+async function pollInProgress() {
+  const banner = document.getElementById('in-progress-banner');
+  if (!banner) return;
+  try {
+    const { count } = await api('/analysis-in-progress');
+    if (count > 0) {
+      banner.textContent = `🧠 ${count}건 분석 중...`;
+      banner.classList.remove('hidden');
+    } else {
+      banner.classList.add('hidden');
+    }
+  } catch (e) {
+    // 인증 만료 등은 api()가 이미 로그인 화면 리다이렉트로 처리함 — 여기선 조용히 넘어감
+  }
+}
+
+function startInProgressPolling() {
+  if (_inProgressTimer) return;
+  pollInProgress();
+  _inProgressTimer = setInterval(pollInProgress, 7000);
+}
+
+function stopInProgressPolling() {
+  if (_inProgressTimer) { clearInterval(_inProgressTimer); _inProgressTimer = null; }
+  document.getElementById('in-progress-banner')?.classList.add('hidden');
 }
 
 /* ── 로그인 ───────────────────────────────────────────────────────── */
@@ -202,6 +233,7 @@ async function submitLogin(event) {
     });
     localStorage.setItem(TOKEN_KEY, token);
     navigate('dashboard');
+    startInProgressPolling();
   } catch (e) {
     errorEl.classList.remove('hidden');
   }
@@ -209,6 +241,7 @@ async function submitLogin(event) {
 
 function logout() {
   localStorage.removeItem(TOKEN_KEY);
+  stopInProgressPolling();
   navigate('login', null, true);
 }
 
@@ -1977,4 +2010,5 @@ window.addEventListener('DOMContentLoaded', () => {
     history.replaceState({ view, slug, compareTargets: compareTargets.slice() }, '', window.location.pathname);
   }
   render();
+  startInProgressPolling();
 });

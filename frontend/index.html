@@ -14,7 +14,10 @@
 <body>
 
 <nav class="navbar">
-  <span class="navbar-brand" onclick="navigate('dashboard')">🧭 Job FitCheck</span>
+  <div class="navbar-left">
+    <span class="navbar-brand" onclick="navigate('dashboard')">🧭 Job FitCheck</span>
+    <span id="in-progress-banner" class="in-progress-banner hidden"></span>
+  </div>
   <div class="navbar-links">
     <button onclick="navigate('add')">+ 회사 추가</button>
     <button onclick="navigate('settings')">설정</button>
