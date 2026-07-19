@@ -457,7 +457,9 @@ async def upload_profile(files: list[UploadFile] = File(...), extra_note: str = 
     pdf_text = prompts.escape_tag_chars(pdf_text)
     extra_note = prompts.escape_tag_chars(extra_note)
 
-    provider, model = high_provider()
+    # provider/모델뿐 아니라 reasoning_effort도 1·2단계 사이에 안 바뀌도록 스냅샷을 떠서 재사용한다.
+    snap = capture_snapshot()
+    provider, model = high_from_snapshot(snap)
     extra_section = f"<candidate_note>\n{extra_note}\n</candidate_note>\n\n" if extra_note.strip() else ""
 
     # 1단계: tool use로 구조화 필드 추출 (name, skills, summary 등)
@@ -472,6 +474,7 @@ async def upload_profile(files: list[UploadFile] = File(...), extra_note: str = 
             tool_schema=prompts.EXTRACT_PROFILE_TOOL_SCHEMA,
             model=model,
             operation="프로필 추출",
+            reasoning_effort=snap.reasoning_effort,
         )
     except LLMAPIError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e))
@@ -491,6 +494,7 @@ async def upload_profile(files: list[UploadFile] = File(...), extra_note: str = 
             model=model,
             operation="프로필 본문 생성",
             max_tokens=max_tokens,
+            reasoning_effort=snap.reasoning_effort,
         )
     except LLMAPIError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e))
