@@ -50,6 +50,7 @@ from config import (
     settings,
 )
 from llm.router import (
+    LLMSnapshot,
     capture_snapshot,
     high_from_snapshot,
     high_provider,
@@ -854,17 +855,20 @@ async def _process_company(
     job_title_override: str = "",
     preserve_fm: CompanyFrontmatter | None = None,
     preserved_log_entries: list[dict] | None = None,
+    snapshot: LLMSnapshot | None = None,
 ) -> CompanyRecord:
     """텍스트 → 추출 → 잡플래닛 조회 → 본문 생성 → 적합도 평가 → 저장.
 
     preserve_fm/preserved_log_entries가 주어지면(refill 시) 사용자가 직접 관리하는
     상태·핀·태그·지원경로·생성일과 지원 상태 로그 이력을 새 분석 결과에 덮어써 보존한다.
+    snapshot이 주어지면(이미지 OCR 등 이 함수 호출 전에 이미 다른 LLM 호출을 한 경우) 그 스냅샷을
+    그대로 사용해, 호출 전후 단계가 모두 같은 provider로 처리되도록 한다.
     """
     # storage에는 원본 raw_text를 그대로 저장해야 하므로, 프롬프트 삽입용 이스케이프 사본을 별도로 둔다.
     safe_raw_text = prompts.escape_tag_chars(raw_text)
 
     # 파이프라인 시작 시점에 provider/모델을 스냅샷 떠서 이후 실행 도중 설정이 바뀌어도 섞이지 않게 한다.
-    snap = capture_snapshot()
+    snap = snapshot or capture_snapshot()
 
     # 1. Lightweight: 공고 텍스트에서 구조화 데이터 추출
     light, light_model = light_from_snapshot(snap)
@@ -1146,7 +1150,10 @@ async def add_from_image(files: list[UploadFile] = File(...)):
         image_blocks.append({"type": "image", "source": {"type": "base64", "media_type": media_type, "data": b64}})
 
     logger.info("이미지 텍스트 추출 시작 (%d장)", len(image_blocks))
-    high, high_model = high_provider()
+    # OCR과 뒤이은 _process_company()가 "이미지 분석 1건"으로 하나의 provider를 쓰도록
+    # 여기서 한 번만 스냅샷을 떠서 아래로 그대로 전달한다.
+    snap = capture_snapshot()
+    high, high_model = high_from_snapshot(snap)
     content = image_blocks + [{
         "type": "text",
         "text": "이 이미지(들)는 채용공고 스크린샷입니다. 채용공고에 적힌 모든 텍스트를 순서대로 빠짐없이 추출해주세요. 텍스트만 출력하고 다른 설명은 하지 마세요.",
@@ -1158,6 +1165,7 @@ async def add_from_image(files: list[UploadFile] = File(...)):
             model=high_model,
             operation="이미지 텍스트 추출",
             content=content,
+            reasoning_effort=snap.reasoning_effort,
         )
     except LLMAPIError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e))
@@ -1166,7 +1174,7 @@ async def add_from_image(files: list[UploadFile] = File(...)):
     logger.info("이미지 텍스트 추출 완료: %d자", len(raw_text))
 
     try:
-        return await asyncio.wait_for(_process_company(raw_text, "image", None), timeout=300)
+        return await asyncio.wait_for(_process_company(raw_text, "image", None, snapshot=snap), timeout=300)
     except asyncio.TimeoutError:
         raise HTTPException(status_code=504, detail="분석 시간이 초과되었습니다 (300초). 잠시 후 다시 시도해주세요.")
     except LLMAPIError as e:
