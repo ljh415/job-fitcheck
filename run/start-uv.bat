@@ -1,14 +1,27 @@
 @echo off
+setlocal enabledelayedexpansion
 cd /d "%~dp0\.."
 
 where uv >nul 2>nul
 if errorlevel 1 (
-  echo uv가 설치되어 있지 않습니다. PowerShell을 열어 아래 명령어로 설치한 뒤 다시 실행해주세요:
-  echo.
-  echo   powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-  echo.
-  pause
-  exit /b 1
+  set "install_uv="
+  set /p install_uv="uv가 설치되어 있지 않습니다. 지금 설치할까요? (Y/n, 기본 Y): "
+  if "!install_uv!"=="" set "install_uv=Y"
+  if /i "!install_uv:~0,1!"=="Y" (
+    powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+    set "PATH=%USERPROFILE%\.local\bin;%PATH%"
+    where uv >nul 2>nul
+    if errorlevel 1 (
+      echo.
+      echo 설치는 됐지만 이 창에서 바로 인식이 안 됩니다. 터미널 창을 새로 열어서 이 스크립트를 다시 실행해주세요.
+      pause
+      exit /b 1
+    )
+  ) else (
+    echo 설치를 건너뛰었습니다. https://astral.sh/uv 안내에 따라 직접 설치한 뒤 다시 실행해주세요.
+    pause
+    exit /b 1
+  )
 )
 
 if not exist .env (
