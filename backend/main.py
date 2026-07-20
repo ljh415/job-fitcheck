@@ -26,6 +26,7 @@ import httpx
 import jwt
 
 from fastapi import FastAPI, HTTPException, Query, Request, UploadFile, File, Form
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from fastapi.responses import JSONResponse, StreamingResponse
 
@@ -150,11 +151,15 @@ def _verify_token(token: str) -> bool:
         return False
 
 # 인증 미들웨어 — APP_SECRET이 설정된 경우에만 적용
+# 프론트엔드 정적 파일(/api/ 아닌 경로)은 원래 Docker에서 nginx가 FastAPI를 거치지 않고 직접
+# 서빙해 인증 검사 대상이 아니었다. main.py가 정적 파일을 직접 서빙하는 경로(uv 등 로컬 실행)에서도
+# 동일하게 동작하도록, API 경로(/api/*)만 인증 대상으로 제한한다. 로그인 게이트는 프론트엔드 JS가
+# 담당하고, 실제 데이터 접근 권한은 /api/*에서 걸리므로 보안 경계는 그대로 유지된다.
 _AUTH_SKIP = {"/api/login", "/api/health"}
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
-    if not settings.app_secret or request.url.path in _AUTH_SKIP:
+    if not settings.app_secret or not request.url.path.startswith("/api/") or request.url.path in _AUTH_SKIP:
         return await call_next(request)
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer ") or not _verify_token(auth.split(" ", 1)[1]):
@@ -1408,6 +1413,14 @@ async def multi_company_qa(req: MultiQARequest):
         operation="Multi Q&A",
     )
     return _make_sse(gen)
+
+
+# Docker 배포 시에는 nginx가 frontend/를 서빙하므로 이미지 안에 frontend/가 없다(Dockerfile 참고).
+# uv 등으로 로컬에서 직접 실행할 때만 frontend/가 실제로 존재하므로, 있을 때만 마운트해
+# 두 실행 방식 모두에서 안전하게 동작하도록 한다.
+_frontend_dir = Path(__file__).resolve().parent.parent / "frontend"
+if _frontend_dir.is_dir():
+    app.mount("/", StaticFiles(directory=str(_frontend_dir), html=True), name="frontend")
 
 
 if __name__ == "__main__":
