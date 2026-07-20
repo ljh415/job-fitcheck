@@ -58,9 +58,9 @@ Gemini보다 분석 품질이 더 정확한 편입니다. 나중에 설정 화�
 
 ## 3단계. 앱 실행
 
-1단계에서 압축을 푼 폴더를 열어보면 `run` 폴더가 있습니다. 그 안의 **`start-uv.command`(Mac)** 또는 **`start-uv.bat`(Windows)**을 **더블클릭**하세요.
+1단계에서 압축을 푼 폴더를 열어보면 `run` 폴더가 있습니다. 그 안의 **`start-uv.command`(Mac)** 또는 **`start-uv.bat`(Windows)** 를 **더블클릭**하세요.
 
-> **Windows에서 "게시자를 확인하지 못했습니다"라는 보안 경고가 뜨면?** 서명이 없는 일반 스크립트라 뜨는 정상적인 경고입니다. **"실행"**을 누르면 됩니다.
+> **Windows에서 "게시자를 확인하지 못했습니다"라는 보안 경고가 뜨면?** 서명이 없는 일반 스크립트라 뜨는 정상적인 경고입니다. **"실행"** 을 누르면 됩니다.
 >
 > ![Windows 게시자 확인 경고](assets/guide/windows-security-warning.png)
 
@@ -77,7 +77,7 @@ Gemini보다 분석 품질이 더 정확한 편입니다. 나중에 설정 화�
 
 처음 실행할 때는 필요한 프로그램(Python)과 패키지를 받느라 수 초~1분 정도 걸릴 수 있습니다. 그 이후로는 훨씬 빠릅니다.
 
-> **Windows에서 "공용 및 프라이빗 네트워크에서 이 앱에 액세스하도록 허용하시겠습니까?"라는 방화벽 창이 뜨면?** 서버가 이 컴퓨터 안에서 통신하도록 허용하는 정상적인 창입니다. **"허용"**을 누르면 됩니다.
+> **Windows에서 "공용 및 프라이빗 네트워크에서 이 앱에 액세스하도록 허용하시겠습니까?"라는 방화벽 창이 뜨면?** 서버가 이 컴퓨터 안에서 통신하도록 허용하는 정상적인 창입니다. **"허용"** 을 누르면 됩니다.
 >
 > ![Windows 방화벽 허용 창](assets/guide/windows-firewall-warning.png)
 
@@ -95,7 +95,7 @@ Gemini보다 분석 품질이 더 정확한 편입니다. 나중에 설정 화�
 >
 > 1. [Docker Desktop](https://www.docker.com/products/docker-desktop/)을 다운로드해 설치하고 실행 → 창에 **"Engine running"** 문구가 보이면 준비 완료
 > 2. 1~2단계(다운로드·API 키)는 위와 동일하게 진행
-> 3. 3단계에서만 `start-uv.command`/`.bat` 대신 **`run/start-docker.command`(Mac)** 또는 **`run/start-docker.bat`(Windows)**을 더블클릭 — API 키/비밀번호 질문은 동일하게 뜨고, 그 다음 Docker로 실행됩니다
+> 3. 3단계에서만 `start-uv.command`/`.bat` 대신 **`run/start-docker.command`(Mac)** 또는 **`run/start-docker.bat`(Windows)** 를 더블클릭 — API 키/비밀번호 질문은 동일하게 뜨고, 그 다음 Docker로 실행됩니다
 > 4. 끌 때는 `run/stop-docker.command`/`stop-docker.bat`을 더블클릭 (uv 방식과 달리 창을 닫는 것만으론 완전히 꺼지지 않을 수 있습니다)
 >
 > ⚠️ Docker 방식과 uv 방식은 같은 포트(8000)를 씁니다. 동시에 켜두지 말고 한 가지 방식만 선택해서 쓰세요.
