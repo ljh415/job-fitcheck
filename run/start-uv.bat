@@ -51,3 +51,7 @@ echo 준비되면 브라우저에서 http://localhost:8000 을 여세요.
 echo 이 창을 닫으면 앱이 꺼집니다.
 echo.
 uv run --python 3.12 --with-requirements backend/requirements.txt backend/main.py
+
+echo.
+echo 서버가 종료됐습니다. 위에 오류 메시지가 있다면 확인해주세요.
+pause

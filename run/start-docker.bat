@@ -28,3 +28,7 @@ echo Job FitCheck를 시작합니다 (Docker). 준비되면 브라우저에서 h
 echo 이 창을 닫으면 앱이 꺼집니다.
 echo.
 docker compose up --build
+
+echo.
+echo 종료됐습니다. 위에 오류 메시지가 있다면 확인해주세요.
+pause
