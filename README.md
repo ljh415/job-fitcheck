@@ -44,6 +44,8 @@ docker compose up --build
 
 브라우저에서 `http://localhost:8000` 접속 → 비밀번호(`APP_SECRET`) 입력.
 
+> **Docker 없이 더 가볍게 실행하고 싶다면** `run/start-uv.command`(Mac)/`run/start-uv.bat`(Windows)을 대신 실행하세요. `uv`가 없으면 설치 여부를 물어보고 자동으로 설치한 뒤 이어서 실행합니다(재부팅·가상화 설정 불필요). 첫 실행 시 `.env` 설정도 같이 물어봐서 별도 설정 스크립트가 필요 없습니다. 자세한 순서는 [GETTING_STARTED.md](GETTING_STARTED.md) 참고.
+
 ### 3. 첫 사용 순서
 
 1. **설정** 탭 → 이력서/포트폴리오 PDF 업로드 → 프로필 자동 생성

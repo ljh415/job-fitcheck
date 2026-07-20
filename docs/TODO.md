@@ -194,7 +194,8 @@ private 저장소를 지인 대상 셀프호스팅 공개로 전환하기 위한
 - ✅ `run/setup.command`·`run/setup.bat` — 더블클릭으로 Gemini/Claude API 키·로그인 비밀번호를 입력받아 `.env` 자동 생성(터미널 명령어 불필요). `run/start.*`/`run/stop.*`도 함께 추가
 - ✅ 기본 provider를 Claude→Gemini로 변경(`backend/config.py`) — 무료 티어로 바로 체험 가능, Claude는 "추천" 옵션으로 재배치(`.env.example`/`CLAUDE.md`/`README.md`/`GETTING_STARTED.md` 전부 반영)
 - ✅ 저장소 루트 정리 — `Dockerfile`/`nginx.conf` → `docker/`, 설치·실행 스크립트 → `run/` (docker-compose.yml 경로 갱신 후 실제 재빌드로 검증 완료)
-- ⬜ **다음에 할 일**: (1) GETTING_STARTED.md 추가 피드백 반영, (2) 사용자가 스크린샷 9장 캡처해서 `assets/guide/`에 넣기, (3) `v1.1.4`~`v1.1.6` 태그 origin push, (4) 실제로 GitHub 저장소를 private→public 전환(사용자가 GitHub 설정에서 직접 해야 함), (5) 지인들에게 링크 공유
+- ✅ `GETTING_STARTED.md` 스크린샷 9장 반영 완료 (2026-07-20) — 실제 캡처본으로 교체, Windows 보안/방화벽 안내 추가, 마크다운 렌더링 버그 수정. `v1.1.4`~`v1.2.0` 태그도 전부 origin push 완료
+- ⬜ **다음에 할 일** (사용자 액션): (1) 실제로 GitHub 저장소를 private→public 전환, (2) 지인들에게 링크 공유
 
 ## 알려진 이슈 / 기술 부채
 
@@ -217,3 +218,14 @@ private 저장소를 지인 대상 셀프호스팅 공개로 전환하기 위한
 - ⬜ Claude haiku 추출 시 매출 필드에 원문에 없는 연도 날조 1건 관찰 (n=1, 지시문 방어선 있음) → 재발 시 "원문 발췌 문자열만 허용" 제약 검토 (공용 스키마라 타 모델 간섭 주의)
 - ✅ OpenAI High=`gpt-5`(reasoning_effort=medium)로 `/api/companies/from-url` 실행 시 적합도 평가 단계가 120초를 넘겨 5/5 전부 504 Gateway Timeout (2026-07-13, dev 실측) — `_process_company` 호출부 3곳(URL/텍스트/이미지)의 `asyncio.wait_for` 타임아웃을 120초→300초로 상향해 nginx 일반 API 제한(300초)과 통일(v1.1.1). Codex 전체 코드 리뷰(`review_w_codex_2026-07-14_v1.0.5.md`)에서 발견된 나머지 7건(slug URL 인코딩, Q&A 히스토리 40개 제한, 비교 5개 제한, 백업 fail-closed, 재분석 타임라인 노출, 텔레그램 오류감지, 타임존)도 함께 수정
 - ✅ Gemini 429 오류 메시지가 실제 원인과 무관하게 항상 "무료 티어 요청 한도 초과"로 고정 출력되던 버그 수정 (2026-07-13). refit 비용 측정 중 유료(prepay) 계정에서 429가 발생했는데도 무료 티어 문구가 나가 사용자 혼선 발생 — docker 로그에서 확인한 구글 원본 오류는 `Your prepayment credits are depleted`(선불 크레딧 소진)였음. `gemini.py` `_raise()`에서 `e.message`(google-genai `APIError`가 원본 메시지를 그대로 담고 있음)를 읽어 "prepay" 포함 시 크레딧 소진 안내로, 그 외 429는 원본 메시지를 함께 노출하도록 수정
+
+---
+
+## Phase 9 — LLM provider 경쟁조건 수정 + 진행중 표시 + Docker 없는 uv 실행 지원 (완료, v1.1.8~v1.2.0, 2026-07-20)
+
+- ✅ LLM provider 전역 상태 경쟁조건 수정 (v1.1.8) — 회사 분석 도중 설정 화면에서 provider를 바꾸면 같은 분석 1건 안에서 provider가 섞이던 문제. `LLMSnapshot`(`backend/llm/router.py`) + `capture_snapshot()`/`light_from_snapshot()`/`high_from_snapshot()`로 파이프라인 시작 시점에 provider·모델·reasoning_effort를 고정. 실제로 분석 도중 provider를 전환해 섞이지 않는지 재현 테스트로 검증
+- ✅ 분석 진행 중 표시 배너 (v1.1.9) — `_track_in_progress` 데코레이터로 서버에 진행 건수 기록, `GET /api/analysis-in-progress`를 7초 주기로 폴링해 네비게이션 바에 "N건 분석 중..." 표시. 페이지를 이동해도 유지돼 실수로 같은 분석을 중복 제출하는 것을 방지
+- ✅ Codex 리뷰 후속 수정 3건 (v1.1.9) — 이미지 분석 OCR↔이후 단계 간 provider 경쟁조건, 프로필 생성 1·2단계 간 reasoning_effort 경쟁조건, 진행 배너 카운터가 URL 스크래핑·이미지 OCR 같은 앞단 구간을 못 세던 범위 문제(카운터를 `_process_company()`가 아니라 `add_from_text`/`from-url`/`from-image`/`refill` 4개 API 진입점 자체로 이동)
+- ✅ `.env` API 키 인식 실패 버그 수정 (v1.1.10) — Windows 실사용 중 발견. `.env`에 BOM이 붙어 저장되면 첫 번째 키(`GOOGLE_API_KEY`)를 인식 못 하던 문제(`env_file_encoding` `utf-8`→`utf-8-sig`), `run/setup.bat`에 `setlocal enabledelayedexpansion`이 없어 입력한 키 값이 반영 안 되던 지연 확장 버그, `.env` 재작성 시 주석 한글이 깨지던 문제까지 함께 수정
+- ✅ Docker 없이 `uv`로 실행하는 대안 경로 추가 (v1.2.0) — `run/start-uv.command`/`.bat` 신규(uv 미설치 시 자동 설치 여부 질문, Y/n 기본 Y). `setup.command`/`.bat` 제거하고 각 `start-*` 스크립트가 `.env` 없으면 자체적으로 초기 설정까지 처리(더블클릭 1번으로 축소). `start`/`stop`을 `start-docker`/`stop-docker`로 이름 통일. `backend/main.py`에 `frontend/` 폴더가 있을 때만 정적 파일을 직접 서빙하는 조건부 마운트 추가(Docker는 그대로 nginx가 서빙) + 인증 미들웨어 범위를 `/api/*`로 제한(정적 파일까지 인증 걸려 화면이 401로 막히던 문제 수정). Windows `.bat` 파일이 CP949가 아닌 UTF-8로 저장돼 한글이 깨져 명령어로 오인식되던 실전 이슈 발견·수정. `GETTING_STARTED.md`를 uv 기본 경로로 전면 재구성(7단계→5단계), 실제 스크린샷 9장 반영, Windows 보안 경고·방화벽 허용 안내 추가, 볼드+한글 조사 결합 시 마크다운 렌더링이 깨지던 CommonMark 버그 4곳 수정(`marked`로 실제 렌더링 검증)
+- 실제 Windows 환경(가상머신)에서 처음부터 끝까지(다운로드 → uv 설치 → 초기 설정 → 실행 → 로그인 → 회사 분석) 실행해 검증 완료
