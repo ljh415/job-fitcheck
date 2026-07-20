@@ -1,5 +1,24 @@
 # Changelog
 
+## v1.2.0 — Docker 없이 `uv`로 실행하는 대안 경로 추가 (2026-07-20)
+
+**`backend/main.py`**
+- `frontend/` 폴더가 존재할 때만 FastAPI가 직접 정적 파일을 서빙하도록 조건부 마운트 추가 — Docker 이미지에는 `frontend/`가 없어 기존 동작(nginx가 서빙) 그대로 유지되고, 로컬/uv 실행 시에만 활성화됨
+- 인증 미들웨어 적용 범위를 `/api/*`로 제한 — 정적 파일까지 인증이 걸려 로컬 실행 시 화면 자체가 401로 막히던 문제 수정 (Docker는 nginx가 애초에 정적 파일을 백엔드로 안 넘겨 영향 없었음)
+
+**`run/`** (스크립트 재구성)
+- `start-uv.command`/`start-uv.bat` 신규 추가 — Docker 없이 `uv run --python 3.12 --with-requirements backend/requirements.txt backend/main.py`로 실행. `uv` 미설치 시 설치 여부를 묻고(Y/n, 기본 Y) 자동 설치 후 이어서 실행
+- `setup.command`/`.bat` 제거 — 각 `start-*` 스크립트가 `.env` 없으면 자체적으로 초기 설정(API 키·비밀번호 입력)까지 처리해 더블클릭 한 번으로 축소
+- `start.command`/`.bat` → `start-docker.command`/`.bat`, `stop.command`/`.bat` → `stop-docker.command`/`.bat`로 이름 통일 (uv 경로와 대칭되도록)
+
+**`GETTING_STARTED.md`**
+- `uv` 실행을 기본 경로로, Docker는 "격리된 환경이 필요할 때"용 대안으로 전면 재구성 (7단계 → 5단계로 축약)
+- 실제 스크린샷 9장 반영 (다운로드, API 키, 실행 화면, 로그인, 대시보드 결과 + Windows 전용 보안 경고 3종)
+- Windows에서 뜨는 "게시자 확인 안 됨" 경고·방화벽 허용 창에 대한 안내 추가 (실제 Windows 테스트로 발견)
+- 볼드(`**`)와 한글 조사가 바로 붙을 때 CommonMark 강조 규칙상 렌더링이 깨지던 버그 4곳 수정 (`marked`로 실제 렌더링 검증)
+
+실제 Windows 환경에서 처음부터 끝까지 실행 테스트 완료 (uv 설치 → 초기 설정 → 서버 실행 → 로그인 → 회사 분석까지 확인).
+
 ## v1.1.10 — Windows에서 `.env` API 키가 인식 안 되던 버그 수정 (2026-07-20)
 
 **`backend/config.py`**
