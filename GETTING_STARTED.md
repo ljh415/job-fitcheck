@@ -1,6 +1,6 @@
 # 처음 시작하기 (완전 초보자용 가이드)
 
-프로그래밍을 몰라도 따라 할 수 있도록 순서대로 설명합니다. 총 10~15분 정도 걸립니다.
+프로그래밍을 몰라도 따라 할 수 있도록 순서대로 설명합니다. 총 10분 정도 걸립니다.
 
 컴퓨터를 새로 사거나 재설정할 일은 없습니다. `uv`라는 아주 가벼운 도구 하나만 필요한데, 이것도 별도로 미리 설치할 필요 없이 아래 과정 중에 자동으로 설치됩니다.
 
@@ -10,9 +10,8 @@
 > 2. `02-gemini-api-key.png` — Google AI Studio에서 API 키 생성된 화면
 > 3. `03-anthropic-signup.png` (선택) — Anthropic Console 가입/로그인 화면
 > 4. `04-anthropic-api-key.png` (선택) — API Keys 메뉴에서 `Create Key` 클릭 후 키 생성된 화면
-> 5. `05-setup-script.png` — `run/setup.command`/`run/setup.bat` 더블클릭 후 API 키를 입력받는 터미널 창
-> 6. `06-start-uv-script.png` — `run/start-uv.command`/`run/start-uv.bat` 실행 후 로그가 흐르는 터미널 창 (uv 설치 여부 질문이 뜨면 그 화면도 좋습니다)
-> 7. `07-login-screen.png` — 브라우저에서 `http://localhost:8000` 접속 후 나오는 로그인 화면
+> 5. `05-start-uv-script.png` — `run/start-uv.command`/`run/start-uv.bat` 실행 화면 (API 키를 물어보는 초기 설정 질문 또는 그 다음 실행 로그 중 편한 걸로)
+> 6. `06-login-screen.png` — 브라우저에서 `http://localhost:8000` 접속 후 나오는 로그인 화면
 
 ---
 
@@ -63,58 +62,47 @@ Gemini보다 분석 품질이 더 정확한 편입니다. 나중에 설정 화�
 
 ---
 
-## 3단계. 초기 설정
+## 3단계. 앱 실행
 
-1단계에서 압축을 푼 폴더를 열어보면 `run` 폴더 안에 `setup.command`(Mac) 또는 `setup.bat`(Windows) 파일이 있습니다. 이걸 **더블클릭**하세요.
+1단계에서 압축을 푼 폴더를 열어보면 `run` 폴더가 있습니다. 그 안의 **`start-uv.command`(Mac)** 또는 **`start-uv.bat`(Windows)**을 **더블클릭**하세요.
 
-- 검은 화면(터미널)이 뜨면서 순서대로 물어봅니다.
+처음 실행하는 거라면 검은 화면(터미널)이 뜨면서 순서대로 물어봅니다.
 - **Gemini API 키**: 2단계에서 복사해둔 키를 붙여넣고 Enter
 - **Claude API 키**: 준비했다면 붙여넣고 Enter, 없으면 그냥 Enter(비워두고 넘어가기)
 - **로그인 비밀번호**: 원하는 값을 입력하고 Enter
+- 이어서 `uv`가 컴퓨터에 없으면 "지금 설치할까요? (Y/n)"라고 물어봅니다 — 그냥 **Enter**만 누르면 자동으로 설치되고 곧바로 실행까지 이어집니다
 
-  ![setup 스크립트 실행 화면](assets/guide/05-setup-script.png)
+  ![start-uv 스크립트 실행 화면](assets/guide/05-start-uv-script.png)
 
-"설정 완료!"라는 문구가 보이면 성공입니다. 이 창은 닫아도 됩니다.
-
-> **Mac에서 "확인되지 않은 개발자" 경고가 뜨면?** 파일을 마우스 오른쪽 클릭 → "열기" 선택 → 다시 한번 "열기"를 누르면 실행됩니다 (한 번만 해주면 됩니다).
-
----
-
-## 4단계. 앱 실행
-
-같은 `run` 폴더에서 이번엔 **`start-uv.command`(Mac)** 또는 **`start-uv.bat`(Windows)**을 **더블클릭**하세요.
-
-- 컴퓨터에 `uv`가 아직 없으면 "지금 설치할까요? (Y/n)"라고 물어봅니다 — 그냥 **Enter**만 누르면 자동으로 설치되고 이어서 실행됩니다.
-- 그 다음 필요한 프로그램(Python)과 패키지를 받는 과정이 진행되는데, 처음 실행할 때만 수 초~1분 정도 걸릴 수 있습니다. 그 이후로는 훨씬 빠릅니다.
-- 검은 화면에 로그가 흐르다가 `Uvicorn running on...` 같은 문구가 보이면 준비된 겁니다.
-
-  ![start-uv 스크립트 실행 화면](assets/guide/06-start-uv-script.png)
+처음 실행할 때는 필요한 프로그램(Python)과 패키지를 받느라 수 초~1분 정도 걸릴 수 있습니다. 그 이후로는 훨씬 빠릅니다. 검은 화면에 로그가 흐르다가 `Uvicorn running on...` 같은 문구가 보이면 준비된 겁니다.
 
 > **이 창은 닫지 말고 그대로 켜두세요** — 창을 닫으면 앱도 같이 꺼집니다.
+
+> **Mac에서 "확인되지 않은 개발자" 경고가 뜨면?** 파일을 마우스 오른쪽 클릭 → "열기" 선택 → 다시 한번 "열기"를 누르면 실행됩니다 (한 번만 해주면 됩니다).
 
 > ### 💡 대신 Docker로 실행하고 싶다면 (선택)
 >
 > 여러 앱이 완전히 격리된 환경에서 도는 걸 선호하거나, 이미 Docker를 쓰고 있다면 Docker로 실행할 수도 있습니다. 다만 Docker Desktop은 용량이 크고(수백MB) 설치 중 재시작이 필요할 수 있어(특히 Windows), 위 uv 방식보다 준비 과정이 더 오래 걸립니다.
 >
 > 1. [Docker Desktop](https://www.docker.com/products/docker-desktop/)을 다운로드해 설치하고 실행 → 창에 **"Engine running"** 문구가 보이면 준비 완료
-> 2. 1~3단계(다운로드·API 키·`setup.command`)는 위와 동일하게 진행
-> 3. 4단계에서만 `start-uv.command`/`.bat` 대신 `run/start.command`(Mac) 또는 `run/start.bat`(Windows)을 더블클릭
-> 4. 끌 때는 `run/stop.command`/`stop.bat`을 더블클릭 (uv 방식과 달리 창을 닫는 것만으론 완전히 꺼지지 않을 수 있습니다)
+> 2. 1~2단계(다운로드·API 키)는 위와 동일하게 진행
+> 3. 3단계에서만 `start-uv.command`/`.bat` 대신 **`run/start-docker.command`(Mac)** 또는 **`run/start-docker.bat`(Windows)**을 더블클릭 — API 키/비밀번호 질문은 동일하게 뜨고, 그 다음 Docker로 실행됩니다
+> 4. 끌 때는 `run/stop-docker.command`/`stop-docker.bat`을 더블클릭 (uv 방식과 달리 창을 닫는 것만으론 완전히 꺼지지 않을 수 있습니다)
 >
 > ⚠️ Docker 방식과 uv 방식은 같은 포트(8000)를 씁니다. 동시에 켜두지 말고 한 가지 방식만 선택해서 쓰세요.
 
 ---
 
-## 5단계. 접속 및 로그인
+## 4단계. 접속 및 로그인
 
 1. 브라우저(크롬 등)를 열고 주소창에 `http://localhost:8000` 입력
 2. 3단계에서 정한 비밀번호 입력 → 로그인
 
-   ![로그인 화면](assets/guide/07-login-screen.png)
+   ![로그인 화면](assets/guide/06-login-screen.png)
 
 ---
 
-## 6단계. 첫 사용
+## 5단계. 첫 사용
 
 1. (선택) **설정** 탭 → 이력서/포트폴리오 PDF 업로드 → 프로필 자동 생성 — 이 단계는 건너뛰어도 됩니다. 이력서 없이 채용공고 정보만 정리해서 모아두는 "아카이빙" 용도로도 쓸 수 있고, 나중에 언제든 업로드해서 적합도 평가를 켤 수 있습니다
 2. **+ 회사 추가** → 채용공고 URL 붙여넣기 또는 텍스트/이미지 입력 → AI 분석 (이력서를 등록했다면 적합도 평가까지 자동으로 진행됩니다)
@@ -124,16 +112,16 @@ Gemini보다 분석 품질이 더 정확한 편입니다. 나중에 설정 화�
 
 ## 앱을 끄고/다시 켜고 싶을 때
 
-- **끄기**: 4단계에서 실행해둔 터미널 창에서 `Control + C`를 누르거나, 창을 그냥 닫기
-- **다시 켜기**: `run` 폴더의 `start-uv.command`/`start-uv.bat`을 다시 더블클릭 (설정 파일과 데이터는 그대로 남아있습니다)
+- **끄기**: 3단계에서 실행해둔 터미널 창에서 `Control + C`를 누르거나, 창을 그냥 닫기
+- **다시 켜기**: `run` 폴더의 `start-uv.command`/`start-uv.bat`을 다시 더블클릭 (설정 파일과 데이터는 그대로 남아있어서 키/비밀번호를 다시 묻지 않습니다)
 
-> Docker로 실행하셨다면: `stop.command`/`stop.bat`으로 끄고, `start.command`/`start.bat`으로 다시 켜세요.
+> Docker로 실행하셨다면: `stop-docker.command`/`stop-docker.bat`으로 끄고, `start-docker.command`/`start-docker.bat`으로 다시 켜세요.
 
 ---
 
 ## 터미널로 직접 하고 싶다면 (선택)
 
-스크립트 없이 터미널 명령어로 직접 하고 싶은 분들을 위한 방법입니다. 위 3~4단계 대신 아래 순서를 따르면 됩니다.
+스크립트 없이 터미널 명령어로 직접 하고 싶은 분들을 위한 방법입니다. 위 3단계 대신 아래 순서를 따르면 됩니다.
 
 1. 터미널 열기
    - Mac: `Command(⌘) + Space` → "터미널" 입력 → Enter
@@ -160,7 +148,7 @@ Gemini보다 분석 품질이 더 정확한 편입니다. 나중에 설정 화�
 | `uv: command not found` 같은 오류 | `start-uv.command`/`.bat` 실행 시 설치 질문에 답하지 않았거나 설치가 안 된 상태입니다. 스크립트를 다시 실행해 설치 질문에 Enter(또는 Y)로 답해주세요 |
 | 포트가 이미 사용 중이라는 오류(`address already in use`) | 8000번 포트를 다른 프로그램(다른 로컬 서버 등)이 쓰고 있습니다. 그 프로그램을 끄거나 컴퓨터를 재시작한 뒤 다시 시도해주세요 |
 | 로그인이 안 됨 | 3단계에서 정한 비밀번호를 정확히 입력했는지 확인 (대소문자 구분, 키보드 한/영 전환 상태도 확인 — 한글 입력 모드에서 영문 비밀번호를 치면 다른 문자로 입력됩니다) |
-| 공고 분석 시 "인증" 관련 오류 | API 키가 정확히 입력됐는지 확인 — 다시 설정하려면 `.env` 파일을 지우고 `run` 폴더의 `setup.command`/`setup.bat`을 다시 실행 |
+| 공고 분석 시 "인증" 관련 오류 | API 키가 정확히 입력됐는지 확인 — 다시 설정하려면 `.env` 파일을 지우고 `start-uv.command`/`.bat`을 다시 실행하면 처음처럼 다시 물어봅니다 |
 | (Docker로 실행하는 경우) `docker: command not found` | Docker Desktop이 실행 중이 아닙니다. 아이콘을 찾아 실행한 뒤 다시 시도 |
 | (Docker로 실행하는 경우) `port is already allocated` | 압축 푼 폴더의 `docker-compose.yml` 파일을 텍스트 편집기로 열어 `"8000:80"` 부분을 `"8080:80"`처럼 다른 숫자로 바꾸고 저장 → 다시 실행 → 브라우저 주소도 바꾼 숫자로(`http://localhost:8080`) 접속 |
 | 그 외 궁금한 점 | [README.md](README.md)에 기능별 설명이 더 자세히 있습니다 |

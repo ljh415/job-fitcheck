@@ -1,9 +1,7 @@
 #!/bin/bash
 cd "$(dirname "$0")/.."
 
-if [ -f .env ]; then
-  echo ".env 파일이 이미 있습니다. 새로 설정하려면 .env 파일을 지우고 다시 실행해주세요."
-else
+if [ ! -f .env ]; then
   cp .env.example .env
   echo "=== Job FitCheck 초기 설정 ==="
   echo ""
@@ -26,8 +24,11 @@ else
   fi
 
   echo ""
-  echo "설정 완료! 이제 run/start.command를 더블클릭해서 실행하세요."
+  echo "설정 완료!"
+  echo ""
 fi
 
+echo "Job FitCheck를 시작합니다 (Docker). 준비되면 브라우저에서 http://localhost:8000 을 여세요."
+echo "이 창을 닫으면 앱이 꺼집니다."
 echo ""
-read -p "엔터를 누르면 창이 닫힙니다..." _
+docker compose up --build

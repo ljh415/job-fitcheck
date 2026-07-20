@@ -2,6 +2,28 @@
 setlocal enabledelayedexpansion
 cd /d "%~dp0\.."
 
+if not exist .env (
+  copy .env.example .env >nul
+  echo === Job FitCheck 초기 설정 ===
+  echo.
+  set "gemini_key="
+  set "claude_key="
+  set "app_secret="
+  set /p gemini_key="Gemini API 키(AIza... 로 시작)를 붙여넣고 Enter: "
+  set /p claude_key="Claude API 키(sk-ant-... 로 시작, 없으면 그냥 Enter): "
+  set /p app_secret="로그인 비밀번호로 쓸 값을 정해서 입력하고 Enter: "
+
+  powershell -NoProfile -Command "(Get-Content .env) -replace 'GOOGLE_API_KEY=.*', 'GOOGLE_API_KEY=!gemini_key!' | Set-Content -Encoding UTF8 .env"
+  powershell -NoProfile -Command "(Get-Content .env) -replace 'APP_SECRET=.*', 'APP_SECRET=!app_secret!' | Set-Content -Encoding UTF8 .env"
+  if not "!claude_key!"=="" (
+    powershell -NoProfile -Command "(Get-Content .env) -replace 'ANTHROPIC_API_KEY=.*', 'ANTHROPIC_API_KEY=!claude_key!' | Set-Content -Encoding UTF8 .env"
+  )
+
+  echo.
+  echo 설정 완료!
+  echo.
+)
+
 where uv >nul 2>nul
 if errorlevel 1 (
   set "install_uv="
@@ -22,12 +44,6 @@ if errorlevel 1 (
     pause
     exit /b 1
   )
-)
-
-if not exist .env (
-  echo .env 파일이 없습니다. 먼저 run\setup.bat을 더블클릭해서 실행해주세요.
-  pause
-  exit /b 1
 )
 
 echo Job FitCheck를 시작합니다 (Docker 없이 uv로 실행). 처음 실행할 때는 파이썬/필요한 패키지를 받느라 잠시 걸릴 수 있습니다.
