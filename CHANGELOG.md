@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.1.10 — Windows에서 `.env` API 키가 인식 안 되던 버그 수정 (2026-07-20)
+
+**`backend/config.py`**
+- `.env` 파일에 BOM(Byte Order Mark)이 붙어 저장돼도 `GOOGLE_API_KEY` 등 첫 번째 키를 정상 인식하도록 `env_file_encoding`을 `utf-8`→`utf-8-sig`로 변경 — PowerShell `Set-Content -Encoding UTF8`이 BOM을 붙이는데, 이를 `utf-8`로 읽으면 첫 키 이름 앞에 보이지 않는 문자가 붙어 매칭이 깨지고 API 키가 빈 값으로 처리되던 문제
+
+**`run/setup.bat`**
+- `setlocal enabledelayedexpansion` 누락으로 같은 블록 안에서 입력받은 키 값을 곧바로 치환할 때 옛 값(빈 값)을 참조하던 지연 확장 버그 수정, `.env` 재작성 시 주석의 한글이 깨지던 인코딩 문제도 함께 수정
+
+실제 Windows 환경에서 재현·검증 완료 (uv 실행 방식 개발 중 발견).
+
 ## v1.1.9 — 분석 진행 중 표시 배너 + provider/reasoning_effort 경쟁조건 후속 수정 (2026-07-20)
 
 **`backend/main.py`, `frontend/index.html`, `frontend/app.js`, `frontend/style.css`**
