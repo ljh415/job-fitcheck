@@ -1,18 +1,17 @@
-ï»¿@echo off
-chcp 65001 >nul
+@echo off
 setlocal enabledelayedexpansion
 cd /d "%~dp0\.."
 
 if not exist .env (
   copy .env.example .env >nul
-  echo === Job FitCheck ì´ˆê¸° ì„¤ì • ===
+  echo === Job FitCheck ÃÊ±â ¼³Á¤ ===
   echo.
   set "gemini_key="
   set "claude_key="
   set "app_secret="
-  set /p gemini_key="Gemini API í‚¤(AIza... ë¡œ ì‹œìž‘)ë¥¼ ë¶™ì—¬ë„£ê³  Enter: "
-  set /p claude_key="Claude API í‚¤(sk-ant-... ë¡œ ì‹œìž‘, ì—†ìœ¼ë©´ ê·¸ëƒ¥ Enter): "
-  set /p app_secret="ë¡œê·¸ì¸ ë¹„ë°€ë²ˆí˜¸ë¡œ ì“¸ ê°’ì„ ì •í•´ì„œ ìž…ë ¥í•˜ê³  Enter: "
+  set /p gemini_key="Gemini API Å°(AIza... ·Î ½ÃÀÛ)¸¦ ºÙ¿©³Ö°í Enter: "
+  set /p claude_key="Claude API Å°(sk-ant-... ·Î ½ÃÀÛ, ¾øÀ¸¸é ±×³É Enter): "
+  set /p app_secret="·Î±×ÀÎ ºñ¹Ð¹øÈ£·Î ¾µ °ªÀ» Á¤ÇØ¼­ ÀÔ·ÂÇÏ°í Enter: "
 
   powershell -NoProfile -Command "(Get-Content .env) -replace 'GOOGLE_API_KEY=.*', 'GOOGLE_API_KEY=!gemini_key!' | Set-Content -Encoding UTF8 .env"
   powershell -NoProfile -Command "(Get-Content .env) -replace 'APP_SECRET=.*', 'APP_SECRET=!app_secret!' | Set-Content -Encoding UTF8 .env"
@@ -21,14 +20,14 @@ if not exist .env (
   )
 
   echo.
-  echo ì„¤ì • ì™„ë£Œ!
+  echo ¼³Á¤ ¿Ï·á!
   echo.
 )
 
 where uv >nul 2>nul
 if errorlevel 1 (
   set "install_uv="
-  set /p install_uv="uvê°€ ì„¤ì¹˜ë˜ì–´ ìžˆì§€ ì•ŠìŠµë‹ˆë‹¤. ì§€ê¸ˆ ì„¤ì¹˜í• ê¹Œìš”? (Y/n, ê¸°ë³¸ Y): "
+  set /p install_uv="uv°¡ ¼³Ä¡µÇ¾î ÀÖÁö ¾Ê½À´Ï´Ù. Áö±Ý ¼³Ä¡ÇÒ±î¿ä? (Y/n, ±âº» Y): "
   if "!install_uv!"=="" set "install_uv=Y"
   if /i "!install_uv:~0,1!"=="Y" (
     powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
@@ -36,23 +35,23 @@ if errorlevel 1 (
     where uv >nul 2>nul
     if errorlevel 1 (
       echo.
-      echo ì„¤ì¹˜ëŠ” ëì§€ë§Œ ì´ ì°½ì—ì„œ ë°”ë¡œ ì¸ì‹ì´ ì•ˆ ë©ë‹ˆë‹¤. í„°ë¯¸ë„ ì°½ì„ ìƒˆë¡œ ì—´ì–´ì„œ ì´ ìŠ¤í¬ë¦½íŠ¸ë¥¼ ë‹¤ì‹œ ì‹¤í–‰í•´ì£¼ì„¸ìš”.
+      echo ¼³Ä¡´Â µÆÁö¸¸ ÀÌ Ã¢¿¡¼­ ¹Ù·Î ÀÎ½ÄÀÌ ¾È µË´Ï´Ù. ÅÍ¹Ì³Î Ã¢À» »õ·Î ¿­¾î¼­ ÀÌ ½ºÅ©¸³Æ®¸¦ ´Ù½Ã ½ÇÇàÇØÁÖ¼¼¿ä.
       pause
       exit /b 1
     )
   ) else (
-    echo ì„¤ì¹˜ë¥¼ ê±´ë„ˆë›°ì—ˆìŠµë‹ˆë‹¤. https://astral.sh/uv ì•ˆë‚´ì— ë”°ë¼ ì§ì ‘ ì„¤ì¹˜í•œ ë’¤ ë‹¤ì‹œ ì‹¤í–‰í•´ì£¼ì„¸ìš”.
+    echo ¼³Ä¡¸¦ °Ç³Ê¶Ù¾ú½À´Ï´Ù. https://astral.sh/uv ¾È³»¿¡ µû¶ó Á÷Á¢ ¼³Ä¡ÇÑ µÚ ´Ù½Ã ½ÇÇàÇØÁÖ¼¼¿ä.
     pause
     exit /b 1
   )
 )
 
-echo Job FitCheckë¥¼ ì‹œìž‘í•©ë‹ˆë‹¤ (Docker ì—†ì´ uvë¡œ ì‹¤í–‰). ì²˜ìŒ ì‹¤í–‰í•  ë•ŒëŠ” íŒŒì´ì¬/í•„ìš”í•œ íŒ¨í‚¤ì§€ë¥¼ ë°›ëŠë¼ ìž ì‹œ ê±¸ë¦´ ìˆ˜ ìžˆìŠµë‹ˆë‹¤.
-echo ì¤€ë¹„ë˜ë©´ ë¸Œë¼ìš°ì €ì—ì„œ http://localhost:8000 ì„ ì—¬ì„¸ìš”.
-echo ì´ ì°½ì„ ë‹«ìœ¼ë©´ ì•±ì´ êº¼ì§‘ë‹ˆë‹¤.
+echo Job FitCheck¸¦ ½ÃÀÛÇÕ´Ï´Ù (Docker ¾øÀÌ uv·Î ½ÇÇà). Ã³À½ ½ÇÇàÇÒ ¶§´Â ÆÄÀÌ½ã/ÇÊ¿äÇÑ ÆÐÅ°Áö¸¦ ¹Þ´À¶ó Àá½Ã °É¸± ¼ö ÀÖ½À´Ï´Ù.
+echo ÁØºñµÇ¸é ºê¶ó¿ìÀú¿¡¼­ http://localhost:8000 À» ¿©¼¼¿ä.
+echo ÀÌ Ã¢À» ´ÝÀ¸¸é ¾ÛÀÌ ²¨Áý´Ï´Ù.
 echo.
 uv run --python 3.12 --with-requirements backend/requirements.txt backend/main.py
 
 echo.
-echo ì„œë²„ê°€ ì¢…ë£ŒëìŠµë‹ˆë‹¤. ìœ„ì— ì˜¤ë¥˜ ë©”ì‹œì§€ê°€ ìžˆë‹¤ë©´ í™•ì¸í•´ì£¼ì„¸ìš”.
+echo ¼­¹ö°¡ Á¾·áµÆ½À´Ï´Ù. À§¿¡ ¿À·ù ¸Þ½ÃÁö°¡ ÀÖ´Ù¸é È®ÀÎÇØÁÖ¼¼¿ä.
 pause

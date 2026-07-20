@@ -1,8 +1,7 @@
-ï»¿@echo off
-chcp 65001 >nul
+@echo off
 cd /d "%~dp0\.."
 
 docker compose down
 echo.
-echo ì¤‘ì§€í–ˆìŠµë‹ˆë‹¤. ë‹¤ì‹œ ì“°ë ¤ë©´ run\start-docker.batì„ ì‹¤í–‰í•˜ì„¸ìš”.
+echo ÁßÁöÇß½À´Ï´Ù. ´Ù½Ã ¾²·Á¸é run\start-docker.batÀ» ½ÇÇàÇÏ¼¼¿ä.
 pause

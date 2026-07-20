@@ -1,18 +1,17 @@
-ï»¿@echo off
-chcp 65001 >nul
+@echo off
 setlocal enabledelayedexpansion
 cd /d "%~dp0\.."
 
 if not exist .env (
   copy .env.example .env >nul
-  echo === Job FitCheck ì´ˆê¸° ì„¤ì • ===
+  echo === Job FitCheck ÃÊ±â ¼³Á¤ ===
   echo.
   set "gemini_key="
   set "claude_key="
   set "app_secret="
-  set /p gemini_key="Gemini API í‚¤(AIza... ë¡œ ì‹œì‘)ë¥¼ ë¶™ì—¬ë„£ê³  Enter: "
-  set /p claude_key="Claude API í‚¤(sk-ant-... ë¡œ ì‹œì‘, ì—†ìœ¼ë©´ ê·¸ëƒ¥ Enter): "
-  set /p app_secret="ë¡œê·¸ì¸ ë¹„ë°€ë²ˆí˜¸ë¡œ ì“¸ ê°’ì„ ì •í•´ì„œ ì…ë ¥í•˜ê³  Enter: "
+  set /p gemini_key="Gemini API Å°(AIza... ·Î ½ÃÀÛ)¸¦ ºÙ¿©³Ö°í Enter: "
+  set /p claude_key="Claude API Å°(sk-ant-... ·Î ½ÃÀÛ, ¾øÀ¸¸é ±×³É Enter): "
+  set /p app_secret="·Î±×ÀÎ ºñ¹Ğ¹øÈ£·Î ¾µ °ªÀ» Á¤ÇØ¼­ ÀÔ·ÂÇÏ°í Enter: "
 
   powershell -NoProfile -Command "(Get-Content .env) -replace 'GOOGLE_API_KEY=.*', 'GOOGLE_API_KEY=!gemini_key!' | Set-Content -Encoding UTF8 .env"
   powershell -NoProfile -Command "(Get-Content .env) -replace 'APP_SECRET=.*', 'APP_SECRET=!app_secret!' | Set-Content -Encoding UTF8 .env"
@@ -21,15 +20,15 @@ if not exist .env (
   )
 
   echo.
-  echo ì„¤ì • ì™„ë£Œ!
+  echo ¼³Á¤ ¿Ï·á!
   echo.
 )
 
-echo Job FitCheckë¥¼ ì‹œì‘í•©ë‹ˆë‹¤ (Docker). ì¤€ë¹„ë˜ë©´ ë¸Œë¼ìš°ì €ì—ì„œ http://localhost:8000 ì„ ì—¬ì„¸ìš”.
-echo ì´ ì°½ì„ ë‹«ìœ¼ë©´ ì•±ì´ êº¼ì§‘ë‹ˆë‹¤.
+echo Job FitCheck¸¦ ½ÃÀÛÇÕ´Ï´Ù (Docker). ÁØºñµÇ¸é ºê¶ó¿ìÀú¿¡¼­ http://localhost:8000 À» ¿©¼¼¿ä.
+echo ÀÌ Ã¢À» ´İÀ¸¸é ¾ÛÀÌ ²¨Áı´Ï´Ù.
 echo.
 docker compose up --build
 
 echo.
-echo ì¢…ë£ŒëìŠµë‹ˆë‹¤. ìœ„ì— ì˜¤ë¥˜ ë©”ì‹œì§€ê°€ ìˆë‹¤ë©´ í™•ì¸í•´ì£¼ì„¸ìš”.
+echo Á¾·áµÆ½À´Ï´Ù. À§¿¡ ¿À·ù ¸Ş½ÃÁö°¡ ÀÖ´Ù¸é È®ÀÎÇØÁÖ¼¼¿ä.
 pause
