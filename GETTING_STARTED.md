@@ -8,10 +8,11 @@
 > **📸 필요한 스크린샷 목록** (캡처해서 `assets/guide/` 폴더에 아래 파일명으로 넣어주세요)
 > 1. `01-github-download-zip.png` — GitHub 저장소의 `Code` → `Download ZIP` 버튼 위치
 > 2. `02-gemini-api-key.png` — Google AI Studio에서 API 키 생성된 화면
-> 3. `03-anthropic-signup.png` (선택) — Anthropic Console 가입/로그인 화면
-> 4. `04-anthropic-api-key.png` (선택) — API Keys 메뉴에서 `Create Key` 클릭 후 키 생성된 화면
-> 5. `05-start-uv-script.png` — `run/start-uv.command`/`run/start-uv.bat` 실행 화면 (API 키를 물어보는 초기 설정 질문 또는 그 다음 실행 로그 중 편한 걸로)
-> 6. `06-login-screen.png` — 브라우저에서 `http://localhost:8000` 접속 후 나오는 로그인 화면
+> 3. `03-start-uv-script.png` — `run/start-uv.command`/`run/start-uv.bat` 실행 화면 (API 키를 물어보는 초기 설정 질문 또는 그 다음 실행 로그 중 편한 걸로)
+> 4. `04-login-screen.png` — 브라우저에서 `http://localhost:8000` 접속 후 나오는 로그인 화면
+> 5. `05-dashboard-result.png` — 회사를 하나 추가한 뒤 대시보드에 결과가 뜬 화면
+>
+> (Claude API 키 발급 화면은 선택 사항이라 생략했습니다. 결제 정보가 나올 수 있어 캡처를 권장하지 않습니다.)
 
 ---
 
@@ -50,14 +51,8 @@ GitHub 저장소 페이지에서:
 Gemini보다 분석 품질이 더 정확한 편입니다. 나중에 설정 화면에서 Gemini → Claude로 언제든 전환할 수 있으니, 여유가 되면 같이 발급받아두는 걸 추천합니다. 사용한 만큼 비용이 청구됩니다 (공고 1건 분석에 대략 **$0.1 내외** — [README의 사용 비용 추정치](README.md#사용-비용-추정치) 참고).
 
 1. [https://console.anthropic.com](https://console.anthropic.com) 접속 후 회원가입/로그인
-
-   ![Anthropic Console 로그인 화면](assets/guide/03-anthropic-signup.png)
-
 2. 왼쪽 메뉴에서 **Billing**(결제) 들어가서 결제 수단(카드) 등록 및 최소 금액 충전 (보통 $5부터 가능)
 3. 왼쪽 메뉴에서 **API Keys** 클릭 → **Create Key** 클릭
-
-   ![API 키 생성 화면](assets/guide/04-anthropic-api-key.png)
-
 4. 생성된 키(`sk-ant-`로 시작하는 긴 문자열)를 복사 — **이 화면을 벗어나면 다시 볼 수 없으니** 메모장 등에 잠깐 붙여두세요
 
 ---
@@ -72,7 +67,7 @@ Gemini보다 분석 품질이 더 정확한 편입니다. 나중에 설정 화�
 - **로그인 비밀번호**: 원하는 값을 입력하고 Enter
 - 이어서 `uv`가 컴퓨터에 없으면 "지금 설치할까요? (Y/n)"라고 물어봅니다 — 그냥 **Enter**만 누르면 자동으로 설치되고 곧바로 실행까지 이어집니다
 
-  ![start-uv 스크립트 실행 화면](assets/guide/05-start-uv-script.png)
+  ![start-uv 스크립트 실행 화면](assets/guide/03-start-uv-script.png)
 
 처음 실행할 때는 필요한 프로그램(Python)과 패키지를 받느라 수 초~1분 정도 걸릴 수 있습니다. 그 이후로는 훨씬 빠릅니다. 검은 화면에 로그가 흐르다가 `Uvicorn running on...` 같은 문구가 보이면 준비된 겁니다.
 
@@ -98,7 +93,7 @@ Gemini보다 분석 품질이 더 정확한 편입니다. 나중에 설정 화�
 1. 브라우저(크롬 등)를 열고 주소창에 `http://localhost:8000` 입력
 2. 3단계에서 정한 비밀번호 입력 → 로그인
 
-   ![로그인 화면](assets/guide/06-login-screen.png)
+   ![로그인 화면](assets/guide/04-login-screen.png)
 
 ---
 
@@ -107,6 +102,8 @@ Gemini보다 분석 품질이 더 정확한 편입니다. 나중에 설정 화�
 1. (선택) **설정** 탭 → 이력서/포트폴리오 PDF 업로드 → 프로필 자동 생성 — 이 단계는 건너뛰어도 됩니다. 이력서 없이 채용공고 정보만 정리해서 모아두는 "아카이빙" 용도로도 쓸 수 있고, 나중에 언제든 업로드해서 적합도 평가를 켤 수 있습니다
 2. **+ 회사 추가** → 채용공고 URL 붙여넣기 또는 텍스트/이미지 입력 → AI 분석 (이력서를 등록했다면 적합도 평가까지 자동으로 진행됩니다)
 3. **대시보드**에서 결과 확인, Q&A로 질문도 가능
+
+   ![대시보드 결과 화면](assets/guide/05-dashboard-result.png)
 
 ---
 
