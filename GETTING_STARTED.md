@@ -4,13 +4,12 @@
 
 컴퓨터를 새로 사거나 재설정할 일은 없습니다. `uv`라는 아주 가벼운 도구 하나만 필요한데, 이것도 별도로 미리 설치할 필요 없이 아래 과정 중에 자동으로 설치됩니다.
 
-<!-- 이 문서에 이미지를 추가할 때 참고할 캡처 목록입니다. 아래 파일명 그대로 assets/guide/ 폴더에 넣으면 각 단계에 자동으로 표시됩니다. -->
-> **📸 필요한 스크린샷 목록** (캡처해서 `assets/guide/` 폴더에 아래 파일명으로 넣어주세요)
-> 1. `01-github-download-zip.png` — GitHub 저장소의 `Code` → `Download ZIP` 버튼 위치
-> 2. `02-gemini-api-key.png` — Google AI Studio에서 API 키 생성된 화면
-> 3. `03-start-uv-script.png` — `run/start-uv.command`/`run/start-uv.bat` 실행 화면 (API 키를 물어보는 초기 설정 질문 또는 그 다음 실행 로그 중 편한 걸로)
-> 4. `04-login-screen.png` — 브라우저에서 `http://localhost:8000` 접속 후 나오는 로그인 화면
-> 5. `05-dashboard-result.png` — 회사를 하나 추가한 뒤 대시보드에 결과가 뜬 화면
+<!-- 스크린샷은 assets/guide/에 이미 반영되어 있습니다. 참고용 목록: -->
+> **📸 스크린샷 목록** (`assets/guide/`)
+> - `01-github-download-zip.png`, `02-gemini-api-key.png` — 1~2단계
+> - `03-start-uv-prompt.png`, `03-start-uv-success.png` — 3단계 실행 과정
+> - `windows-security-warning.png`, `windows-uv-install-prompt.png`, `windows-firewall-warning.png` — Windows에서만 뜨는 창들
+> - `04-login-screen.png`, `05-dashboard-result.png` — 4~5단계
 >
 > (Claude API 키 발급 화면은 선택 사항이라 생략했습니다. 결제 정보가 나올 수 있어 캡처를 권장하지 않습니다.)
 
@@ -61,15 +60,30 @@ Gemini보다 분석 품질이 더 정확한 편입니다. 나중에 설정 화�
 
 1단계에서 압축을 푼 폴더를 열어보면 `run` 폴더가 있습니다. 그 안의 **`start-uv.command`(Mac)** 또는 **`start-uv.bat`(Windows)**을 **더블클릭**하세요.
 
+> **Windows에서 "게시자를 확인하지 못했습니다"라는 보안 경고가 뜨면?** 서명이 없는 일반 스크립트라 뜨는 정상적인 경고입니다. **"실행"**을 누르면 됩니다.
+>
+> ![Windows 게시자 확인 경고](assets/guide/windows-security-warning.png)
+
 처음 실행하는 거라면 검은 화면(터미널)이 뜨면서 순서대로 물어봅니다.
 - **Gemini API 키**: 2단계에서 복사해둔 키를 붙여넣고 Enter
 - **Claude API 키**: 준비했다면 붙여넣고 Enter, 없으면 그냥 Enter(비워두고 넘어가기)
 - **로그인 비밀번호**: 원하는 값을 입력하고 Enter
-- 이어서 `uv`가 컴퓨터에 없으면 "지금 설치할까요? (Y/n)"라고 물어봅니다 — 그냥 **Enter**만 누르면 자동으로 설치되고 곧바로 실행까지 이어집니다
 
-  ![start-uv 스크립트 실행 화면](assets/guide/03-start-uv-script.png)
+  ![start-uv 초기 설정 질문](assets/guide/03-start-uv-prompt.png)
 
-처음 실행할 때는 필요한 프로그램(Python)과 패키지를 받느라 수 초~1분 정도 걸릴 수 있습니다. 그 이후로는 훨씬 빠릅니다. 검은 화면에 로그가 흐르다가 `Uvicorn running on...` 같은 문구가 보이면 준비된 겁니다.
+이어서 `uv`가 컴퓨터에 없으면 "지금 설치할까요? (Y/n)"라고 물어봅니다 — 그냥 **Enter**만 누르면 자동으로 설치되고 곧바로 실행까지 이어집니다.
+
+  ![uv 설치 여부 질문](assets/guide/windows-uv-install-prompt.png)
+
+처음 실행할 때는 필요한 프로그램(Python)과 패키지를 받느라 수 초~1분 정도 걸릴 수 있습니다. 그 이후로는 훨씬 빠릅니다.
+
+> **Windows에서 "공용 및 프라이빗 네트워크에서 이 앱에 액세스하도록 허용하시겠습니까?"라는 방화벽 창이 뜨면?** 서버가 이 컴퓨터 안에서 통신하도록 허용하는 정상적인 창입니다. **"허용"**을 누르면 됩니다.
+>
+> ![Windows 방화벽 허용 창](assets/guide/windows-firewall-warning.png)
+
+검은 화면에 로그가 흐르다가 `Uvicorn running on...` 같은 문구가 보이면 준비된 겁니다.
+
+  ![start-uv 실행 성공 화면](assets/guide/03-start-uv-success.png)
 
 > **이 창은 닫지 말고 그대로 켜두세요** — 창을 닫으면 앱도 같이 꺼집니다.
 
