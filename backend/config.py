@@ -17,7 +17,7 @@ _ENV_FILE = Path(__file__).parent.parent / ".env"
 
 
 class Settings(BaseSettings):
-    # utf-8-sig: 일부 편집기/PowerShell(Set-Content -Encoding UTF8)가 .env 저장 시 파일 맨 앞에
+    # utf-8-sig: 일부 편집기/PowerShell(Set-Content -Encoding UTF8)이 .env 저장 시 파일 맨 앞에
     # BOM을 붙이는데, 이걸 "utf-8"로 읽으면 첫 번째 키 이름(GOOGLE_API_KEY 등)에 보이지 않는 문자가
     # 붙어 매칭이 깨진다. utf-8-sig는 BOM이 있으면 자동으로 제거하고, 없어도 그대로 정상 동작한다.
     model_config = SettingsConfigDict(env_file=str(_ENV_FILE), env_file_encoding="utf-8-sig", extra="ignore")
