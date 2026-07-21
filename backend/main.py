@@ -13,6 +13,7 @@ import asyncio
 import base64
 import csv
 import functools
+import hmac
 import io
 import json
 import logging
@@ -111,6 +112,7 @@ _ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 _MAX_UPLOAD_FILES = 10  # 이력서+포트폴리오 여러 개, 공고 스크린샷 여러 장 정도는 통과
 _MAX_PDF_BYTES = 30 * 1024 * 1024  # 이미지가 많은 포트폴리오 PDF도 통과하는 수준
 _MAX_IMAGE_BYTES = 15 * 1024 * 1024  # 스크린샷/사진 1장 기준 (리사이즈 전 원본)
+_MAX_IMAGE_PIXELS = 16_000_000  # 압축률이 높은 이미지의 압축폭탄 방지 — 폰 스크린샷(~460만 픽셀)의 3배 이상 여유
 
 
 def _resize_image(data: bytes) -> tuple[bytes, str]:
@@ -119,6 +121,8 @@ def _resize_image(data: bytes) -> tuple[bytes, str]:
     from PIL import Image as PilImage
 
     img = PilImage.open(io.BytesIO(data))
+    if img.width * img.height > _MAX_IMAGE_PIXELS:
+        raise ValueError(f"이미지 해상도가 너무 큽니다 ({img.width}x{img.height}).")
     if img.mode in ("RGBA", "P", "LA"):
         img = img.convert("RGB")
 
@@ -174,7 +178,7 @@ async def login(req: LoginRequest):
     if not settings.app_secret:
         logger.info("로그인 성공 (APP_SECRET 미설정 — 개발 모드)")
         return {"token": "dev"}
-    if req.password != settings.app_secret:
+    if not hmac.compare_digest(req.password.encode(), settings.app_secret.encode()):
         logger.warning("로그인 실패 — 비밀번호 불일치")
         raise HTTPException(status_code=401, detail="비밀번호가 틀렸습니다.")
     logger.info("로그인 성공")
@@ -313,7 +317,10 @@ async def list_models(provider: str = "claude"):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"모델 목록 조회 실패: {e}")
+        # Gemini는 API 키를 URL 쿼리 파라미터(?key=...)로 전달하므로, httpx 예외 문자열에
+        # 요청 URL 전체(키 포함)가 그대로 들어있을 수 있다. 클라이언트에는 노출하지 않고 서버 로그에만 남긴다.
+        logger.warning("모델 목록 조회 실패 (provider=%s): %s", provider, e)
+        raise HTTPException(status_code=502, detail=f"모델 목록 조회 실패 ({provider}). 서버 로그를 확인해주세요.")
     return {"provider": provider, "models": model_ids}
 
 
