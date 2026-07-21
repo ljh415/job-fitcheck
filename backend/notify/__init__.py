@@ -1,8 +1,6 @@
 import asyncio
 
-import discord
-import slack
-import telegram
+from . import discord, slack, telegram
 
 
 async def send_notification(materials: dict) -> None:
