@@ -1,7 +1,7 @@
 import httpx
 import logging
 from config import settings
-from notify_format import build_message
+from .format import build_message
 
 logger = logging.getLogger(__name__)
 

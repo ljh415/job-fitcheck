@@ -330,6 +330,16 @@ EVALUATE_FIT_SYSTEM_OPENAI = f"""당신은 구직자의 이력서와 채용공�
 [강조] 종합 의견·핵심 근거·지원 전략 전반에서 긍정적인 핵심 요소는 ==이중 등호==로, 부정적인 핵심 요소(갭·리스크)는 !!이중 느낌표!!로 하이라이트 표시하세요. 볼드(**텍스트**)는 추가 강조에 활용하세요.
 {TRUST_BOUNDARY_NOTICE}"""
 
+
+def evaluate_fit_system(provider: str) -> str:
+    """주어진 provider에 맞는 EVALUATE_FIT_SYSTEM 반환."""
+    if provider == "openai":
+        return EVALUATE_FIT_SYSTEM_OPENAI
+    if provider == "gemini":
+        return EVALUATE_FIT_SYSTEM_GEMINI
+    return EVALUATE_FIT_SYSTEM
+
+
 EVALUATE_FIT_USER_TEMPLATE = """## 후보자 프로필
 {candidate_profile}
 
