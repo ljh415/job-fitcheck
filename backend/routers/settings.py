@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
 import storage
-import usage_tracker
+from services import usage_tracker
 from config import (
     get_active_provider,
     get_model_override,

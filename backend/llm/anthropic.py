@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator
 
 import anthropic
 
-import usage_tracker
+from services import usage_tracker
 from config import settings
 from .base import LLMAPIError, LLMProvider
 

@@ -7,14 +7,14 @@ from pathlib import Path
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 
-import pdf_parser
+from services import pdf_parser
 import prompts
 import storage
 from config import settings
 from llm.base import LLMAPIError
 from llm.router import capture_snapshot, high_from_snapshot
 from models import CandidateProfile, ProfileUpdateRequest
-from pdf_parser import PDFExtractError
+from services.pdf_parser import PDFExtractError
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

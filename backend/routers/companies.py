@@ -24,11 +24,11 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 import prompts
-import scraper
+from services import scraper
 import storage
 from config import get_notify_pref, get_weekly_summary_schedule
 from export import save_backup_zip
-from jobplanet import fetch_jobplanet_score
+from services.jobplanet import fetch_jobplanet_score
 from llm.base import LLMAPIError
 from llm.router import LLMSnapshot, capture_snapshot, high_from_snapshot, light_from_snapshot
 from models import (
