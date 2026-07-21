@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.2.4 — provider/모델/알림설정이 재시작 후에도 유지되도록 수정 (2026-07-21)
+
+**`backend/config.py`**
+- provider·모델 오버라이드·알림 설정·주간요약 스케줄이 서버 재시작 시 `.env` 기본값으로 리셋되던 문제 수정 — `data/runtime_settings.json`에 원자적으로 저장(`.tmp` → `os.replace()`)하고 앱 시작 시 불러오도록 변경. 기존 "PoC라 리셋되는 게 의도된 동작"이라는 설명은 실제로는 이 상태만 영속화를 안 해놨던 것뿐이라, 다른 데이터(회사·프로필 등)와 동일한 원자적 파일 쓰기 패턴을 그대로 적용
+- `data/`는 이미 git 미추적 대상이라 이 파일도 자동으로 추적 제외됨
+
+dev/prod 양쪽에서 provider를 변경한 뒤 컨테이너를 재시작(재빌드 아님)해 값이 유지되는지, 회사 데이터가 안전한지 실제로 확인.
+
 ## v1.2.3 — backend 서비스 모듈 패키징 (2026-07-21)
 
 기능 변경 없음 — `usage_tracker.py`/`pdf_parser.py`/`scraper.py`/`jobplanet.py`를 `backend/services/`로 이동.
