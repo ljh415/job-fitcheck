@@ -13,7 +13,7 @@ from typing import NoReturn
 from google import genai
 from google.genai import types
 
-import usage_tracker
+from services import usage_tracker
 from config import settings
 from .base import LLMAPIError, LLMProvider
 

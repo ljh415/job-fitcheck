@@ -10,7 +10,7 @@ from collections.abc import AsyncIterator
 import openai as openai_lib
 from openai import AsyncOpenAI
 
-import usage_tracker
+from services import usage_tracker
 from config import get_reasoning_effort, settings
 from .base import LLMAPIError, LLMProvider
 
