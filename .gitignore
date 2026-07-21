@@ -14,6 +14,9 @@ docs/review-w-codex/
 # 실험 로그 (실제 지원 검토 회사명·평가 포함, 로컬 보관용 — git 히스토리에서도 제거함)
 docs/phase*.md
 
+# RAG 서브 프로젝트 계획 (Codex 작업 중, 로컬 보관용)
+docs/rag-project-plans/
+
 # 데이터 (개인 정보 포함)
 data/
 
