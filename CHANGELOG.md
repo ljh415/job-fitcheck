@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.2.3 — backend 서비스 모듈 패키징 (2026-07-21)
+
+기능 변경 없음 — `usage_tracker.py`/`pdf_parser.py`/`scraper.py`/`jobplanet.py`를 `backend/services/`로 이동.
+서로 코드 공유는 없지만 "라우터에서 호출되는 단일 서비스 모듈"이라는 공통 역할로 분류. `config.py`/`models.py`/`storage.py` 등 앱 전역에서 쓰이는 핵심 모듈은 최상위에 그대로 유지.
+
+**호출부 import 수정**
+- `llm/anthropic.py`, `llm/openai.py`, `llm/gemini.py`, `routers/settings.py`: `import usage_tracker` → `from services import usage_tracker`
+- `routers/companies.py`: `import scraper` → `from services import scraper`, `from jobplanet import ...` → `from services.jobplanet import ...`
+- `routers/profile.py`: `import pdf_parser` → `from services import pdf_parser`
+
+dev/prod 양쪽 Docker 재빌드 후 앱 임포트로 라우트 36개 동일 여부 재확인, `/api/usage`·`/api/companies`(scraper/jobplanet 임포트 체인 경유) 실제 요청으로 검증.
+
 ## v1.2.2 — backend 모듈 구조 리팩터링 (2026-07-21)
 
 기능 변경 없음(API 경로·동작 전부 동일) — `main.py` 1개 파일(1400여 줄)에 몰려있던 코드를 역할별로 분리.
