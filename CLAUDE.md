@@ -94,6 +94,7 @@ data/
 ├── candidate_profile.md
 ├── eval_criteria.md
 ├── usage_log.jsonl
+├── runtime_settings.json  # provider/모델/알림설정/주간요약 스케줄 — 재시작 후에도 유지
 ├── uploads/          # 업로드 PDF 임시 저장
 └── backup/           # 삭제 직전 자동 백업 (최근 5개 유지)
 ```
