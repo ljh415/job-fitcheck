@@ -1,5 +1,32 @@
 # Changelog
 
+## v1.3.0 — backend 모듈 구조 리팩터링 (2026-07-21)
+
+기능 변경 없음(API 경로·동작 전부 동일) — `main.py` 1개 파일(1400여 줄)에 몰려있던 코드를 역할별로 분리.
+
+**`backend/notify/`** (신규 패키지, 기존 `notify.py`/`notify_format.py`/`discord.py`/`slack.py`/`telegram.py`를 이동)
+- `llm/` 패키지와 동일한 패턴으로 알림 채널 코드를 하나로 묶음
+
+**`backend/auth.py`** (신규)
+- JWT 발급/검증, 인증 미들웨어, `POST /api/login`
+
+**`backend/export.py`** (신규)
+- 전체 데이터 ZIP 백업/export 공용 유틸(`routers/settings.py`의 `/api/export/zip`, `routers/companies.py`의 삭제 전 자동 백업에서 공유)
+
+**`backend/routers/`** (신규 패키지)
+- `settings.py` — 헬스체크, provider/모델 설정, 평가 기준, 사용량
+- `profile.py` — 후보자 프로필(PDF 업로드 → LLM 추출)
+- `companies.py` — 회사 CRUD, 회사 추가 파이프라인(`_process_company`), 주간 요약, 원티드 동기화
+- `qa.py` — Q&A SSE 스트리밍
+
+**`backend/prompts.py`**
+- `_evaluate_fit_system()`을 `main.py`에서 이동해 `evaluate_fit_system()`으로 공개 함수화 (프롬프트 선택 로직이 프롬프트 정의와 같은 파일에 있는 게 더 자연스러움)
+
+**`backend/main.py`**
+- 1436줄 → 53줄. `FastAPI` 앱 생성, 미들웨어·라우터 등록, 정적 파일 마운트만 남김
+
+라우트 32개 전부 경로·순서(특히 `/api/companies/compare`·`/api/companies/timeline`이 `/api/companies/{slug}`보다 먼저 등록되는 순서) 동일하게 유지 검증. dev/prod 양쪽 Docker 재빌드 후 로그인·설정·회사 목록/상세/타임라인/비교·인증 미들웨어·이미지 업로드 거부까지 실제 컨테이너에 요청을 보내 확인.
+
 ## v1.2.1 — public 전환 전 보안 점검 3건 수정 (2026-07-21)
 
 저장소를 private → public으로 전환하기 전 실시한 코드 리뷰에서 발견된 경미한 보안 이슈 수정.
