@@ -8,6 +8,15 @@
 상세 이력·설계 논의는 `docs/rag-project-plans/00_claude_handoff.md`(git 미추적)에 exhaustively
 기록돼 있음 — 이 파일은 그걸 압축한 요약.
 
+## rag-v0.12.0 — Plan B 6단계: Career Gap 답변 + UI를 Postgres로 전환 (2026-07-23)
+
+- `document_chunk.text_tsv`(tsvector generated column + GIN 인덱스) 추가 — Postgres 전문검색, SQLite FTS5와 달리 INSERT/UPDATE마다 DB가 자동 갱신해 수동 rebuild 로직이 필요 없음
+- `rag/postgres/fts.py`(`search_fts`) — `websearch_to_tsquery`로 자유 텍스트 검색(SQLite `fts5_literal()` 같은 수동 이스케이프 불필요)
+- `rag/postgres/gap.py`/`answer.py` — `rag/gap.py`/`answer.py` 포팅. DB 안 건드리는 순수 함수(`_recognized_scope`, `generate_action_plan`, `format_report`, `rank_priority_gaps`, `summarize_strengths`, `generate_sequenced_plan`)는 새로 안 만들고 원본에서 그대로 import
+- `routers/rag.py`가 SQLite 대신 Postgres 파이프라인을 호출하도록 전환 — 실제 서비스 흐름(`POST /api/rag/gap-check`)이 Postgres로 완전히 전환됨
+- 검증: `CANDIDATE_EVIDENCE` 10/10 일치, GP-01/GP-06/AC-06 집계 리포트가 `01b` 기대값과 일치, 실제 API 호출(exact/estimated, google/local 전 조합)로 end-to-end 확인
+- SQLite 코드(`rag/gap.py` 등)는 삭제하지 않고 Plan A 기준선 재현용 "동결 스크립트"로 유지(서비스 경로에서만 제외)
+
 ## rag-v0.11.0 — Plan B 4단계: HNSW 인덱싱 + RRF 하이브리드 검색 (2026-07-23)
 
 - `chunk_embedding.vector`(고정 차원 없음) → `vector_1536`(Google)/`vector_1024`(Local) 두 컬럼으로 분리, 각각 HNSW partial index 추가(provider별 컬럼 분리, provider가 2개뿐이라 테이블 분리보다 diff가 작음)
