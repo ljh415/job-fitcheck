@@ -13,3 +13,7 @@ pydantic-settings==2.6.1
 python-multipart==0.0.12
 Pillow>=10.0.0
 PyJWT>=2.8.0
+
+# RAG Plan B(rag/main 브랜치 전용) — PostgreSQL+pgvector 클라이언트. main 브랜치엔 불필요.
+psycopg[binary]>=3.2.0
+pgvector>=0.3.0

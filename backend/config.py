@@ -62,6 +62,14 @@ class Settings(BaseSettings):
     rag_local_ssh_key_path: str = ""
     rag_local_embed_port: int = 8500
 
+    # RAG Plan B(rag/main 브랜치) — PostgreSQL+pgvector 접속 정보. host 기본값은
+    # docker-compose.dev.yml의 서비스명(rag-postgres)이라 컨테이너 안에서는 그대로 동작.
+    rag_postgres_host: str = "rag-postgres"
+    rag_postgres_port: int = 5432
+    rag_postgres_db: str = "rag"
+    rag_postgres_user: str = "rag"
+    rag_postgres_password: str = ""
+
     # 데이터 루트 디렉토리 (Docker에서는 볼륨 마운트 경로)
     data_dir: Path = Path(__file__).parent.parent / "data"
 
