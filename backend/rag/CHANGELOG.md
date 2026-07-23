@@ -1,0 +1,71 @@
+# RAG 서브프로젝트 Changelog
+
+`rag/main` 브랜치 전용 — main 브랜치엔 없다. 버전 번호는 루트 `CHANGELOG.md`(앱 버전, `v1.x.x`)와
+겹치지 않게 별도 네임스페이스(`rag-v0.x.0`)를 쓴다. 나중에 정식으로 main에 merge한다면(순수 추가
+기능이라 semver 기준 마이너 릴리스에 해당 — 기존 기능을 하나도 안 건드림), 그 시점 버전(예: v1.3.0)
+담당자가 이 파일 내용을 참고해 옮기면 된다.
+
+상세 이력·설계 논의는 `docs/rag-project-plans/00_claude_handoff.md`(git 미추적)에 exhaustively
+기록돼 있음 — 이 파일은 그걸 압축한 요약.
+
+## rag-v0.8.0 — Plan A 종료 + 테스트 UI + 시장 수요 하이브리드 확장 (2026-07-23)
+
+- `01g_plan_a_summary.md`로 Plan A(1~8단계) 전체 결정·평가수치·한계·코드 인벤토리 통합
+- RAG 테스트 UI(`routers/rag.py` + `frontend/rag-test.html`) — provider(google/local)를 요청마다 선택 가능한 gap-check 화면. Docker에 `openssh-client` 설치 추가(컨테이너 안에서 SSH 터널이 필요해서)
+- 시장 수요 계산 하이브리드화 — 13개 고정 기술(`TRACKED_SKILLS`)은 기존 `posting_skill` 정확 매칭 유지, 그 외 자유 키워드는 임베딩+FTS5로 후보 공고를 모아 LLM이 개별 판정. 순수 임베딩 유사도(절대 임계값/순위 기반 개수/centering/elbow 탐지) 4가지를 다 실측했으나 이 corpus(비슷한 직군 공고들)에서는 유사도 크기가 "관련 있음/없음"을 구분 못 한다는 게 확인돼(Redis 3건과 Python 40건이 거의 같은 분포) 이 방식으로 결정. UI/리포트에 "추정치"로 명시 구분
+
+## rag-v0.7.0 — 7단계: 답변 생성 (2026-07-23)
+
+- `answer.py`: `generate_action_plan()`(gap별 구체적 활동+남길 증거+완료조건 — 막연한 토이 프로젝트 금지 원칙 반영), `generate_sequenced_plan()`(여러 gap을 하나의 순서·중단조건 계획으로, `01b` AC-06 스타일)
+- GP-01(우선순위 gap 랭킹)/GP-06(전체 강점 요약)/AC-06(순서 계획) 집계 리포트가 `01b` 기대값과 정확히 일치 확인
+
+## rag-v0.6.0 — 6단계: Gap 및 행동 엔진 (2026-07-23)
+
+- `gap.py`: 시장 수요는 SQL, 근거는 임베딩 검색, 판정은 LLM — 3단 분리 아키텍처(`01_lean_evidence_first_rag.md` 원칙)
+- `CANDIDATE_EVIDENCE`(10개 기술 정답지) 기준 판정 프롬프트를 3차례 개선 끝에 10/10 달성
+  - 1차: "이름이 문자 그대로 등장해야 함" 규칙 → IaC는 고쳤지만 Observability가 새로 깨짐(추상 개념이라 이름 자체가 안 나옴)
+  - 2차: "기능적 동일성" 규칙으로 일반화 → Observability 복구, IaC가 다시 흔들림
+  - 3차(최종): 판정 LLM에게 `TRACKED_SKILLS`의 동의어 범위를 참고 정보로 전달(`_recognized_scope()`) — 특정 기술명을 프롬프트에 하드코딩하지 않고 이미 있는 데이터로 경계를 명확히 전달해 해결
+- 집계 로직 추가: `assess_all_gaps()`(전체 기술 순회), `rank_priority_gaps()`/`summarize_strengths()`(순수 코드 필터링, LLM 미관여) — 기술 하나짜리 질문만 다루던 기존 구조로는 GP-01/GP-06처럼 여러 기술을 종합하는 질문에 애초에 답할 수 없었던 걸 해결
+
+## rag-v0.5.0 — 5단계: 검색 정식 평가 (2026-07-23)
+
+- `evaluate.py`: `01b`의 EX(정확 기술명)+SY(동의어) 12개 질문으로 FTS5/Google/Local Precision@5·Recall@10 비교
+- 결과: FTS5 0.75/0.41(정확 기술명 최강, 동의어는 원문과 다른 표기면 0까지 하락), Google 0.68/0.33, Local(Jina) 0.65/0.42(Recall은 FTS5·Google도 능가)
+- FTS5 구축 중 버그 발견·수정: external content 방식(`content='document_chunk'`)이 `MATCH`를 항상 빈 결과로 반환 — 독립형 가상 테이블로 교체
+
+## rag-v0.4.0 — 4단계: 로컬 임베딩 (2026-07-23)
+
+- 3050Ti(RTX 3050 Ti Mobile, 4GB VRAM) + WSL2에 CUDA 12.4, FastAPI 추론 서버 구축. dev 서버와 SSH 터널로 연결(WSL2 systemd 자동 시작 + Windows portproxy 자동 갱신으로 재부팅 후에도 수동 개입 없이 유지되도록 정비)
+- 로컬 임베딩 모델 5개 실측 비교:
+  - `Alibaba-NLP/gte-multilingual-base` — 커스텀 토크나이저가 vocab 범위 벗어난 토큰 ID를 만들어 CUDA `device-side assert`로 탈락
+  - `intfloat/multilingual-e5-base` — 정상 동작, 한때 채택
+  - `BAAI/bge-m3` — 정상 동작하지만 가장 낮은 점수로 탈락
+  - `jinaai/jina-embeddings-v5-text-small` — **최종 채택**(P@5 0.65/R@10 0.42로 e5-base·BGE-M3·FTS5·Google Recall 전부 능가). Qwen3 기반 decoder+LoRA라 4GB VRAM에서 배치 크기 4 필요
+  - `jhgan/ko-sroberta-multitask`(한국어 전용) — "한국어 corpus엔 한국어 전용 모델이 유리하지 않겠냐"는 가설로 시도했으나 오히려 가장 낮은 점수(STS 튜닝 모델이라 비대칭 검색엔 안 맞음)
+- `LocalEmbeddingProvider`는 3050Ti 서버의 `/health` 응답(모델명·차원)을 매번 대조 검증 — 모델 교체 시 조용히 잘못된 벡터가 섞이는 사고 방지(Codex 리뷰 권고 반영)
+
+## rag-v0.3.1 — Google 임베딩 task_type 버그 수정 (2026-07-22)
+
+- Codex 리뷰로 발견: `gemini-embedding-2`는 `task_type` config를 지원하지 않는데(API가 조용히 무시), 기존 코드가 이 값을 쓰고 있어서 문서/질의 구분 없이 임베딩되고 있었음
+- 공식 포맷(문서 `"title: ... | text: ..."`, 질의 `"task: search result | query: ..."` prefix)으로 재작성, 기존 183개 임베딩 삭제 후 재생성, 검색 스모크 테스트로 품질 저하 없음 확인
+
+## rag-v0.3.0 — 3단계: Google 임베딩 기준선 (2026-07-22)
+
+- `gemini-embedding-2`(1536차원)로 공고 청크 183개 임베딩. 청킹 규칙: 빈 줄 기준 문단 분리, 청크당 최대 1,200자, overlap 없음
+- `EmbeddingProvider` 추상 인터페이스로 리팩터(`llm/base.py` 패턴 차용하되, RAG는 "활성 provider 하나 선택"이 아니라 "여러 provider 비교"가 목적이라 라우터는 두지 않음)
+- 증분 재임베딩(문서 해시 비교로 안 바뀐 공고는 스킵) 구현 — 재실행할 때마다 전체 재임베딩되던 낭비 수정
+- 실행 진입점을 `embed_google.py`에서 `run_embedding.py --provider google`로 통합(provider 이름이 진입점 파일명에 박혀있던 것 정리)
+
+## rag-v0.2.0 — 2단계: 공고 데이터 정규화 (2026-07-22)
+
+- SQLite 스키마(`posting`/`posting_skill`/`skill_alias`/`candidate_evidence`) 신설
+- `skills.py`: `TRACKED_SKILLS`(정확 기술명 6개+동의어 그룹 6개+IaC — Plan A 검증용 정답지, 프로덕션 메커니즘 아님), `CANDIDATE_EVIDENCE`(프로필 기반 근거 판정 10개 정답지)
+- `verify_step2.py`로 17개 항목(전체 공고 수 1+기술 집계 13+교집합 3)을 원문 grep과 전부 대조 검증
+
+## rag-v0.1.0 — Plan A 로드맵 수립 (2026-07-21)
+
+- Plan A(검색 기준선, SQLite) → Plan B(PostgreSQL+pgvector 주 구현) → Plan C(Qdrant·reranker·GraphRAG 비교) 3단계 로드맵 확정
+- 서브프로젝트 브랜치 전략 확정: `rag/main`을 절대 main에 merge하지 않는 영구 브랜치로 운영(주기적으로 main → rag/main 방향으로만 병합), 결과 불확실한 곁가지 실험은 `rag/<실험명>` 형제 브랜치로 분리
+- 평가 세트 초안 작성 — corpus 스냅샷(공고 70건) SHA-256 해시로 고정, 정확 기술명·동의어·집계·개인 gap·행동 계획·답변 불가 6개 유형 36개 질문
+- (계획 문서 자체는 `docs/rag-project-plans/`에 있으며 git 미추적 — 이 단계는 코드 커밋 없음)
