@@ -8,6 +8,17 @@
 상세 이력·설계 논의는 `docs/rag-project-plans/00_claude_handoff.md`(git 미추적)에 exhaustively
 기록돼 있음 — 이 파일은 그걸 압축한 요약.
 
+## rag-v0.14.0 — Codex 코드 리뷰 6건 수정 + Stage 4 HNSW 결론 정정 (2026-07-23)
+
+Plan B Stage 2~6(2496d96..HEAD) 전체를 Codex에 리뷰 요청, 실제 재현으로 6건 전부 확인 후 수정.
+
+- **[정정] rag-v0.11.0의 "HNSW recall 동일/지연시간 소폭 개선" 결론은 근거가 없었음.** `EXPLAIN`으로 확인해보니 그때 "hnsw 모드"라고 표시한 질의도 실제로는 HNSW 인덱스를 전혀 안 쓰고 `Bitmap Heap Scan`(UNIQUE 인덱스)을 썼다 — `enable_seqscan=off`는 힌트일 뿐 강제가 아니고, 이 corpus 규모에서 provider/model/source_type 필터를 거친 후보군(수십 건)에는 플래너가 HNSW보다 일반 인덱스+정렬을 항상 더 싸다고 판단함. `hnsw_eval.py`를 다시 작성해 (1) 매 반복마다 원격 임베딩을 다시 호출하던 것을 질문당 1회로 수정(기존 500ms/190ms는 대부분 임베딩 API 시간이었음, 실제 DB 지연은 15~20ms), (2) `EXPLAIN`으로 실제 스캔 방식을 매번 확인해 출력, (3) 필터 없는 최소 조건 질의로 HNSW 인덱스 자체는 정상 동작함을 별도 확인. **정정된 결론**: 이 corpus 규모+질의 형태에서는 HNSW가 실제로 한 번도 안 쓰였고, exact/hnsw 두 "모드"가 사실상 같은 계획이라 recall이 같은 게 당연했음 — 데이터가 늘어난 뒤 재측정 필요성이 여전히 유효함
+- **[High] 단일 provider 재색인이 다른 provider 임베딩을 삭제** — 공고 내용이 바뀌면 그 청크의 모든 provider 임베딩이 삭제되는데(청크가 새 id로 재생성돼서), CLI에서 선택한 provider 하나만 다시 채워 다른 provider는 그 공고에 대해 조용히 비게 됨(실측 재현 확인). 완전 자동 수정 대신, 다른 provider들이 존재하면 재색인 후 명시적 경고 메시지 출력하도록 수정(`reindex.py`)
+- **[Medium] `CREATE TABLE IF NOT EXISTS`는 스키마 변경(Stage 2→4→6)을 자동 반영 안 함** — `schema.py`에 `rebuild_schema()`/`--rebuild-schema` CLI 플래그 추가, 기존엔 매번 수동으로 테이블 드롭
+- **[Medium] `routers/rag.py`가 Postgres 커넥션을 안 닫음** — `conn.close()`를 `finally`에 명시적으로 추가(GC의 `__del__`에 의존하던 상태, idle in transaction 커넥션 누적 위험)
+- **[Medium] `chunk_embedding.vector_1536`/`vector_1024` 조합을 DB가 강제 안 함** — 잘못된 조합(둘 다 NULL, 둘 다 채워짐, 차원 불일치) 삽입을 막는 CHECK 제약 추가, 실제로 위반 삽입이 거부됨을 확인
+- SQL injection: 발견 없음. `prune_deleted_postings()`의 `posting_raw`만 지우고 `candidate_profile` 보존은 의도된 동작. SQLite 순수 함수 재사용은 안전함 — 리뷰에서 문제 없음으로 확인된 3건은 수정 없이 종료
+
 ## rag-v0.13.0 — Plan B 5단계: 증분 색인과 운영 (2026-07-23)
 
 - **삭제 동기화 버그 발견·수정**: 공고 원문(`.raw.txt`)이 삭제되면 `posting`/`posting_skill`은 재적재 시 정리됐지만, `document_chunk`/`chunk_embedding`은 그 posting을 더 이상 순회하지 않아 고아 행으로 영원히 남는 문제 발견. `rag/postgres/chunks.py`에 `prune_deleted_postings()` 추가, `reindex.py`에서 `ingest_run()` 직후 호출
