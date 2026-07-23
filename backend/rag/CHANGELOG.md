@@ -8,6 +8,13 @@
 상세 이력·설계 논의는 `docs/rag-project-plans/00_claude_handoff.md`(git 미추적)에 exhaustively
 기록돼 있음 — 이 파일은 그걸 압축한 요약.
 
+## rag-v0.11.0 — Plan B 4단계: HNSW 인덱싱 + RRF 하이브리드 검색 (2026-07-23)
+
+- `chunk_embedding.vector`(고정 차원 없음) → `vector_1536`(Google)/`vector_1024`(Local) 두 컬럼으로 분리, 각각 HNSW partial index 추가(provider별 컬럼 분리, provider가 2개뿐이라 테이블 분리보다 diff가 작음)
+- `rag/postgres/hnsw_eval.py` — `enable_seqscan`/`enable_indexscan` GUC로 exact/HNSW 모드를 강제 전환해 비교. 이 corpus(청크 194개)는 너무 작아 P@5/R@10은 완전히 동일(01g에서 예측한 그대로), 지연시간은 HNSW가 소폭 빠름(Google 524→515ms, Local 192→183ms — 이 규모에선 노이즈 수준일 수 있음)
+- `rag/postgres/hybrid.py`(`rrf_search`) — `posting_skill` 정확 매칭 + pgvector 검색을 RRF(k=60)로 결합. `evaluate_hybrid.py`로 벡터 단독과 비교했으나, **12개 평가 질문 전부 정확 매칭 채널 = ground truth라 결과가 항상 유리하게 나옴을 명시** — 이 평가는 RRF 결합 로직 자체가 올바른지 확인하는 배관 점검이지 실전 하이브리드 효과 검증이 아님(recall이 정확 매칭 건수로 캡핑되는 패턴으로 확인)
+- 범위 제외(명시): `skill_alias`를 임베딩 클러스터링으로 채우는 재설계 — 별도 논의로 남김
+
 ## rag-v0.10.0 — Plan B 3단계: pgvector exact search + 검색 품질 평가 (2026-07-23)
 
 - `rag/postgres/retrieval.py` — pgvector `<=>` 연산자로 SQL 안에서 정렬·top_k까지 처리(SQLite판의 BLOB pack/unpack+파이썬 코사인 계산 제거)
