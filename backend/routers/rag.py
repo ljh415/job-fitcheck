@@ -8,6 +8,7 @@ main 브랜치엔 없는 라우터 — rag/main 전용.
 """
 import sqlite3
 
+import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -54,6 +55,10 @@ async def gap_check(req: GapCheckRequest):
     except RuntimeError as e:
         # LocalEmbeddingProvider의 SSH 터널/모델 검증 실패, assess_gap()의 프로필 미임베딩 감지 등
         raise HTTPException(503, f"RAG 파이프라인 연결/설정 오류: {e}")
+    except httpx.HTTPError as e:
+        # provider 생성 후 실제 embed_documents()/embed_query() 호출 중 네트워크 오류 —
+        # 이것도 503(일시적 연결 문제)이지 500(서버 버그)이 아니다(Codex 재리뷰로 발견, 2026-07-23)
+        raise HTTPException(503, f"임베딩 서버 통신 오류: {e}")
     finally:
         close = getattr(embed_provider, "close", None)
         if close:

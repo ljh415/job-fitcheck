@@ -109,15 +109,18 @@ def _candidate_postings(conn: sqlite3.Connection, skill: str, embed_provider: Em
         )
     ]
 
+    # source_type='posting_raw' 필터 없이 LIMIT부터 걸면 프로필 청크가 상위권을 차지해 진짜
+    # 공고 후보가 밀려날 수 있었다(Codex 재리뷰로 발견, 2026-07-23).
     fts_rows = conn.execute(
-        "SELECT rowid FROM document_chunk_fts WHERE document_chunk_fts MATCH ?"
+        "SELECT rowid FROM document_chunk_fts WHERE document_chunk_fts MATCH ? AND source_type = 'posting_raw'"
         " ORDER BY bm25(document_chunk_fts) LIMIT ?",
         (fts5_literal(skill), DEMAND_FTS5_TOP_K),
     ).fetchall()
     fts_queue = []
     for (chunk_id,) in fts_rows:
         row = conn.execute("SELECT text FROM document_chunk WHERE id = ?", (chunk_id,)).fetchone()
-        if row:  # ensure_fts5()가 매번 갱신하므로 이제 없어야 정상이지만, 방어적으로 확인
+        if row:  # 청크가 실제로 바뀌면 chunks.py가 FTS를 재생성하므로 정상 경로에선 항상 있어야
+                 # 하지만, 타이밍 이슈에 대비해 방어적으로 확인
             fts_queue.append((chunk_id, row[0]))
 
     candidates: dict[int, dict] = {}

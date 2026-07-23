@@ -33,18 +33,28 @@ class LocalEmbeddingProvider(EmbeddingProvider):
 
     def __init__(self) -> None:
         self._tunnel = self._open_tunnel()
-        self._wait_for_health()
-        info = self._get("/health")
-        self.model = info["model"]
-        self.dimensions = info["dimensions"]
-        if self.model != self.EXPECTED_MODEL or self.dimensions != self.EXPECTED_DIMENSIONS:
+        try:
+            self._wait_for_health()
+            info = self._get("/health")
+            self.model = info["model"]
+            self.dimensions = info["dimensions"]
+            if self.model != self.EXPECTED_MODEL or self.dimensions != self.EXPECTED_DIMENSIONS:
+                raise RuntimeError(
+                    f"3050Ti 추론 서버가 기대한 모델과 다릅니다"
+                    f"(기대: {self.EXPECTED_MODEL}/{self.EXPECTED_DIMENSIONS}차원,"
+                    f" 실제: {self.model}/{self.dimensions}차원)."
+                    " 모델을 바꿨다면 이 클래스의 EXPECTED_* 값도 같이 갱신하세요."
+                )
+        except httpx.HTTPError as e:
+            # _wait_for_health() 통과 후 이 health 재조회가 실패하는 경우(드문 타이밍 이슈) —
+            # 여기서 안 잡으면 터널을 닫지 못한 채(self.close() 미호출) 예외가 새어나가 프로세스가
+            # 고아로 남고, routers/rag.py도 RuntimeError만 잡아서 503 대신 500이 됐다(Codex
+            # 재리뷰로 발견, 2026-07-23).
             self.close()
-            raise RuntimeError(
-                f"3050Ti 추론 서버가 기대한 모델과 다릅니다"
-                f"(기대: {self.EXPECTED_MODEL}/{self.EXPECTED_DIMENSIONS}차원,"
-                f" 실제: {self.model}/{self.dimensions}차원)."
-                " 모델을 바꿨다면 이 클래스의 EXPECTED_* 값도 같이 갱신하세요."
-            )
+            raise RuntimeError(f"3050Ti 추론 서버 통신 오류: {e}") from e
+        except Exception:
+            self.close()
+            raise
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         return self._post("/embed_documents", {"texts": texts})["vectors"]

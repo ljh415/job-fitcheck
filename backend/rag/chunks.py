@@ -9,6 +9,7 @@ import sqlite3
 
 from config import settings
 from rag.chunking import chunk_text
+from rag.retrieval import rebuild_fts5
 
 
 def _text_hash(text: str) -> str:
@@ -59,6 +60,7 @@ def populate_candidate_profile_chunks(conn: sqlite3.Connection) -> tuple[bool, i
             ),
         )
     conn.commit()
+    rebuild_fts5(conn)  # 청크가 실제로 바뀐 유일한 지점 — FTS5도 여기서만 최신화한다
     return True, len(new_chunks)
 
 
@@ -106,4 +108,6 @@ def populate_posting_chunks(conn: sqlite3.Connection) -> tuple[int, int]:
         total_chunks += len(new_chunks)
 
     conn.commit()
+    if touched_postings > 0:
+        rebuild_fts5(conn)  # 청크가 실제로 바뀐 유일한 지점 — FTS5도 여기서만 최신화한다
     return touched_postings, total_chunks

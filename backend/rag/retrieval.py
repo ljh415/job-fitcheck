@@ -50,16 +50,33 @@ def search_chunks(
 
 
 def ensure_fts5(conn: sqlite3.Connection) -> None:
-    """document_chunk_fts(독립형 FTS5 가상 테이블)를 항상 최신 document_chunk 내용으로 다시
-    채운다. 외부 콘텐츠(content='document_chunk') 방식은 MATCH가 항상 빈 결과를 반환하는 문제가
-    있어서(원인 미확인, count(*)/LIKE는 되는데 MATCH만 안 됨) 독립형 테이블로 우회한다.
-    "없으면 만들기"만 하던 이전 방식은 청크가 재생성(삭제 후 새 id로 재삽입)돼도 FTS 쪽이 그대로
-    남아, 이미 없어진 chunk_id를 가리키는 오래된 rowid가 검색 결과에 섞여 나오는 문제가 있었다
-    (Codex 리뷰로 발견, 2026-07-23) — 지금 규모(청크 183개)에서는 매번 비우고 재생성하는 비용이
-    미미해 이 방식으로 단순하게 해결한다."""
+    """document_chunk_fts(독립형 FTS5 가상 테이블)가 없으면 만든다. 외부 콘텐츠
+    (content='document_chunk') 방식은 MATCH가 항상 빈 결과를 반환하는 문제가 있어서(원인 미확인,
+    count(*)/LIKE는 되는데 MATCH만 안 됨) 독립형 테이블로 우회한다.
+
+    검색 경로(읽기)에서 호출하므로 여기서는 "없으면 생성"만 한다 — 한때 매 호출마다 무조건
+    재생성했더니 동시 요청에서 SQLite가 `database is locked`를 던지는 문제가 있었다(Codex
+    재리뷰로 발견, 2026-07-23, 재현 스크립트로 확인). 청크가 실제로 바뀌었을 때 테이블을
+    최신화하는 책임은 `rebuild_fts5()`로 옮기고, 그건 청크를 실제로 바꾸는 `chunks.py`의
+    `populate_posting_chunks()`/`populate_candidate_profile_chunks()`에서만 호출한다."""
+    (exists,) = conn.execute(
+        "SELECT count(*) FROM sqlite_master WHERE name = 'document_chunk_fts'"
+    ).fetchone()
+    if not exists:
+        rebuild_fts5(conn)
+
+
+def rebuild_fts5(conn: sqlite3.Connection) -> None:
+    """document_chunk_fts를 document_chunk의 현재 내용으로 무조건 다시 만든다. 청크를 실제로
+    추가·삭제·수정하는 코드(`chunks.py`)에서만 호출해야 한다 — 검색 경로에서 매번 부르면 동시
+    요청 간 락이 걸린다(위 `ensure_fts5()` 설명 참고)."""
     conn.execute("DROP TABLE IF EXISTS document_chunk_fts")
-    conn.execute("CREATE VIRTUAL TABLE document_chunk_fts USING fts5(text, tokenize='unicode61')")
-    conn.execute("INSERT INTO document_chunk_fts(rowid, text) SELECT id, text FROM document_chunk")
+    conn.execute(
+        "CREATE VIRTUAL TABLE document_chunk_fts USING fts5(text, source_type UNINDEXED, tokenize='unicode61')"
+    )
+    conn.execute(
+        "INSERT INTO document_chunk_fts(rowid, text, source_type) SELECT id, text, source_type FROM document_chunk"
+    )
     conn.commit()
 
 
@@ -72,13 +89,19 @@ def fts5_literal(text: str) -> str:
     return '"' + text.replace('"', '""') + '"'
 
 
-def search_fts5(conn: sqlite3.Connection, keyword: str, top_k: int = 60) -> list[int]:
+def search_fts5(conn: sqlite3.Connection, keyword: str, top_k: int = 60, source_type: str = "posting_raw") -> list[int]:
     """키워드 하나로 FTS5 검색해 posting_id 순위 리스트를 반환한다. `ensure_fts5()`를 먼저
-    호출해서 테이블이 있는지 확인해야 한다."""
+    호출해서 테이블이 있는지 확인해야 한다.
+
+    source_type으로 필터링하는 이유: 이 테이블엔 공고(posting_raw)뿐 아니라 후보자 프로필
+    (candidate_profile) 청크도 같이 들어있다. 필터 없이 LIMIT부터 걸면 프로필 청크가 상위권을
+    차지해 진짜 찾아야 할 공고 후보가 LIMIT 예산 밖으로 밀려날 수 있다(Codex 재리뷰로 발견,
+    2026-07-23 — 실측: 흔한 기술 키워드가 프로필 청크 11개 중 5~6개와도 매치됨)."""
     rows = conn.execute(
-        "SELECT bm25(document_chunk_fts), rowid FROM document_chunk_fts WHERE document_chunk_fts MATCH ?"
+        "SELECT bm25(document_chunk_fts), rowid FROM document_chunk_fts"
+        " WHERE document_chunk_fts MATCH ? AND source_type = ?"
         " ORDER BY bm25(document_chunk_fts) LIMIT ?",
-        (fts5_literal(keyword), top_k),
+        (fts5_literal(keyword), source_type, top_k),
     ).fetchall()
     # bm25()는 낮을수록 관련도가 높음 — score를 음수로 뒤집어 기존 "높을수록 좋음" 정렬과 맞춘다.
     scored = [(-score, chunk_id) for score, chunk_id in rows]
