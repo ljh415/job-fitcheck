@@ -31,13 +31,16 @@ async def gap_check(req: GapCheckRequest):
     if req.provider not in ("google", "local"):
         raise HTTPException(400, "provider는 'google' 또는 'local'만 가능합니다")
 
-    conn = get_connection()
+    conn = None
     embed_provider = None
     try:
-        # provider 생성도 try 안에서 해야 SSH 터널/모델 검증 실패(RuntimeError)가 503으로
-        # 잡힌다 — 예전엔 try 밖에 있어서 이 실패가 그대로 500으로 샜다(Codex 리뷰로 발견,
-        # 2026-07-23). embed_provider를 미리 None으로 둬서 생성 자체가 실패해도 finally의
-        # getattr(None, "close", None)이 안전하게 아무 일도 안 하도록 한다.
+        # conn 생성도 try 안에서 해야 DB 연결 실패가 503으로 잡힌다(Postgres용으로 포팅하며
+        # 이 자리에 다시 놓쳤던 실수 — 원래 embed_provider에 대해 이미 한 번 고친 패턴과
+        # 똑같은 이유, Codex 리뷰로 발견, 2026-07-23). provider 생성도 try 안에서 해야
+        # SSH 터널/모델 검증 실패(RuntimeError)가 503으로 잡힌다 — 예전엔 try 밖에 있어서
+        # 이 실패가 그대로 500으로 샜다(Codex 리뷰로 발견, 2026-07-23). conn/embed_provider를
+        # 미리 None으로 둬서 생성 자체가 실패해도 finally가 안전하게 아무 일도 안 하도록 한다.
+        conn = get_connection()
         embed_provider = GoogleEmbeddingProvider() if req.provider == "google" else LocalEmbeddingProvider()
         gap_result = await assess_gap(conn, req.skill, embed_provider)
         action_plan = None
@@ -63,3 +66,5 @@ async def gap_check(req: GapCheckRequest):
         close = getattr(embed_provider, "close", None)
         if close:
             close()
+        if conn is not None:
+            conn.close()  # 명시적으로 닫아야 함 — GC(__del__)에 의존하면 idle in transaction 커넥션이 쌓일 수 있다(Codex 리뷰로 발견, 2026-07-23)
