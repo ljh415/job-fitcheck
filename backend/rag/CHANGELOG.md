@@ -8,6 +8,14 @@
 상세 이력·설계 논의는 `docs/rag-project-plans/00_claude_handoff.md`(git 미추적)에 exhaustively
 기록돼 있음 — 이 파일은 그걸 압축한 요약.
 
+## rag-v0.13.0 — Plan B 5단계: 증분 색인과 운영 (2026-07-23)
+
+- **삭제 동기화 버그 발견·수정**: 공고 원문(`.raw.txt`)이 삭제되면 `posting`/`posting_skill`은 재적재 시 정리됐지만, `document_chunk`/`chunk_embedding`은 그 posting을 더 이상 순회하지 않아 고아 행으로 영원히 남는 문제 발견. `rag/postgres/chunks.py`에 `prune_deleted_postings()` 추가, `reindex.py`에서 `ingest_run()` 직후 호출
+- 증분 재임베딩(해시 비교)·색인 실패 재처리(단일 트랜잭션 커밋이라 부분 손상 없음)·모델 버전 전환(UNIQUE 제약이 model까지 포함해 신구 모델 공존 가능)은 기존 코드로 이미 충족 — 실제 시나리오(부분 삭제 후 재실행, 합성 구버전 모델 삽입)로 검증만 하고 코드 변경 없음
+- 삭제 동기화 검증: 공고 파일 1개를 임시로 옮겨 `reindex.py` 실행 → 고아 행 0건 확인 → 파일 복구 → 재실행으로 원상 복구(posting 70건) 확인
+- `pg_dump`/`pg_restore`로 백업·복구 실측 — DB 드롭 후 복구해도 건수(posting 70/posting_skill 212/chunk 194/embedding 388) 정확히 일치, pgvector 익스텐션도 정상 복구
+- SQLite(`rag/gap.py` 등)의 동일한 삭제 동기화 갭은 안 고침 — Plan A 기준선 재현용 동결 스크립트라 범위 제외
+
 ## rag-v0.12.0 — Plan B 6단계: Career Gap 답변 + UI를 Postgres로 전환 (2026-07-23)
 
 - `document_chunk.text_tsv`(tsvector generated column + GIN 인덱스) 추가 — Postgres 전문검색, SQLite FTS5와 달리 INSERT/UPDATE마다 DB가 자동 갱신해 수동 rebuild 로직이 필요 없음
