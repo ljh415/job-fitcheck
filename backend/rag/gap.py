@@ -12,6 +12,7 @@
 실시간 판정해서 정답지와 비교한다.
 """
 import asyncio
+import itertools
 import re
 import sqlite3
 
@@ -19,7 +20,7 @@ from llm.router import capture_snapshot, high_from_snapshot
 from rag.embed.base import EmbeddingProvider
 from rag.embed.local import LocalEmbeddingProvider
 from rag.ingest import DB_PATH
-from rag.retrieval import ensure_fts5, search_chunks
+from rag.retrieval import ensure_fts5, fts5_literal, search_chunks
 from rag.skills import CANDIDATE_EVIDENCE, TRACKED_SKILLS
 
 PROFILE_TOP_K = 5
@@ -100,6 +101,25 @@ def _candidate_postings(conn: sqlite3.Connection, skill: str, embed_provider: Em
     FTS5는 반대로 정확한 표현이 아니면 아예 못 찾는다 — 후보를 넉넉히 모으는 역할만 시키고,
     실제 판정은 LLM이 발췌문을 직접 읽고 한다."""
     ensure_fts5(conn)
+
+    embed_queue = [
+        (chunk_id, text)
+        for _score, chunk_id, text in search_chunks(
+            conn, embed_provider, skill, source_type="posting_raw", top_k=DEMAND_EMBED_TOP_K
+        )
+    ]
+
+    fts_rows = conn.execute(
+        "SELECT rowid FROM document_chunk_fts WHERE document_chunk_fts MATCH ?"
+        " ORDER BY bm25(document_chunk_fts) LIMIT ?",
+        (fts5_literal(skill), DEMAND_FTS5_TOP_K),
+    ).fetchall()
+    fts_queue = []
+    for (chunk_id,) in fts_rows:
+        row = conn.execute("SELECT text FROM document_chunk WHERE id = ?", (chunk_id,)).fetchone()
+        if row:  # ensure_fts5()가 매번 갱신하므로 이제 없어야 정상이지만, 방어적으로 확인
+            fts_queue.append((chunk_id, row[0]))
+
     candidates: dict[int, dict] = {}
 
     def _add(chunk_id: int, text: str):
@@ -114,19 +134,17 @@ def _candidate_postings(conn: sqlite3.Connection, skill: str, embed_provider: Em
             return
         candidates[row[0]] = {"posting_id": row[0], "company_name": row[1], "job_title": row[2], "excerpt": text}
 
-    for _score, chunk_id, text in search_chunks(
-        conn, embed_provider, skill, source_type="posting_raw", top_k=DEMAND_EMBED_TOP_K
-    ):
-        _add(chunk_id, text)
-
-    fts_rows = conn.execute(
-        "SELECT rowid FROM document_chunk_fts WHERE document_chunk_fts MATCH ?"
-        " ORDER BY bm25(document_chunk_fts) LIMIT ?",
-        (skill, DEMAND_FTS5_TOP_K),
-    ).fetchall()
-    for (chunk_id,) in fts_rows:
-        (text,) = conn.execute("SELECT text FROM document_chunk WHERE id = ?", (chunk_id,)).fetchone()
-        _add(chunk_id, text)
+    # 임베딩 채널이 먼저 상한을 다 채워버리면 FTS5 결과가 하나도 안 섞이던 문제(Codex 리뷰 발견,
+    # 2026-07-23) — 두 채널을 번갈아 채워서 한쪽이 상한을 독점하지 않게 한다.
+    for embed_item, fts_item in itertools.zip_longest(embed_queue, fts_queue):
+        if len(candidates) >= DEMAND_CANDIDATE_MAX:
+            break
+        if embed_item is not None:
+            _add(*embed_item)
+        if len(candidates) >= DEMAND_CANDIDATE_MAX:
+            break
+        if fts_item is not None:
+            _add(*fts_item)
 
     return list(candidates.values())
 
@@ -160,7 +178,10 @@ async def market_demand_hybrid(conn: sqlite3.Connection, skill: str, embed_provi
         operation="시장 수요 후보 판정",
         reasoning_effort=snap.reasoning_effort,
     )
-    matched = len(result["relevant_numbers"])
+    # LLM이 후보 범위 밖 번호나 중복 번호를 반환해도 그대로 세면 matched가 candidate_count보다
+    # 커지는 모순이 생길 수 있다(Codex 리뷰로 발견, 2026-07-23) — 유효 범위로 걸러내고 중복 제거.
+    valid_numbers = {n for n in result["relevant_numbers"] if 1 <= n <= len(candidates)}
+    matched = len(valid_numbers)
     return {
         "matched": matched,
         "total": total,
@@ -182,7 +203,25 @@ def _recognized_scope(skill: str) -> str | None:
     return ", ".join(readable)
 
 
+def _has_profile_embeddings(conn: sqlite3.Connection, embed_provider: EmbeddingProvider) -> bool:
+    (count,) = conn.execute(
+        "SELECT count(*) FROM chunk_embedding ce JOIN document_chunk dc ON dc.id = ce.chunk_id"
+        " WHERE ce.provider = ? AND ce.model = ? AND ce.dimensions = ? AND dc.source_type = 'candidate_profile'",
+        (embed_provider.provider_name, embed_provider.model, embed_provider.dimensions),
+    ).fetchone()
+    return count > 0
+
+
 async def assess_gap(conn: sqlite3.Connection, skill: str, embed_provider: EmbeddingProvider) -> dict:
+    # 검색 결과 0건이 "실제로 근거 없음"인지 "이 provider로 프로필을 아직 임베딩 안 함"인지
+    # 구분 못 하고 둘 다 LLM에게 "발췌문 없음"으로 넘어가 "근거 없음"으로 오판되는 문제가 있었다
+    # (Codex 리뷰로 발견, 2026-07-23) — 판정 전에 인덱스 존재 자체를 먼저 확인한다.
+    if not _has_profile_embeddings(conn, embed_provider):
+        raise RuntimeError(
+            f"이 provider({embed_provider.provider_name}/{embed_provider.model})로 후보자 프로필이"
+            " 아직 임베딩되지 않았습니다. `run_embedding.py --include-profile`로 먼저 임베딩하세요."
+        )
+
     demand = await market_demand_hybrid(conn, skill, embed_provider)
 
     evidence_chunks = search_chunks(

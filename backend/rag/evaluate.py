@@ -63,8 +63,11 @@ QUESTIONS: list[tuple[str, str, str, str]] = [
     ("EX-06", "Redis를 명시한 공고의 근거를 찾아줘.", "Redis", "Redis"),
     ("SY-01", "K8s와 관련된 공고를 찾아줘.", "Kubernetes", "K8s"),
     ("SY-02", "Postgres 경험과 관련된 공고를 찾아줘.", "PostgreSQL", "Postgres"),
-    ("SY-03", "Amazon Web Services 경험과 관련된 공고를 찾아줘.", "AWS", "\"Amazon Web Services\""),
-    ("SY-04", "Google Cloud 경험과 관련된 공고를 찾아줘.", "GCP", "\"Google Cloud\""),
+    # SY-03/04는 여러 단어로 된 구(phrase) 검색이라 원래부터 직접 큰따옴표를 넣어뒀는데,
+    # search_fts5()가 이제 fts5_literal()로 항상 자동 감싸므로 여기서 중복으로 감싸면 안 된다
+    # (Codex 리뷰로 인한 FTS5 안전 처리 변경, 2026-07-23 — 상세는 retrieval.py 참고).
+    ("SY-03", "Amazon Web Services 경험과 관련된 공고를 찾아줘.", "AWS", "Amazon Web Services"),
+    ("SY-04", "Google Cloud 경험과 관련된 공고를 찾아줘.", "GCP", "Google Cloud"),
     ("SY-05", "배포 자동화나 CI/CD 경험과 관련된 공고를 찾아줘.", "CI/CD", "배포 자동화"),
     ("SY-06", "서비스 관측성과 관련된 공고를 찾아줘.", "Observability", "관측성"),
 ]

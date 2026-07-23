@@ -50,16 +50,26 @@ def search_chunks(
 
 
 def ensure_fts5(conn: sqlite3.Connection) -> None:
-    """document_chunk_fts(독립형 FTS5 가상 테이블)를 준비한다. 없으면 만들고 채운다.
-    외부 콘텐츠(content='document_chunk') 방식은 MATCH가 항상 빈 결과를 반환하는 문제가 있어서
-    (원인 미확인, count(*)/LIKE는 되는데 MATCH만 안 됨) 독립형 테이블로 우회한다."""
-    (exists,) = conn.execute(
-        "SELECT count(*) FROM sqlite_master WHERE name = 'document_chunk_fts'"
-    ).fetchone()
-    if not exists:
-        conn.execute("CREATE VIRTUAL TABLE document_chunk_fts USING fts5(text, tokenize='unicode61')")
-        conn.execute("INSERT INTO document_chunk_fts(rowid, text) SELECT id, text FROM document_chunk")
-        conn.commit()
+    """document_chunk_fts(독립형 FTS5 가상 테이블)를 항상 최신 document_chunk 내용으로 다시
+    채운다. 외부 콘텐츠(content='document_chunk') 방식은 MATCH가 항상 빈 결과를 반환하는 문제가
+    있어서(원인 미확인, count(*)/LIKE는 되는데 MATCH만 안 됨) 독립형 테이블로 우회한다.
+    "없으면 만들기"만 하던 이전 방식은 청크가 재생성(삭제 후 새 id로 재삽입)돼도 FTS 쪽이 그대로
+    남아, 이미 없어진 chunk_id를 가리키는 오래된 rowid가 검색 결과에 섞여 나오는 문제가 있었다
+    (Codex 리뷰로 발견, 2026-07-23) — 지금 규모(청크 183개)에서는 매번 비우고 재생성하는 비용이
+    미미해 이 방식으로 단순하게 해결한다."""
+    conn.execute("DROP TABLE IF EXISTS document_chunk_fts")
+    conn.execute("CREATE VIRTUAL TABLE document_chunk_fts USING fts5(text, tokenize='unicode61')")
+    conn.execute("INSERT INTO document_chunk_fts(rowid, text) SELECT id, text FROM document_chunk")
+    conn.commit()
+
+
+def fts5_literal(text: str) -> str:
+    """자유 텍스트를 FTS5 MATCH 구문에 안전하게 넘길 수 있는 순수 문자열 리터럴로 감싼다.
+    FTS5는 `"`, `:`, `*`, `AND`/`OR`/`NOT` 등을 쿼리 연산자로 해석하므로, "C++"·"foo:bar"처럼
+    흔한 자유 입력도 그대로 넘기면 SQLite가 문법 에러를 던진다(Codex 리뷰로 발견, 2026-07-23).
+    큰따옴표로 감싸면 그 안은 순수 문자열로 취급되고, 내부의 큰따옴표는 `""`로 이스케이프하면
+    리터럴 문자 그 자체로 인식된다(FTS5 공식 문법)."""
+    return '"' + text.replace('"', '""') + '"'
 
 
 def search_fts5(conn: sqlite3.Connection, keyword: str, top_k: int = 60) -> list[int]:
@@ -68,7 +78,7 @@ def search_fts5(conn: sqlite3.Connection, keyword: str, top_k: int = 60) -> list
     rows = conn.execute(
         "SELECT bm25(document_chunk_fts), rowid FROM document_chunk_fts WHERE document_chunk_fts MATCH ?"
         " ORDER BY bm25(document_chunk_fts) LIMIT ?",
-        (keyword, top_k),
+        (fts5_literal(keyword), top_k),
     ).fetchall()
     # bm25()는 낮을수록 관련도가 높음 — score를 음수로 뒤집어 기존 "높을수록 좋음" 정렬과 맞춘다.
     scored = [(-score, chunk_id) for score, chunk_id in rows]

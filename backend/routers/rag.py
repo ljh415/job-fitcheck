@@ -31,8 +31,13 @@ async def gap_check(req: GapCheckRequest):
         raise HTTPException(400, "provider는 'google' 또는 'local'만 가능합니다")
 
     conn = sqlite3.connect(DB_PATH)
-    embed_provider = GoogleEmbeddingProvider() if req.provider == "google" else LocalEmbeddingProvider()
+    embed_provider = None
     try:
+        # provider 생성도 try 안에서 해야 SSH 터널/모델 검증 실패(RuntimeError)가 503으로
+        # 잡힌다 — 예전엔 try 밖에 있어서 이 실패가 그대로 500으로 샜다(Codex 리뷰로 발견,
+        # 2026-07-23). embed_provider를 미리 None으로 둬서 생성 자체가 실패해도 finally의
+        # getattr(None, "close", None)이 안전하게 아무 일도 안 하도록 한다.
+        embed_provider = GoogleEmbeddingProvider() if req.provider == "google" else LocalEmbeddingProvider()
         gap_result = await assess_gap(conn, req.skill, embed_provider)
         action_plan = None
         if gap_result["evidence_level"] != "직접 근거":
@@ -47,8 +52,8 @@ async def gap_check(req: GapCheckRequest):
             "provider": req.provider,
         }
     except RuntimeError as e:
-        # LocalEmbeddingProvider의 SSH 터널/모델 검증 실패 등 — 3050Ti가 안 켜져있으면 여기로 옴
-        raise HTTPException(503, f"로컬 provider 연결 실패: {e}")
+        # LocalEmbeddingProvider의 SSH 터널/모델 검증 실패, assess_gap()의 프로필 미임베딩 감지 등
+        raise HTTPException(503, f"RAG 파이프라인 연결/설정 오류: {e}")
     finally:
         close = getattr(embed_provider, "close", None)
         if close:
