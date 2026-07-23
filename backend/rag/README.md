@@ -19,7 +19,7 @@ Job FitCheck가 이미 모아둔 채용공고 데이터와 본인 프로필을 �
 
 ---
 
-## 2. 지금까지 만든 것 (Plan A 1~8단계 전체 완료)
+## 2. 지금까지 만든 것 (Plan A 1~8단계 + Plan B 1~4·6단계 완료)
 
 ### 전체 흐름
 
@@ -75,6 +75,32 @@ backend/routers/rag.py     — RAG 테스트 UI용 API(POST /api/rag/gap-check, 
 frontend/rag-test.html     — 브라우저에서 직접 눌러볼 수 있는 테스트 화면
 ```
 
+**Plan B(PostgreSQL+pgvector) — 위와 별도 저장소로 `backend/rag/postgres/`에 미러링**
+
+실제 서비스 흐름(`routers/rag.py`)은 이제 이 아래 코드를 쓴다. 위 SQLite 코드(`rag/gap.py` 등)는
+지우지 않고 Plan A 기준선 재현용 "동결 스크립트"로 남아있다(`rag/postgres/evaluate.py`가 그 안의
+평가 질문·지표 함수를 그대로 재사용하기도 함).
+
+```
+backend/rag/postgres/
+├── schema.py         — Postgres 방언 스키마(pgvector `vector_1536`/`vector_1024` 컬럼 + HNSW
+│                       partial index, `document_chunk.text_tsv`(tsvector generated column) + GIN 인덱스)
+├── db.py             — 연결 헬퍼(psycopg + pgvector 타입 등록)
+├── ingest.py          — SQLite `ingest.py` 포팅
+├── chunks.py          — SQLite `chunks.py` 포팅(FTS5 rebuild 호출 없음 — generated column이 자동 갱신)
+├── pipeline.py        — SQLite `embed/pipeline.py` 포팅(provider 차원별 컬럼에 저장)
+├── retrieval.py       — pgvector `<=>` 연산자로 SQL 안에서 정렬까지 끝냄(BLOB pack/unpack 불필요)
+├── fts.py             — Postgres 전문검색(`websearch_to_tsquery`) — SQLite `fts5_literal()`류 이스케이프 불필요
+├── hybrid.py          — RRF(관계형 정확매칭+벡터 검색 결합)
+├── reindex.py         — ★ 전체 재색인 진입점. `python3 -m rag.postgres.reindex --provider google`
+├── evaluate.py         — 5단계 대응: pgvector exact search 품질 평가(Google/Local만, FTS 비교는 hnsw_eval 쪽)
+├── evaluate_hybrid.py — 벡터 단독 vs RRF 하이브리드 비교(순환논리 주의 — 파일 docstring 참고)
+├── hnsw_eval.py        — exact vs HNSW 근사검색 recall·지연시간 비교
+├── verify.py           — 2단계 집계 검증(SQLite `verify_step2.py`와 기대값 공유)
+├── gap.py              — 6단계 Gap 판정(SQLite `gap.py` 포팅, 순수 함수는 원본에서 import)
+└── answer.py           — 6단계 답변 생성(SQLite `answer.py` 포팅, 순수 함수는 원본에서 import)
+```
+
 ### 지금 실행하면 어떻게 되는지
 
 ```bash
@@ -103,6 +129,9 @@ python3 -m rag.answer --aggregate   # 7단계: 여러 기술 종합 질문(우�
 | 로컬 임베딩 모델을 5개나 실제로 다 돌려봄(`Alibaba-NLP/gte-multilingual-base` → `intfloat/multilingual-e5-base` → `BAAI/bge-m3` → `jinaai/jina-embeddings-v5-text-small` → `jhgan/ko-sroberta-multitask`) | 모델 카드 평판이나 "한국어니까 한국어 전용 모델이 유리하겠지"같은 직관을 그대로 믿지 않고, 매번 실제 검색 성능(Precision@5/Recall@10)을 측정해서 골랐음. 결과적으로 최종 채택된 Jina는 원래 3번째 후보였고, 한국어 전용 모델(ko-sroberta)은 오히려 가장 낮은 점수가 나옴 — "직관이 항상 맞진 않는다"를 직접 확인한 사례 |
 | 시장 수요(이 기술을 몇 %의 공고가 요구하는지)를 13개 고정 기술은 정확 매칭, 그 외 자유 키워드는 임베딩+FTS5+LLM 판정으로 다르게 계산 | 순수 임베딩 유사도만으로는 "이 corpus에서 관련 있음/없음"을 구분 못 한다는 게 실측으로 확인됨(전혀 다른 빈도의 기술인 Redis(3건)와 Python(40건)이 유사도 분포는 거의 같았음 — 비슷한 직군 공고들끼리 도메인 어휘가 겹쳐서 생기는 현상). 그래서 후보를 넉넉히 모으고 LLM이 실제 내용을 읽고 판정하는 방식으로 대체 |
 | `skills.py`의 스킬 목록·근거 판정은 "정답지"이지 실제 서비스 로직이 아님 | 지금은 검색이 잘 되는지 채점하려고 사람이 직접 확인해서 만든 기준값. 다만 이 "동의어 범위" 데이터는 6단계 Gap 판정 LLM에게 참고 정보로 전달하는 용도로도 재활용됨(아래 5번 참고) |
+| Postgres로 옮기면서 SQLite 코드는 삭제하지 않고 그대로 둠(`rag/gap.py` 등) | Plan A 검증 결과(10/10, P@5/R@10 기준선)를 만들어낸 코드 자체이자 재현 스크립트라서 — "폐기"는 서비스가 그 경로를 안 부르게 하는 것(`routers/rag.py` 전환)이지 파일 삭제가 아님 |
+| `chunk_embedding`에 provider별 고정 차원 컬럼(`vector_1536`/`vector_1024`)을 따로 둠 | pgvector의 HNSW 인덱스는 컬럼 차원이 고정돼야 걸 수 있는데, Google(1536차원)과 로컬(1024차원)이 원래는 한 컬럼에 섞여 있었음. provider가 2개뿐이라 테이블을 나누기보다 컬럼을 나누는 쪽이 diff가 작아서 이렇게 함 |
+| SQLite FTS5 대신 Postgres `tsvector` generated column을 씀 | FTS5는 가상 테이블을 만들고 청크가 바뀔 때마다 수동으로 `rebuild_fts5()`를 불러야 했는데, `GENERATED ALWAYS AS ... STORED` 컬럼은 INSERT/UPDATE마다 DB가 알아서 갱신해줘서 그 수동 재구축 로직 자체가 필요 없어짐 |
 
 ---
 
@@ -130,11 +159,19 @@ python3 -m rag.answer --aggregate   # 7단계: 여러 기술 종합 질문(우�
 - 8단계: 위 전체를 브라우저에서 눌러볼 수 있는 테스트 화면(`/rag-test.html`) 완성, 시장 수요를 자유 키워드에도 답할 수 있도록 하이브리드(임베딩+FTS5+LLM) 확장
 - 코드 리뷰 2회차(Codex)로 실제 버그 9건 발견·수정 — FTS5 색인이 오래돼 크래시 나던 문제, 동시 요청 시 DB 락, 자유 입력에 특수문자가 있으면 크래시, 프로필 데이터가 검색 결과를 오염시키던 문제 등(자세한 원인·수정 내역은 `docs/rag-project-plans/00_claude_handoff.md` 참고)
 
-**아직 안 된 것 (Plan B 이후)**
+**Plan B(PostgreSQL+pgvector) 1~4·6단계 완료**
 
-- PostgreSQL + pgvector로 저장소 이전, exact search vs HNSW 근사 검색 비교
+- 1단계(승계 확인): Plan A 평가 수치·모델 선택을 그대로 기준선으로 사용
+- 2단계(저장소 구축): `rag/postgres/`에 별도 저장소 구축 — 재색인 검증 결과가 SQLite와 전부 일치
+- 3단계(exact search+집계): pgvector exact search 결과가 SQLite 기준선과 소수점 둘째 자리까지 일치(포팅 정확성 확인)
+- 4단계(HNSW+RRF): `vector_1536`/`vector_1024` 컬럼 분리 후 HNSW partial index. 이 corpus(청크 194개)는 너무 작아 exact/HNSW recall이 동일(지연시간만 소폭 개선). RRF 하이브리드는 로직 동작 확인(단, 평가 자체는 순환논리라 배관 점검 수준 — `evaluate_hybrid.py` docstring 참고)
+- 6단계(Career Gap 답변+UI 전환): 실제 서비스 흐름(`routers/rag.py`)이 Postgres로 완전 전환. `CANDIDATE_EVIDENCE` 10/10, GP-01/GP-06/AC-06 집계 일치, 실제 API 호출로 end-to-end 확인
+
+**아직 안 된 것**
+
+- Plan B 5단계 — 증분 색인·운영(백업/복구)
 - 36개 평가 질문 중 나머지(집계·개인gap·행동계획·답변불가)의 확장 검증
-- `gap-check` 요청 자체의 지연시간 프로파일링(체감상 느림 — 병렬화 여지 있는 지점은 이미 파악됨)
+- `gap-check` 요청 자체의 지연시간 프로파일링, corpus 주제 균질성이 검색 변별력을 떨어뜨리는 근본 문제 — 둘 다 전체 개발 종료 후 별도 R&D로 지정(`docs/rag-project-plans/00_claude_handoff.md` "향후 탐색 아이디어" 참고)
 
 ---
 
