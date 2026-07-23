@@ -54,6 +54,14 @@ class Settings(BaseSettings):
     # 디스코드 알림 — Incoming Webhook URL, 비어 있으면 미전송
     discord_webhook_url: str = ""
 
+    # RAG 서브프로젝트(rag/main 브랜치) — 3050Ti 로컬 임베딩 추론 서버 SSH 접속 정보.
+    # main 브랜치엔 없는 값이라 비어 있어도 무방(LocalEmbeddingProvider 사용 시에만 필요).
+    rag_local_ssh_host: str = ""
+    rag_local_ssh_port: int = 10222
+    rag_local_ssh_user: str = ""
+    rag_local_ssh_key_path: str = ""
+    rag_local_embed_port: int = 8500
+
     # 데이터 루트 디렉토리 (Docker에서는 볼륨 마운트 경로)
     data_dir: Path = Path(__file__).parent.parent / "data"
 
