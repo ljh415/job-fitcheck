@@ -2,13 +2,26 @@
 공통 파이프라인, PostgreSQL판. `rag/embed/pipeline.py`의 포팅 — pgvector는 파이썬
 list[float]을 그대로 저장/조회하므로 BLOB pack/unpack이 필요 없다(`register_vector()`가
 `rag/postgres/db.py`에서 등록됨).
+
+`chunk_embedding`은 차원별로 컬럼이 나뉜다(`vector_1536`/`vector_1024`, HNSW 인덱싱을 위해
+고정 차원이 필요해서, Stage 4) — 이 provider가 어느 컬럼에 써야 하는지 `_VECTOR_COLUMN`으로
+결정한다.
 """
 import psycopg
 
 from rag.embed.base import EmbeddingProvider
 
+_VECTOR_COLUMN = {1536: "vector_1536", 1024: "vector_1024"}
+
 
 def run_embedding_pipeline(conn: psycopg.Connection, provider: EmbeddingProvider, source_type: str = "posting_raw") -> int:
+    column = _VECTOR_COLUMN.get(provider.dimensions)
+    if column is None:
+        raise ValueError(
+            f"{provider.provider_name}({provider.dimensions}차원)용 컬럼이 없음 — "
+            f"schema.py에 vector_{provider.dimensions} 컬럼과 HNSW 인덱스를 추가해야 함"
+        )
+
     rows = conn.execute(
         "SELECT dc.id, dc.text, dc.text_hash FROM document_chunk dc"
         " WHERE dc.source_type = %s"
@@ -33,7 +46,7 @@ def run_embedding_pipeline(conn: psycopg.Connection, provider: EmbeddingProvider
             )
     for (chunk_id, _, text_hash), vector in zip(rows, vectors):
         conn.execute(
-            "INSERT INTO chunk_embedding (chunk_id, provider, model, dimensions, vector, input_hash)"
+            f"INSERT INTO chunk_embedding (chunk_id, provider, model, dimensions, {column}, input_hash)"
             " VALUES (%s,%s,%s,%s,%s,%s)",
             (chunk_id, provider.provider_name, provider.model, provider.dimensions, vector, text_hash),
         )

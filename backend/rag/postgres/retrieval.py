@@ -3,10 +3,14 @@
 SQLite판은 벡터를 BLOB으로 저장해두고 파이썬에서 직접 코사인 유사도를 계산했지만,
 pgvector는 `<=>`(코사인 거리) 연산자로 정렬·상위 top_k 추출까지 SQL 안에서 끝낼 수
 있어 `_vector_from_blob`/`_cosine` 같은 헬퍼가 필요 없다.
+
+`chunk_embedding`은 차원별 컬럼(`vector_1536`/`vector_1024`)으로 나뉘어 있다(Stage 4, HNSW
+인덱싱을 위해 고정 차원이 필요해서) — `_VECTOR_COLUMN`으로 provider에 맞는 컬럼을 고른다.
 """
 import psycopg
 
 from rag.embed.base import EmbeddingProvider
+from rag.postgres.pipeline import _VECTOR_COLUMN
 
 
 def search_chunks(
@@ -18,23 +22,20 @@ def search_chunks(
 ) -> list[tuple[float, int, str]]:
     """질의를 provider로 임베딩해 청크 단위 코사인 유사도 상위 top_k를 반환한다.
     (score, chunk_id, chunk_text) 리스트, 점수 내림차순."""
+    column = _VECTOR_COLUMN[provider.dimensions]
     qvec = provider.embed_query(query)
+    source_filter = " AND dc.source_type = %s" if source_type else ""
+    params = (qvec, provider.provider_name, provider.model, provider.dimensions)
     if source_type:
-        rows = conn.execute(
-            "SELECT 1 - (ce.vector <=> %s::vector) AS score, ce.chunk_id, dc.text"
-            " FROM chunk_embedding ce JOIN document_chunk dc ON dc.id = ce.chunk_id"
-            " WHERE ce.provider = %s AND ce.model = %s AND ce.dimensions = %s AND dc.source_type = %s"
-            " ORDER BY ce.vector <=> %s::vector LIMIT %s",
-            (qvec, provider.provider_name, provider.model, provider.dimensions, source_type, qvec, top_k),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT 1 - (ce.vector <=> %s::vector) AS score, ce.chunk_id, dc.text"
-            " FROM chunk_embedding ce JOIN document_chunk dc ON dc.id = ce.chunk_id"
-            " WHERE ce.provider = %s AND ce.model = %s AND ce.dimensions = %s"
-            " ORDER BY ce.vector <=> %s::vector LIMIT %s",
-            (qvec, provider.provider_name, provider.model, provider.dimensions, qvec, top_k),
-        ).fetchall()
+        params += (source_type,)
+    params += (qvec, top_k)
+    rows = conn.execute(
+        f"SELECT 1 - (ce.{column} <=> %s::vector) AS score, ce.chunk_id, dc.text"
+        " FROM chunk_embedding ce JOIN document_chunk dc ON dc.id = ce.chunk_id"
+        f" WHERE ce.provider = %s AND ce.model = %s AND ce.dimensions = %s{source_filter}"
+        f" ORDER BY ce.{column} <=> %s::vector LIMIT %s",
+        params,
+    ).fetchall()
     return rows
 
 
