@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>RAG 테스트 — Job FitCheck</title>
+<link rel="stylesheet" href="/style.css" />
+<style>
+  body { max-width: 720px; margin: 40px auto; padding: 0 20px; }
+  .rag-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
+  .rag-header h2 { margin: 0; }
+  .rag-form { display: flex; gap: 8px; margin-bottom: 20px; }
+  .rag-form input[type="text"] { flex: 1 1 auto; width: auto; min-width: 0; padding: 10px 12px; border: 1px solid var(--border-input); border-radius: 6px; background: var(--bg-surface); color: var(--text); }
+  .rag-form select { flex: 0 0 auto; width: auto; padding: 10px 12px; border: 1px solid var(--border-input); border-radius: 6px; background: var(--bg-surface); color: var(--text); }
+  .rag-form button { padding: 10px 18px; border: none; border-radius: 6px; background: var(--primary); color: var(--text-inverse); cursor: pointer; }
+  .rag-form button:disabled { opacity: .6; cursor: default; }
+  .rag-result { border: 1px solid var(--border); border-radius: 8px; padding: 20px; background: var(--bg-surface); }
+  .rag-badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: .85em; font-weight: 600; }
+  .rag-badge.strong { background: #dcfce7; color: #166534; }
+  .rag-badge.partial { background: #fef9c3; color: #854d0e; }
+  .rag-badge.adjacent { background: #dbeafe; color: #1e40af; }
+  .rag-badge.none { background: #fee2e2; color: #991b1b; }
+  .rag-section { margin-top: 16px; }
+  .rag-section h4 { margin: 0 0 6px; color: var(--text-secondary); }
+  .rag-excerpt { font-size: .9em; color: var(--text-muted); border-left: 3px solid var(--border); padding-left: 10px; margin: 6px 0; }
+  .rag-error { color: #991b1b; background: #fee2e2; padding: 10px 14px; border-radius: 6px; }
+  .rag-note { font-size: .85em; color: var(--text-dimmed); margin-top: 24px; }
+</style>
+</head>
+<body>
+
+<div class="rag-header">
+  <h2>🧪 RAG 테스트</h2>
+  <button id="theme-toggle-btn" onclick="toggleTheme()" title="다크모드 전환">🌙</button>
+</div>
+
+<p class="rag-note">Plan A 6~7단계(Gap 판정 + 행동 계획) 파이프라인을 직접 호출하는 테스트 화면입니다. rag/main 브랜치 전용 — main 브랜치엔 없습니다.</p>
+
+<form class="rag-form" onsubmit="runGapCheck(event)">
+  <input type="text" id="skill-input" placeholder="기술/개념 (예: GCP, CI/CD, Kubernetes)" required />
+  <select id="provider-select">
+    <option value="google">Google</option>
+    <option value="local">Local</option>
+  </select>
+  <button type="submit" id="submit-btn">확인</button>
+</form>
+
+<div id="result"></div>
+
+<script>
+const saved = localStorage.getItem('job-fitcheck-theme');
+if (saved === 'dark') {
+  document.documentElement.setAttribute('data-theme', 'dark');
+  document.getElementById('theme-toggle-btn').textContent = '☀️';
+}
+function toggleTheme() {
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  const btn = document.getElementById('theme-toggle-btn');
+  if (isDark) {
+    document.documentElement.removeAttribute('data-theme');
+    btn.textContent = '🌙';
+    localStorage.setItem('job-fitcheck-theme', 'light');
+  } else {
+    document.documentElement.setAttribute('data-theme', 'dark');
+    btn.textContent = '☀️';
+    localStorage.setItem('job-fitcheck-theme', 'dark');
+  }
+}
+
+const LEVEL_CLASS = {
+  '직접 근거': 'strong',
+  '부분 근거': 'partial',
+  '인접 경험': 'adjacent',
+  '근거 없음': 'none',
+};
+
+async function runGapCheck(event) {
+  event.preventDefault();
+  const skill = document.getElementById('skill-input').value.trim();
+  const provider = document.getElementById('provider-select').value;
+  const btn = document.getElementById('submit-btn');
+  const resultEl = document.getElementById('result');
+  if (!skill) return;
+
+  btn.disabled = true;
+  btn.textContent = '확인 중...';
+  resultEl.innerHTML = '';
+
+  try {
+    const token = localStorage.getItem('job-fitcheck-token');
+    const res = await fetch('/api/rag/gap-check', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ skill, provider }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `요청 실패 (${res.status})`);
+    }
+    const data = await res.json();
+    render(data);
+  } catch (e) {
+    resultEl.innerHTML = `<div class="rag-error">${escapeHtml(e.message)}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '확인';
+  }
+}
+
+function render(data) {
+  const badgeClass = LEVEL_CLASS[data.evidence_level] || 'none';
+  const demand = data.market_demand;
+  let html = `
+    <div class="rag-result">
+      <h3>${escapeHtml(data.skill)} <span class="rag-badge ${badgeClass}">${escapeHtml(data.evidence_level)}</span></h3>
+      <div class="rag-section">
+        <h4>시장 수요 ${demand.method === 'exact' ? '' : '<span class="rag-badge partial">추정치</span>'}</h4>
+        <p>${demand.method === 'exact'
+          ? `전체 공고 ${demand.total}건 중 ${demand.matched}건 요구 (${(demand.ratio * 100).toFixed(1)}%)`
+          : `약 ${demand.matched}건 / 전체 ${demand.total}건 (${(demand.ratio * 100).toFixed(1)}%) — 임베딩+키워드 검색으로 모은 후보 ${demand.candidate_count ?? '?'}건 중 LLM이 판정한 추정치입니다. 정확한 전수 집계가 아닙니다.`}</p>
+      </div>
+      <div class="rag-section">
+        <h4>판정 근거</h4>
+        <p>${escapeHtml(data.reasoning)}</p>
+      </div>
+  `;
+  if (data.excerpts && data.excerpts.length) {
+    html += `<div class="rag-section"><h4>검색된 프로필 발췌문 (${data.excerpts.length}건)</h4>`;
+    for (const e of data.excerpts) {
+      html += `<div class="rag-excerpt">${escapeHtml(e)}</div>`;
+    }
+    html += `</div>`;
+  }
+  if (data.action_plan) {
+    const ap = data.action_plan;
+    html += `
+      <div class="rag-section">
+        <h4>행동 계획</h4>
+        <p><strong>활동:</strong> ${escapeHtml(ap.activity)}</p>
+        <p><strong>남길 증거:</strong> ${escapeHtml(ap.evidence_to_produce)}</p>
+        <p><strong>완료 조건:</strong> ${escapeHtml(ap.completion_criteria)}</p>
+      </div>
+    `;
+  }
+  html += `<p class="rag-note">provider: ${escapeHtml(data.provider)}</p></div>`;
+  document.getElementById('result').innerHTML = html;
+}
+
+function escapeHtml(s) {
+  const div = document.createElement('div');
+  div.textContent = s ?? '';
+  return div.innerHTML;
+}
+</script>
+
+</body>
+</html>

@@ -7,6 +7,7 @@ FastAPI 앱 진입점.
   - routers/profile.py   — 후보자 프로필 (PDF 업로드 → LLM 추출)
   - routers/companies.py — 회사 CRUD, 회사 추가 파이프라인, 주간 요약
   - routers/qa.py        — Q&A (SSE 스트리밍)
+  - routers/rag.py       — RAG 서브프로젝트 테스트 화면용 (rag/main 전용, main엔 없음)
 """
 import asyncio
 import logging
@@ -18,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 
 import auth
 from config import ensure_dirs
-from routers import companies, profile, qa
+from routers import companies, profile, qa, rag
 from routers import settings as settings_router
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -42,6 +43,7 @@ app.include_router(settings_router.router)
 app.include_router(profile.router)
 app.include_router(companies.router)
 app.include_router(qa.router)
+app.include_router(rag.router)  # RAG 서브프로젝트(rag/main 전용) 테스트 화면용 — main 브랜치엔 없음
 
 # Docker 배포 시에는 nginx가 frontend/를 서빙하므로 이미지 안에 frontend/가 없다(Dockerfile 참고).
 # uv 등으로 로컬에서 직접 실행할 때만 frontend/가 실제로 존재하므로, 있을 때만 마운트해
