@@ -19,20 +19,30 @@ Job FitCheck가 이미 모아둔 채용공고 데이터와 본인 프로필을 �
 
 ---
 
-## 2. 지금까지 만든 것 (Plan A 2~3단계)
+## 2. 지금까지 만든 것 (Plan A 1~8단계 전체 완료)
 
 ### 전체 흐름
 
 ```
-data/companies/*.raw.txt (공고 원문 70개)
+data/companies/*.raw.txt (공고 원문 70건) + data/candidate_profile.md (후보자 프로필)
         │
         ▼  [2단계] 정확한 기술명이 몇 건씩 있는지 집계
    posting, posting_skill, candidate_evidence 테이블 (data/rag.db)
         │
-        ▼  [3단계] 문단 단위로 자르고(청킹) → Google API로 벡터화(임베딩)
+        ▼  [3~4단계] 문단 단위로 자르고(청킹) → Google/로컬 두 provider로 벡터화(임베딩)
    document_chunk, chunk_embedding 테이블 (같은 data/rag.db)
         │
-        ▼  (아직 안 만듦) 질문을 벡터로 바꿔서 가장 비슷한 청크 찾기 = 검색
+        ▼  [5단계] 질문을 벡터로 바꿔서 가장 비슷한 청크 찾기 = 검색 (FTS5·Google·Local 비교)
+   evaluate.py — Precision@5/Recall@10 정식 평가
+        │
+        ▼  [6단계] 검색 근거 + 프로필을 놓고 "직접근거/부분근거/인접경험/근거없음" 판정
+   gap.py — 시장 수요(SQL)·근거 검색(임베딩)·판정(LLM) 3단 분리
+        │
+        ▼  [7단계] 판정 결과를 근거 설명 + 구체적 행동 계획으로
+   answer.py — GP-01/GP-06/AC-06 스타일 집계 질문까지 지원
+        │
+        ▼  [UI] 실제로 눌러보면서 확인
+   routers/rag.py + frontend/rag-test.html — POST /api/rag/gap-check
 ```
 
 `data/rag.db`는 SQLite 파일 하나입니다. 텍스트 파일(`.raw.txt`)이 "원본 진실"이고, 이 db 파일은 언제든 원본에서 다시 만들어낼 수 있는 "캐시/색인"이라고 생각하면 됩니다.
@@ -41,17 +51,28 @@ data/companies/*.raw.txt (공고 원문 70개)
 
 ```
 backend/rag/
-├── schema.py          — db에 어떤 표(테이블)들이 있는지 정의
-├── skills.py           — "지금 이 데이터셋"에서 추적할 기술 목록 + 정답지 (아래 4번 설명 참고)
-├── ingest.py           — 공고 70개를 읽어서 posting/posting_skill 테이블에 채워넣는 스크립트
-├── verify_step2.py      — 2단계가 제대로 됐는지 자동으로 채점하는 스크립트
-├── chunking.py          — 긴 텍스트를 작은 조각(청크)으로 자르는 규칙
-├── chunks.py            — 공고들을 청킹해서 document_chunk 테이블에 채워넣는 스크립트
-├── run_embedding.py      — ★ 실제로 실행하는 진입점. `python3 -m rag.run_embedding --provider google`
+├── schema.py            — db에 어떤 표(테이블)들이 있는지 정의
+├── skills.py             — "지금 이 데이터셋"에서 추적할 기술 목록 + 정답지 (아래 4번 설명 참고)
+├── ingest.py             — 공고 70개를 읽어서 posting/posting_skill 테이블에 채워넣는 스크립트
+├── verify_step2.py       — 2단계가 제대로 됐는지 자동으로 채점하는 스크립트
+├── chunking.py           — 긴 텍스트를 작은 조각(청크)으로 자르는 규칙
+├── chunks.py             — 공고·프로필을 청킹해서 document_chunk 테이블에 채워넣는 스크립트(청크가
+│                           바뀔 때만 FTS5 검색 인덱스도 같이 최신화)
+├── retrieval.py          — 청크 단위 벡터 검색 + FTS5 검색 공용 유틸(여러 파일이 같이 씀)
+├── run_embedding.py      — ★ 임베딩 실행 진입점. `python3 -m rag.run_embedding --provider google`
+├── evaluate.py           — 5단계: FTS5/Google/Local 검색 품질 비교 평가
+├── gap.py                — 6단계: Gap 판정 + 시장수요 계산(고정 기술은 정확 매칭, 자유 키워드는 하이브리드 추정)
+├── answer.py             — 7단계: 근거 설명 + 행동 계획 생성, 여러 기술 종합 질문(GP-01/06/AC-06) 지원
+├── CHANGELOG.md          — rag/main 전용 버전 이력(rag-v0.x.0, main의 CHANGELOG.md와 별개)
 └── embed/
-    ├── base.py           — "임베딩 provider는 이런 기능이 있어야 한다"는 공통 규격
-    ├── google.py          — Google(gemini-embedding-2)로 구현한 것
-    └── pipeline.py         — provider가 뭐든 상관없이 "아직 임베딩 안 된 것만 찾아서 처리"하는 공통 로직
+    ├── base.py             — "임베딩 provider는 이런 기능이 있어야 한다"는 공통 규격
+    ├── google.py            — Google(gemini-embedding-2)로 구현한 것
+    ├── local.py             — 3050Ti에 SSH 터널로 접속하는 로컬 provider
+    ├── inference_server.py  — 3050Ti에서 실제로 도는 FastAPI 추론 서버
+    └── pipeline.py          — provider가 뭐든 상관없이 "아직 임베딩 안 된 것만 찾아서 처리"하는 공통 로직
+
+backend/routers/rag.py     — RAG 테스트 UI용 API(POST /api/rag/gap-check, provider 선택 가능)
+frontend/rag-test.html     — 브라우저에서 직접 눌러볼 수 있는 테스트 화면
 ```
 
 ### 지금 실행하면 어떻게 되는지
@@ -60,10 +81,15 @@ backend/rag/
 cd backend
 python3 -m rag.ingest              # 2단계: 공고 데이터 정리 (한 번만 하면 됨)
 python3 -m rag.verify_step2        # 2단계가 맞게 됐는지 채점 (17개 항목 전부 통과해야 정상)
-python3 -m rag.run_embedding --provider google   # 3단계: Google로 임베딩
+python3 -m rag.run_embedding --provider google   # Google로 임베딩
+python3 -m rag.run_embedding --provider local    # 로컬(3050Ti)로 임베딩 — SSH 연결 필요
+python3 -m rag.evaluate             # 5단계: 검색 품질 정식 평가
+python3 -m rag.gap                  # 6단계: Gap 판정 검증(정답지 10개 기준)
+python3 -m rag.answer               # 7단계: 실제 gap(GCP/CI-CD/IaC)에 대한 리포트 생성
+python3 -m rag.answer --aggregate   # 7단계: 여러 기술 종합 질문(우선순위·강점·순서계획) 생성
 ```
 
-`run_embedding`은 **내용이 안 바뀐 공고는 건드리지 않습니다.** 처음 실행하면 공고 70개를 잘라서 만든 청크 183개를 전부 Google API에 보내 벡터로 바꾸고, 그다음부터는 새로 추가되거나 수정된 공고만 다시 처리합니다(안 그러면 실행할 때마다 비용/시간이 계속 낭비되기 때문).
+`run_embedding`은 **내용이 안 바뀐 공고는 건드리지 않습니다.** 처음 실행하면 청크를 전부 API에 보내 벡터로 바꾸고, 그다음부터는 새로 추가되거나 수정된 공고만 다시 처리합니다(안 그러면 실행할 때마다 비용/시간이 계속 낭비되기 때문). 브라우저로 직접 확인하고 싶으면 `docker compose -f docker-compose.dev.yml up --build -d` 후 `http://localhost:8100/rag-test.html`(dev 기준)에서 기술/개념을 입력하고 provider를 골라보면 됩니다.
 
 ---
 
@@ -71,35 +97,44 @@ python3 -m rag.run_embedding --provider google   # 3단계: Google로 임베딩
 
 | 결정 | 이유 |
 |---|---|
-| `chunk_embedding` 테이블에 `provider`/`model`/`dimensions`를 같이 저장 | Google·로컬·OpenAI를 나중에 다 비교해볼 거라서, 한 테이블에 다 넣되 서로 섞이지 않게 구분해둠 |
-| 개인 프로필은 아직 임베딩 안 함 (공고만 먼저) | Google 무료 티어는 입력 데이터가 구글 제품 개선에 쓰일 수 있어서, 개인정보(이력서)는 안 보내기로 함. 프로필은 나중에 본인 컴퓨터(로컬)에서만 임베딩할 예정 |
-| `EmbeddingProvider`라는 공통 규격(클래스)을 만듦 | Google/로컬/OpenAI 각각 API 호출 방식이 다르지만, 그 위(청킹, 저장, 검색)는 어떤 provider든 똑같이 동작하게 하려고. `llm/` 폴더에 이미 있는 패턴(Claude/OpenAI/Gemini 채팅 provider들)과 같은 방식 |
-| `skills.py`의 스킬 목록·근거 판정은 "정답지"이지 실제 서비스 로직이 아님 | 지금은 검색이 잘 되는지 채점하려고 사람이 직접 확인해서 만든 기준값. 나중에 실제 서비스가 되면 이미 있는 LLM 추출 기능(공고별 `tech_stack` 등)과 임베딩 기반 자동 판정으로 대체될 예정 |
+| `chunk_embedding` 테이블에 `provider`/`model`/`dimensions`를 같이 저장 | Google·로컬·OpenAI를 다 비교해볼 거라서, 한 테이블에 다 넣되 서로 섞이지 않게 구분해둠 |
+| 개인 프로필은 Google **무료 티어**엔 안 보냄 | 무료 티어는 입력 데이터가 구글 제품 개선에 쓰일 수 있어서. 유료 티어(사용자가 명시적으로 키 전환)나 로컬 provider로는 프로필도 임베딩함 |
+| `EmbeddingProvider`라는 공통 규격(클래스)을 만듦 | Google/로컬/OpenAI 각각 API 호출 방식이 다르지만, 그 위(청킹, 저장, 검색)는 어떤 provider든 똑같이 동작하게 하려고. `llm/` 폴더에 이미 있는 패턴(Claude/OpenAI/Gemini 채팅 provider들)과 같은 방식 — 단, "하나만 골라 쓰는" 라우터는 없음(RAG는 여러 provider를 나란히 비교하는 게 목적이라 일부러 안 만듦) |
+| 로컬 임베딩 모델을 5개나 실제로 다 돌려봄(`Alibaba-NLP/gte-multilingual-base` → `intfloat/multilingual-e5-base` → `BAAI/bge-m3` → `jinaai/jina-embeddings-v5-text-small` → `jhgan/ko-sroberta-multitask`) | 모델 카드 평판이나 "한국어니까 한국어 전용 모델이 유리하겠지"같은 직관을 그대로 믿지 않고, 매번 실제 검색 성능(Precision@5/Recall@10)을 측정해서 골랐음. 결과적으로 최종 채택된 Jina는 원래 3번째 후보였고, 한국어 전용 모델(ko-sroberta)은 오히려 가장 낮은 점수가 나옴 — "직관이 항상 맞진 않는다"를 직접 확인한 사례 |
+| 시장 수요(이 기술을 몇 %의 공고가 요구하는지)를 13개 고정 기술은 정확 매칭, 그 외 자유 키워드는 임베딩+FTS5+LLM 판정으로 다르게 계산 | 순수 임베딩 유사도만으로는 "이 corpus에서 관련 있음/없음"을 구분 못 한다는 게 실측으로 확인됨(전혀 다른 빈도의 기술인 Redis(3건)와 Python(40건)이 유사도 분포는 거의 같았음 — 비슷한 직군 공고들끼리 도메인 어휘가 겹쳐서 생기는 현상). 그래서 후보를 넉넉히 모으고 LLM이 실제 내용을 읽고 판정하는 방식으로 대체 |
+| `skills.py`의 스킬 목록·근거 판정은 "정답지"이지 실제 서비스 로직이 아님 | 지금은 검색이 잘 되는지 채점하려고 사람이 직접 확인해서 만든 기준값. 다만 이 "동의어 범위" 데이터는 6단계 Gap 판정 LLM에게 참고 정보로 전달하는 용도로도 재활용됨(아래 5번 참고) |
 
 ---
 
 ## 4. 알아두면 좋은 개념 설명
 
 - **청크(chunk)**: 공고 원문 하나를 통째로 벡터화하면 여러 주제(회사소개+자격요건+복지 등)가 섞여서 검색이 부정확해집니다. 그래서 문단 단위로 잘라서(최대 1,200자) 여러 개의 작은 조각으로 만들고, 각 조각마다 따로 벡터를 만듭니다.
-- **벡터/차원**: 임베딩 결과는 숫자 1536개짜리 목록입니다("차원 1536"). 숫자가 많을수록 더 정밀하지만 저장 공간과 계산량이 늘어납니다.
+- **벡터/차원**: 임베딩 결과는 숫자 목록입니다("차원 N개") — Google은 1536, 로컬(Jina)은 1024. 숫자가 많을수록 더 정밀하지만 저장 공간과 계산량이 늘어납니다.
 - **코사인 유사도**: 벡터 두 개가 "같은 방향"을 가리키는 정도(0~1, 1이 완전히 같은 방향). 이걸로 "질문과 가장 비슷한 공고"를 찾습니다.
-- **문서용/질의용 구분(task_type)**: Google 임베딩은 "이건 저장할 문서야"와 "이건 검색 질문이야"를 다르게 인코딩합니다. 같은 내용이라도 용도별로 다르게 벡터화해야 검색이 더 정확해진다고 해서 그렇게 구분해뒀습니다.
+- **문서용/질의용 구분(비대칭 인코딩)**: 임베딩 모델은 "이건 저장할 문서야"와 "이건 검색 질문이야"를 다르게 인코딩하는 경우가 많습니다. Google은 텍스트 앞에 `title:`/`task:` 같은 prefix를 붙이는 방식, 로컬(Jina)은 `encode(..., task="retrieval", prompt_name="document"/"query")`처럼 API 파라미터로 구분하는 방식 — **모델마다 방식이 완전히 다릅니다.** `embed/inference_server.py`에 모델 계열별 분기(`_family_for()`)가 있는 이유가 이겁니다.
 - **provider**: 임베딩을 만들어주는 주체(Google API, OpenAI API, 내 컴퓨터에서 돌리는 오픈소스 모델). 서로 다른 provider가 만든 벡터는 "다른 지도" 위의 좌표라서 섞어서 비교하면 안 됩니다.
+- **키워드 검색(FTS5) vs 임베딩 검색, 그리고 하이브리드**: FTS5는 정확한 단어가 원문에 있어야만 찾고, 동의어(K8s vs Kubernetes)는 놓칩니다. 임베딩은 의미가 비슷하면 찾지만, 이 프로젝트의 corpus(비슷한 직군 공고들)에서는 "얼마나 자주 언급되는지"를 구분하는 용도로는 약하다는 게 실측으로 드러났습니다(5번 참고). 그래서 "후보를 넓게 모으는 건 두 방식을 같이 쓰고, 최종 판단은 LLM이 실제 내용을 읽고 한다"는 하이브리드 구조를 쓰게 됐습니다.
+- **Gap 판정에서 "기능적 동일성" 원칙**: 어떤 기술의 근거가 있는지 판정할 때, "정확히 그 단어가 등장하는가"가 아니라 "발췌문의 경험이 대상 개념과 실제로 같은 기능을 수행하는가"를 봅니다(예: Ansible은 "인프라 자동화"라는 큰 틀에서는 같지만 "IaC 프로비저닝"이라는 좁은 의미에서는 다른 기능이라 인접 경험으로 판정). 이 경계를 프롬프트에 사례로 못박는 대신, `skills.py`에 이미 정의된 동의어 범위 데이터를 판정 시점에 참고 정보로 전달하는 방식으로 풀었습니다 — 하드코딩 없이 일반화된 규칙을 유지하면서도 실제로는 정확한 경계를 전달할 수 있는 방법.
 
 ---
 
 ## 5. 지금까지 검증한 것 / 아직 안 된 것
 
-**검증 완료**
-- 2단계: 공고 70건에서 실제로 특정 기술(FastAPI, Python, Docker 등)이 몇 건씩 있는지 grep으로 직접 세어본 값과 코드 결과가 정확히 일치(17개 항목)
-- 3단계: 183개 청크 전부 임베딩 완료, "FastAPI 백엔드 경험 있는 회사" 같은 질문을 벡터로 만들어서 가장 비슷한 공고를 찾아보니 실제로 관련 있는 회사들이 정확히 나옴(의미 기반 검색이 실제로 동작함을 확인)
-- 재실행해도 안 바뀐 공고는 다시 임베딩하지 않는 것까지 확인
+**Plan A(1~8단계) 전부 완료**
 
-**아직 안 된 것**
-- 4단계: 로컬 컴퓨터(GPU)로 직접 임베딩 모델을 돌려보는 것 — 아직 미착수 (다음 단계)
-- 5단계: 36개 평가 질문 전체로 "검색이 얼마나 정확한지" 점수 매기는 정식 평가 — 아직 안 함(지금은 질문 하나로 맛보기만 확인)
-- 개인 프로필 임베딩 — 아직 안 함(로컬 임베딩 되고 나서 진행 예정)
-- 실제로 "질문 → 검색 → LLM이 답변 생성"까지 이어지는 전체 파이프라인 — 아직 검색까지만 됨, 답변 생성은 더 뒤 단계
+- 2단계: 공고 70건에서 실제로 특정 기술이 몇 건씩 있는지 grep으로 직접 세어본 값과 코드 결과가 정확히 일치(17개 항목)
+- 3~4단계: Google(`gemini-embedding-2`)과 로컬(`jinaai/jina-embeddings-v5-text-small`, 3050Ti GPU) 두 provider로 공고+프로필 임베딩 완료. 로컬 모델은 5개를 실제로 비교(2번 후보였던 `multilingual-e5-base`, `BAAI/bge-m3`, 한국어 전용 `ko-sroberta-multitask`까지 다 시도)해서 최종 선정
+- 5단계: 36개 평가 질문 중 12개(정확 기술명+동의어)로 FTS5/Google/Local 정식 비교 — FTS5가 정확 기술명은 최강(P@5 0.75), 동의어는 원문과 표기가 다르면 0까지 하락. Local(Jina)이 Recall@10(0.42)은 FTS5·Google도 능가
+- 6단계: Gap 판정을 정답지(`CANDIDATE_EVIDENCE` 10개 기술)로 검증 — **10/10 전부 일치**. 여러 기술을 종합하는 질문(우선순위 gap 랭킹, 전체 강점 요약, 순서 계획)도 지원
+- 7단계: 실제 gap(GCP, CI/CD, IaC)에 대해 막연하지 않은 구체적 행동 계획(활동+증거+완료조건) 생성 확인
+- 8단계: 위 전체를 브라우저에서 눌러볼 수 있는 테스트 화면(`/rag-test.html`) 완성, 시장 수요를 자유 키워드에도 답할 수 있도록 하이브리드(임베딩+FTS5+LLM) 확장
+- 코드 리뷰 2회차(Codex)로 실제 버그 9건 발견·수정 — FTS5 색인이 오래돼 크래시 나던 문제, 동시 요청 시 DB 락, 자유 입력에 특수문자가 있으면 크래시, 프로필 데이터가 검색 결과를 오염시키던 문제 등(자세한 원인·수정 내역은 `docs/rag-project-plans/00_claude_handoff.md` 참고)
+
+**아직 안 된 것 (Plan B 이후)**
+
+- PostgreSQL + pgvector로 저장소 이전, exact search vs HNSW 근사 검색 비교
+- 36개 평가 질문 중 나머지(집계·개인gap·행동계획·답변불가)의 확장 검증
+- `gap-check` 요청 자체의 지연시간 프로파일링(체감상 느림 — 병렬화 여지 있는 지점은 이미 파악됨)
 
 ---
 
