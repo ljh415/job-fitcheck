@@ -1,13 +1,13 @@
 """RAG 서브프로젝트(rag/main 전용) 테스트 화면용 API.
 
-Plan A(6~7단계) 파이프라인(`rag/gap.py`, `rag/answer.py`)을 그대로 호출한다 — 이 라우터는
+Plan B 6단계(`rag/postgres/gap.py`, `rag/postgres/answer.py`)를 그대로 호출한다 — 이 라우터는
 얇은 wrapper일 뿐, 로직은 전부 rag/ 안에 있다. provider(google/local)를 요청마다 선택할 수
 있게 해서, "provider 하나로 고정하지 않고 비교한다"는 Plan A 설계 원칙을 UI에서도 유지한다.
+저장소는 PostgreSQL+pgvector 전용(SQLite `rag/gap.py`는 Plan A 기준선 재현용으로만 남아있고
+이 서비스 경로에선 더 이상 안 씀 — Stage 6에서 전환).
 
 main 브랜치엔 없는 라우터 — rag/main 전용.
 """
-import sqlite3
-
 import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -15,8 +15,8 @@ from pydantic import BaseModel
 from rag.answer import generate_action_plan
 from rag.embed.google import GoogleEmbeddingProvider
 from rag.embed.local import LocalEmbeddingProvider
-from rag.gap import assess_gap
-from rag.ingest import DB_PATH
+from rag.postgres.db import get_connection
+from rag.postgres.gap import assess_gap
 
 router = APIRouter(prefix="/api/rag")
 
@@ -31,7 +31,7 @@ async def gap_check(req: GapCheckRequest):
     if req.provider not in ("google", "local"):
         raise HTTPException(400, "provider는 'google' 또는 'local'만 가능합니다")
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_connection()
     embed_provider = None
     try:
         # provider 생성도 try 안에서 해야 SSH 터널/모델 검증 실패(RuntimeError)가 503으로
