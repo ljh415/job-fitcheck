@@ -12,8 +12,10 @@ from rag.embed.base import EmbeddingProvider
 from rag.embed.google import GoogleEmbeddingProvider
 from rag.embed.local import LocalEmbeddingProvider
 from rag.postgres.chunks import populate_candidate_profile_chunks, populate_posting_chunks, prune_deleted_postings
+from rag.postgres.db import get_connection
 from rag.postgres.ingest import run as ingest_run
 from rag.postgres.pipeline import run_embedding_pipeline
+from rag.postgres.schema import rebuild_schema
 
 PROVIDERS: dict[str, type[EmbeddingProvider]] = {
     "google": GoogleEmbeddingProvider,
@@ -21,15 +23,38 @@ PROVIDERS: dict[str, type[EmbeddingProvider]] = {
 }
 
 
-def run(provider_name: str, include_profile: bool) -> None:
+def run(provider_name: str, include_profile: bool, rebuild_schema_flag: bool = False) -> None:
     if provider_name not in PROVIDERS:
         raise ValueError(f"알 수 없는 provider: {provider_name} (선택 가능: {list(PROVIDERS)})")
+
+    if rebuild_schema_flag:
+        # `CREATE TABLE IF NOT EXISTS`는 기존 테이블에 새 컬럼을 안 추가해준다 — 스키마가
+        # 바뀌었을 때(Stage 2→4→6처럼)는 드롭 후 재생성이 필요하다(Codex 리뷰로 발견, 2026-07-23).
+        schema_conn = get_connection()
+        rebuild_schema(schema_conn)
+        schema_conn.close()
+        print("스키마 재생성 완료(기존 데이터 전부 삭제됨)")
 
     conn = ingest_run()  # 스키마 생성 + posting/posting_skill/skill_alias/candidate_evidence 적재
     n_pruned = prune_deleted_postings(conn)  # 원문이 삭제된 posting의 고아 청크/임베딩 정리
     if n_pruned:
         print(f"삭제된 공고 {n_pruned}건의 청크/임베딩 정리 완료")
     n_touched, n_chunks = populate_posting_chunks(conn)
+    if n_touched:
+        # 청크가 바뀌면 그 청크의 모든 provider 임베딩이 삭제되는데(document_chunk가 새 id로
+        # 재생성되므로), 이 실행에서는 provider_name 하나만 다시 채운다 — 이미 다른 provider로
+        # 임베딩해둔 게 있었다면 그 provider는 이 공고들에 대해 비어있는 채로 남는다(Codex
+        # 리뷰로 발견, 2026-07-23 — 실측으로 재현 확인됨).
+        other_providers = sorted(
+            {p for (p,) in conn.execute("SELECT DISTINCT provider FROM chunk_embedding").fetchall()}
+            - {provider_name}
+        )
+        if other_providers:
+            print(
+                f"주의: 내용이 바뀐 공고 {n_touched}건의 청크가 재생성돼, 그 청크들의"
+                f" {', '.join(other_providers)} 임베딩이 사라졌습니다 — 검색 결과에서 빠지지"
+                f" 않으려면 해당 provider로도 재색인을 실행하세요."
+            )
     provider = PROVIDERS[provider_name]()
     try:
         n_embedded = run_embedding_pipeline(conn, provider)
@@ -55,5 +80,9 @@ if __name__ == "__main__":
         "--include-profile", action="store_true",
         help="후보자 프로필도 같이 임베딩(기본 꺼짐 — Google 무료 티어에는 쓰지 말 것)",
     )
+    parser.add_argument(
+        "--rebuild-schema", action="store_true",
+        help="RAG 테이블을 전부 지우고 스키마를 새로 만든 뒤 재색인(schema.py 변경 후 사용, 기존 데이터 전부 삭제됨)",
+    )
     args = parser.parse_args()
-    run(args.provider, args.include_profile)
+    run(args.provider, args.include_profile, args.rebuild_schema)

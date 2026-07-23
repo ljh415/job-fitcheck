@@ -74,10 +74,37 @@ CREATE TABLE IF NOT EXISTS chunk_embedding (
     vector_1536 vector(1536),
     vector_1024 vector(1024),
     input_hash TEXT NOT NULL,
-    UNIQUE (chunk_id, provider, model, dimensions)
+    UNIQUE (chunk_id, provider, model, dimensions),
+    -- dimensions와 실제 채워진 컬럼이 어긋나는 행(둘 다 NULL, 둘 다 채워짐, 차원 불일치)을
+    -- 막는다 — 지금 파이프라인은 항상 올바르게 쓰지만 복구·수동 적재 실수를 막는 안전장치
+    -- (Codex 리뷰로 발견, 2026-07-23).
+    CONSTRAINT chunk_embedding_dimension_check CHECK (
+        (dimensions = 1536 AND vector_1536 IS NOT NULL AND vector_1024 IS NULL) OR
+        (dimensions = 1024 AND vector_1024 IS NOT NULL AND vector_1536 IS NULL)
+    )
 );
 CREATE INDEX IF NOT EXISTS idx_chunk_embedding_hnsw_1536 ON chunk_embedding
     USING hnsw (vector_1536 vector_cosine_ops) WHERE vector_1536 IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_chunk_embedding_hnsw_1024 ON chunk_embedding
     USING hnsw (vector_1024 vector_cosine_ops) WHERE vector_1024 IS NOT NULL;
 """
+
+# `CREATE TABLE IF NOT EXISTS`는 기존 테이블에 새 컬럼을 추가해주지 않는다 — Stage 2→4→6
+# 마다 chunk_embedding/document_chunk 구조가 바뀔 때 매번 수동으로 테이블을 드롭해야 했다
+# (Codex 리뷰로 지적, 2026-07-23). 원본(.raw.txt 등)에서 언제든 재색인 가능한 파생 저장소이므로
+# migration 대신 이 함수로 전부 지우고 SCHEMA_SQL을 다시 실행하는 쪽이 더 단순하다.
+DROP_ALL_SQL = """
+DROP TABLE IF EXISTS chunk_embedding;
+DROP TABLE IF EXISTS document_chunk;
+DROP TABLE IF EXISTS candidate_evidence;
+DROP TABLE IF EXISTS skill_alias;
+DROP TABLE IF EXISTS posting_skill;
+DROP TABLE IF EXISTS posting;
+"""
+
+
+def rebuild_schema(conn) -> None:
+    """RAG 관련 테이블을 전부 지우고 SCHEMA_SQL로 새로 만든다 — `--rebuild-schema`에서만 호출."""
+    conn.execute(DROP_ALL_SQL)
+    conn.execute(SCHEMA_SQL)
+    conn.commit()
