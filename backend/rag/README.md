@@ -19,7 +19,7 @@ Job FitCheck가 이미 모아둔 채용공고 데이터와 본인 프로필을 �
 
 ---
 
-## 2. 지금까지 만든 것 (Plan A 1~8단계 + Plan B 1~4·6단계 완료)
+## 2. 지금까지 만든 것 (Plan A 1~8단계 + Plan B 1~6단계 전체 완료)
 
 ### 전체 흐름
 
@@ -87,7 +87,8 @@ backend/rag/postgres/
 │                       partial index, `document_chunk.text_tsv`(tsvector generated column) + GIN 인덱스)
 ├── db.py             — 연결 헬퍼(psycopg + pgvector 타입 등록)
 ├── ingest.py          — SQLite `ingest.py` 포팅
-├── chunks.py          — SQLite `chunks.py` 포팅(FTS5 rebuild 호출 없음 — generated column이 자동 갱신)
+├── chunks.py          — SQLite `chunks.py` 포팅(FTS5 rebuild 호출 없음 — generated column이 자동 갱신).
+│                       `prune_deleted_postings()`(5단계) — 원문 삭제된 posting의 고아 청크/임베딩 정리
 ├── pipeline.py        — SQLite `embed/pipeline.py` 포팅(provider 차원별 컬럼에 저장)
 ├── retrieval.py       — pgvector `<=>` 연산자로 SQL 안에서 정렬까지 끝냄(BLOB pack/unpack 불필요)
 ├── fts.py             — Postgres 전문검색(`websearch_to_tsquery`) — SQLite `fts5_literal()`류 이스케이프 불필요
@@ -159,17 +160,18 @@ python3 -m rag.answer --aggregate   # 7단계: 여러 기술 종합 질문(우�
 - 8단계: 위 전체를 브라우저에서 눌러볼 수 있는 테스트 화면(`/rag-test.html`) 완성, 시장 수요를 자유 키워드에도 답할 수 있도록 하이브리드(임베딩+FTS5+LLM) 확장
 - 코드 리뷰 2회차(Codex)로 실제 버그 9건 발견·수정 — FTS5 색인이 오래돼 크래시 나던 문제, 동시 요청 시 DB 락, 자유 입력에 특수문자가 있으면 크래시, 프로필 데이터가 검색 결과를 오염시키던 문제 등(자세한 원인·수정 내역은 `docs/rag-project-plans/00_claude_handoff.md` 참고)
 
-**Plan B(PostgreSQL+pgvector) 1~4·6단계 완료**
+**Plan B(PostgreSQL+pgvector) 1~6단계 전체 완료**
 
 - 1단계(승계 확인): Plan A 평가 수치·모델 선택을 그대로 기준선으로 사용
 - 2단계(저장소 구축): `rag/postgres/`에 별도 저장소 구축 — 재색인 검증 결과가 SQLite와 전부 일치
 - 3단계(exact search+집계): pgvector exact search 결과가 SQLite 기준선과 소수점 둘째 자리까지 일치(포팅 정확성 확인)
 - 4단계(HNSW+RRF): `vector_1536`/`vector_1024` 컬럼 분리 후 HNSW partial index. 이 corpus(청크 194개)는 너무 작아 exact/HNSW recall이 동일(지연시간만 소폭 개선). RRF 하이브리드는 로직 동작 확인(단, 평가 자체는 순환논리라 배관 점검 수준 — `evaluate_hybrid.py` docstring 참고)
+- 5단계(증분 색인·운영): 공고 원문 삭제 시 청크/임베딩이 고아로 남는 버그 발견·수정(`prune_deleted_postings()`). 증분 재임베딩·실패 재처리·모델 버전 전환은 기존 코드로 이미 충족(실제 시나리오로 검증만). `pg_dump`/`pg_restore` 백업·복구 실측 확인
 - 6단계(Career Gap 답변+UI 전환): 실제 서비스 흐름(`routers/rag.py`)이 Postgres로 완전 전환. `CANDIDATE_EVIDENCE` 10/10, GP-01/GP-06/AC-06 집계 일치, 실제 API 호출로 end-to-end 확인
 
 **아직 안 된 것**
 
-- Plan B 5단계 — 증분 색인·운영(백업/복구)
+- Plan C(`docs/rag-project-plans/03_vector_graph_rag.md`) — Qdrant·reranker·GraphRAG 비교 실험, 착수 여부 미결정
 - 36개 평가 질문 중 나머지(집계·개인gap·행동계획·답변불가)의 확장 검증
 - `gap-check` 요청 자체의 지연시간 프로파일링, corpus 주제 균질성이 검색 변별력을 떨어뜨리는 근본 문제 — 둘 다 전체 개발 종료 후 별도 R&D로 지정(`docs/rag-project-plans/00_claude_handoff.md` "향후 탐색 아이디어" 참고)
 
