@@ -94,6 +94,8 @@ backend/rag/postgres/
 ├── fts.py             — Postgres 전문검색(`websearch_to_tsquery`) — SQLite `fts5_literal()`류 이스케이프 불필요
 ├── hybrid.py          — RRF(관계형 정확매칭+벡터 검색 결합)
 ├── reindex.py         — ★ 전체 재색인 진입점. `python3 -m rag.postgres.reindex --provider google`
+│                       (`--rebuild-schema`로 스키마 변경 후 테이블 드롭+재생성, `CREATE TABLE IF
+│                       NOT EXISTS`는 컬럼 추가를 안 해줘서 필요)
 ├── evaluate.py         — 5단계 대응: pgvector exact search 품질 평가(Google/Local만, FTS 비교는 hnsw_eval 쪽)
 ├── evaluate_hybrid.py — 벡터 단독 vs RRF 하이브리드 비교(순환논리 주의 — 파일 docstring 참고)
 ├── hnsw_eval.py        — exact vs HNSW 근사검색 recall·지연시간 비교
@@ -165,7 +167,7 @@ python3 -m rag.answer --aggregate   # 7단계: 여러 기술 종합 질문(우�
 - 1단계(승계 확인): Plan A 평가 수치·모델 선택을 그대로 기준선으로 사용
 - 2단계(저장소 구축): `rag/postgres/`에 별도 저장소 구축 — 재색인 검증 결과가 SQLite와 전부 일치
 - 3단계(exact search+집계): pgvector exact search 결과가 SQLite 기준선과 소수점 둘째 자리까지 일치(포팅 정확성 확인)
-- 4단계(HNSW+RRF): `vector_1536`/`vector_1024` 컬럼 분리 후 HNSW partial index. 이 corpus(청크 194개)는 너무 작아 exact/HNSW recall이 동일(지연시간만 소폭 개선). RRF 하이브리드는 로직 동작 확인(단, 평가 자체는 순환논리라 배관 점검 수준 — `evaluate_hybrid.py` docstring 참고)
+- 4단계(HNSW+RRF): `vector_1536`/`vector_1024` 컬럼 분리 후 HNSW partial index. RRF 하이브리드는 로직 동작 확인(단, 평가 자체는 순환논리라 배관 점검 수준 — `evaluate_hybrid.py` docstring 참고). **exact/HNSW 비교의 최초 결론은 정정됨** — `EXPLAIN`으로 확인해보니 이 corpus 규모+필터 조건에서는 HNSW 인덱스가 실제로 한 번도 안 쓰였음(플래너가 항상 더 싼 일반 인덱스를 선택). 지연시간도 임베딩 API 호출 제외하니 15~20ms로 사실상 동일(원래 500ms/190ms는 대부분 임베딩 시간이었음). 상세는 `CHANGELOG.md` rag-v0.14.0
 - 5단계(증분 색인·운영): 공고 원문 삭제 시 청크/임베딩이 고아로 남는 버그 발견·수정(`prune_deleted_postings()`). 증분 재임베딩·실패 재처리·모델 버전 전환은 기존 코드로 이미 충족(실제 시나리오로 검증만). `pg_dump`/`pg_restore` 백업·복구 실측 확인
 - 6단계(Career Gap 답변+UI 전환): 실제 서비스 흐름(`routers/rag.py`)이 Postgres로 완전 전환. `CANDIDATE_EVIDENCE` 10/10, GP-01/GP-06/AC-06 집계 일치, 실제 API 호출로 end-to-end 확인
 
