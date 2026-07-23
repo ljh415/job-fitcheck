@@ -8,6 +8,15 @@
 상세 이력·설계 논의는 `docs/rag-project-plans/00_claude_handoff.md`(git 미추적)에 exhaustively
 기록돼 있음 — 이 파일은 그걸 압축한 요약.
 
+## rag-v0.9.0 — Plan B 1~2단계: 승계 확인 + PostgreSQL+pgvector 저장소 구축 (2026-07-23)
+
+- Plan B 착수 — `docs/rag-project-plans/02_structured_career_intelligence_rag.md`(설계)와 `01g_plan_a_summary.md`(확정 결정) 기준으로 SQLite→PostgreSQL+pgvector 이전을 6단계로 나눠 진행, 이번엔 1~2단계만
+- 1단계(승계 확인): 신규 작업 없음 — `01d` 평가 수치, 청킹 규칙, 임베딩 모델(Google 1536차원/Local 1024차원) 그대로 기준선으로 승계
+- 2단계(저장소 구축): `backend/rag/postgres/` 서브패키지 신설(`schema.py`/`db.py`/`ingest.py`/`chunks.py`/`pipeline.py`/`reindex.py`) — 기존 SQLite 코드(`rag/ingest.py` 등)는 그대로 두고 Postgres를 별도 저장소로 나란히 구축(gap.py/answer.py/evaluate.py는 Stage 6까지 SQLite 유지)
+- `docker-compose.dev.yml`(미추적)에 `pgvector/pgvector:pg17` 서비스 추가
+- `python3 -m rag.postgres.reindex --provider google/local --include-profile`로 전체 재색인 검증 — posting 70건/posting_skill 212건/candidate_evidence 10건/chunk 194건(공고183+프로필11), google(1536차원)·local(1024차원) 임베딩 각 194건으로 SQLite 기존값과 전부 일치 확인
+- FTS5/하이브리드 검색·HNSW 인덱싱은 이번 범위에서 제외(Stage 4 몫) — `chunk_embedding.vector`는 provider별 차원이 섞여 있어 고정 차원 없는 `vector` 타입으로 둠(인덱싱 전략은 Stage 4에서 결정)
+
 ## rag-v0.8.0 — Plan A 종료 + 테스트 UI + 시장 수요 하이브리드 확장 (2026-07-23)
 
 - `01g_plan_a_summary.md`로 Plan A(1~8단계) 전체 결정·평가수치·한계·코드 인벤토리 통합
