@@ -11,7 +11,7 @@ import argparse
 from rag.embed.base import EmbeddingProvider
 from rag.embed.google import GoogleEmbeddingProvider
 from rag.embed.local import LocalEmbeddingProvider
-from rag.postgres.chunks import populate_candidate_profile_chunks, populate_posting_chunks
+from rag.postgres.chunks import populate_candidate_profile_chunks, populate_posting_chunks, prune_deleted_postings
 from rag.postgres.ingest import run as ingest_run
 from rag.postgres.pipeline import run_embedding_pipeline
 
@@ -26,6 +26,9 @@ def run(provider_name: str, include_profile: bool) -> None:
         raise ValueError(f"알 수 없는 provider: {provider_name} (선택 가능: {list(PROVIDERS)})")
 
     conn = ingest_run()  # 스키마 생성 + posting/posting_skill/skill_alias/candidate_evidence 적재
+    n_pruned = prune_deleted_postings(conn)  # 원문이 삭제된 posting의 고아 청크/임베딩 정리
+    if n_pruned:
+        print(f"삭제된 공고 {n_pruned}건의 청크/임베딩 정리 완료")
     n_touched, n_chunks = populate_posting_chunks(conn)
     provider = PROVIDERS[provider_name]()
     try:

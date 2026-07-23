@@ -106,3 +106,29 @@ def populate_posting_chunks(conn: psycopg.Connection) -> tuple[int, int]:
 
     conn.commit()
     return touched_postings, total_chunks
+
+
+def prune_deleted_postings(conn: psycopg.Connection) -> int:
+    """공고 원문(.raw.txt)이 삭제돼 `posting`에서 없어진 slug의 document_chunk/chunk_embedding을
+    지운다. `ingest_postings()`는 posting/posting_skill을 매번 전체 삭제 후 재적재하지만, 청크는
+    이 posting을 더 이상 순회 대상에 넣지 않아 고아로 남는 문제(Plan B 5단계에서 발견)를 해결한다.
+    `posting` 테이블이 최신 상태로 재적재된 뒤에 호출해야 한다."""
+    rows = conn.execute(
+        "SELECT DISTINCT source_id FROM document_chunk"
+        " WHERE source_type = 'posting_raw' AND source_id NOT IN (SELECT slug FROM posting)"
+    ).fetchall()
+    stale_slugs = [r[0] for r in rows]
+    if not stale_slugs:
+        return 0
+
+    conn.execute(
+        "DELETE FROM chunk_embedding WHERE chunk_id IN"
+        " (SELECT id FROM document_chunk WHERE source_type = 'posting_raw' AND source_id = ANY(%s))",
+        (stale_slugs,),
+    )
+    conn.execute(
+        "DELETE FROM document_chunk WHERE source_type = 'posting_raw' AND source_id = ANY(%s)",
+        (stale_slugs,),
+    )
+    conn.commit()
+    return len(stale_slugs)
