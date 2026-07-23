@@ -8,6 +8,13 @@
 상세 이력·설계 논의는 `docs/rag-project-plans/00_claude_handoff.md`(git 미추적)에 exhaustively
 기록돼 있음 — 이 파일은 그걸 압축한 요약.
 
+## rag-v0.10.0 — Plan B 3단계: pgvector exact search + 검색 품질 평가 (2026-07-23)
+
+- `rag/postgres/retrieval.py` — pgvector `<=>` 연산자로 SQL 안에서 정렬·top_k까지 처리(SQLite판의 BLOB pack/unpack+파이썬 코사인 계산 제거)
+- `rag/postgres/verify.py` — 2단계 집계(공고 수·기술별 건수·교집합) 검증, 기대값은 `rag.verify_step2`에서 재사용, 17개 항목 전부 일치
+- `rag/postgres/evaluate.py` — `rag.evaluate`의 질문 세트·지표 함수(순수 파이썬)를 그대로 재사용해 Google/Local exact search만 재실행. **결과가 Plan A(SQLite) 기준선과 소수점 둘째 자리까지 정확히 일치**(Google 0.68/0.33, Local 0.65/0.42) — 포팅 정확성 확인
+- FTS5/하이브리드 비교는 이번 범위에서 제외(Stage 4 몫)
+
 ## rag-v0.9.0 — Plan B 1~2단계: 승계 확인 + PostgreSQL+pgvector 저장소 구축 (2026-07-23)
 
 - Plan B 착수 — `docs/rag-project-plans/02_structured_career_intelligence_rag.md`(설계)와 `01g_plan_a_summary.md`(확정 결정) 기준으로 SQLite→PostgreSQL+pgvector 이전을 6단계로 나눠 진행, 이번엔 1~2단계만
