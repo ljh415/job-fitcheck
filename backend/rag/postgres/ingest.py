@@ -103,9 +103,16 @@ def skill_counts(conn: psycopg.Connection) -> dict[str, int]:
 
 def run() -> psycopg.Connection:
     conn = build_db()
-    n = ingest_postings(conn)
-    ingest_skill_alias(conn)
-    ingest_candidate_evidence(conn)
+    try:
+        n = ingest_postings(conn)
+        ingest_skill_alias(conn)
+        ingest_candidate_evidence(conn)
+    except Exception:
+        # 여기서 실패하면 호출부(reindex.py)가 conn을 아예 못 받아서 자기 finally로 못 닫는다
+        # — 이 함수가 만든 연결이니 실패 시엔 직접 닫고 다시 던진다(Codex 5차 재리뷰로 발견,
+        # 2026-07-24).
+        conn.close()
+        raise
     print(f"적재 완료: 공고 {n}건 (PostgreSQL)")
     return conn
 
