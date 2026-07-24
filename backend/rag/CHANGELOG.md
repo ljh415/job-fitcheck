@@ -8,6 +8,16 @@
 상세 이력·설계 논의는 `docs/rag-project-plans/00_claude_handoff.md`(git 미추적)에 exhaustively
 기록돼 있음 — 이 파일은 그걸 압축한 요약.
 
+## rag-v0.15.0 — Codex 재리뷰 3건 추가 수정 (2026-07-24)
+
+rag-v0.14.0에서 반영한 6건 수정을 다시 Codex에 재검토 요청 — 5건은 해결 확인, High 1건은 "경고만 추가됐고 실제 문제는 남아있다"는 지적, 추가로 Medium 2건·Low 1건 신규 발견. 전부 재현·확인 후 수정.
+
+- **[High, 부분 재발견] 다른 provider 경고가 삭제 이후 조회라 누락될 수 있었음**: `reindex.py`의 경고 로직이 `populate_posting_chunks()`가 이미 옛 임베딩을 삭제·커밋한 뒤 `SELECT DISTINCT provider FROM chunk_embedding`으로 "남아있는" provider를 조회했는데, 변경된 posting이 어떤 provider의 유일한 출처였다면 그 provider는 이미 삭제돼 조회에 안 잡히고 경고도 안 나옴. DB 상태 조회 대신 `PROVIDERS` 레지스트리 자체와 비교하도록 수정(항상 정확). 프로필 재임베딩 시에도 같은 경고 추가(기존엔 없었음)
+- **[Medium] DB 연결 실패가 503으로 안 잡힘**: `get_connection()` 실패는 `psycopg.OperationalError`(→`psycopg.Error`)인데 `RuntimeError`/`httpx.HTTPError`만 잡고 있어서 500으로 샜음 — `except psycopg.Error` 추가
+- **[Medium] HNSW 지연시간 측정에 N+1 posting 조회가 섞여 있었음**: 원격 임베딩은 이미 타이머 밖으로 뺐지만, `ranked_postings_by_score()`의 chunk_id별 개별 SQL 조회가 여전히 타이머 안에 있었음 — posting 매핑을 반복 루프 밖으로 이동, 벡터 검색 SQL 자체만 측정(15~20ms → 10~13ms로 더 정확해짐, 결론은 동일: 여전히 HNSW 미사용)
+- **[Low] `embed_provider.close()` 실패 시 `conn.close()`가 건너뛰어질 수 있었음**: `LocalEmbeddingProvider.close()`의 SSH 터널 종료 대기가 타임아웃 예외를 던지면 그다음 줄이 실행 안 됨 — 각 자원을 독립적으로 정리하도록 수정(하나가 실패해도 나머지는 정리됨)
+- 새 SQL injection·CHECK/HNSW 컬럼 오류는 발견되지 않음. `rebuild_schema()` 자체의 원자성은 안전하나 이후 적재·청킹·임베딩은 여전히 별도 커밋(원래 알던 트레이드오프, 이번에도 그대로 인지하고 넘어감)
+
 ## rag-v0.14.0 — Codex 코드 리뷰 6건 수정 + Stage 4 HNSW 결론 정정 (2026-07-23)
 
 Plan B Stage 2~6(2496d96..HEAD) 전체를 Codex에 리뷰 요청, 실제 재현으로 6건 전부 확인 후 수정.
