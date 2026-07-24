@@ -50,16 +50,24 @@ def run(provider_name: str, include_profile: bool, rebuild_schema_flag: bool = F
     other_providers = sorted(set(PROVIDERS) - {provider_name})
 
     def _warn_other_providers_stale(n: int, what: str) -> None:
+        # "사라졌습니다"는 기존 공고가 바뀐 경우엔 맞지만, 최초 색인이나 신규 공고는 원래
+        # 없었던 것이므로 부정확한 표현이었다(Codex 3차 재리뷰로 발견, 2026-07-24) — 신규/변경
+        # 양쪽에 다 맞는 표현으로 수정.
         if n and other_providers:
             print(
-                f"주의: {what} {n}건의 청크가 재생성돼, 그 청크들의 {', '.join(other_providers)}"
-                f" 임베딩이 사라졌습니다 — 검색 결과에서 빠지지 않으려면 해당 provider로도"
+                f"주의: {what} {n}건의 청크에 대해 {', '.join(other_providers)} 임베딩이"
+                f" 생성되지 않았습니다 — 검색 결과에서 빠지지 않으려면 해당 provider로도"
                 f" 재색인을 실행하세요."
             )
 
     _warn_other_providers_stale(n_touched, "내용이 바뀐 공고")
-    provider = PROVIDERS[provider_name]()
+    provider = None
     try:
+        # provider 생성도 try 안에서 해야 LocalEmbeddingProvider의 SSH 터널 실패 시에도
+        # finally의 conn.close()가 실행된다(Codex 3차 재리뷰로 발견, 2026-07-24 — CLI라
+        # 프로세스 종료로 대부분 회수되긴 하지만, routers/rag.py에서 이미 쓰던 패턴과
+        # 일관되게 맞춘다).
+        provider = PROVIDERS[provider_name]()
         n_embedded = run_embedding_pipeline(conn, provider)
         print(
             f"공고 청크 총 {n_chunks}개 (내용 변경된 공고 {n_touched}건만 재생성),"
@@ -73,7 +81,10 @@ def run(provider_name: str, include_profile: bool, rebuild_schema_flag: bool = F
     finally:
         close = getattr(provider, "close", None)
         if close:
-            close()  # LocalEmbeddingProvider의 SSH 터널 종료 — 다른 provider는 close() 없음
+            try:
+                close()  # LocalEmbeddingProvider의 SSH 터널 종료 — 다른 provider는 close() 없음
+            except Exception:
+                pass
         conn.close()
 
 
