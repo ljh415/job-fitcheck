@@ -109,19 +109,24 @@ def _timed_search(conn, provider, qvec: list[float], exact: bool) -> tuple[list[
 
 
 def run() -> None:
+    # smoke 검증까지 전부 try 안에 넣어서, 도중에 실패해도 local(SSH 터널)과 conn이 반드시
+    # 정리되도록 한다 — 원래는 smoke 검증이 try 밖에 있어서 거기서 실패하면 둘 다 안 닫혔고,
+    # conn은 정상 종료 경로에도 안 닫혔다(Codex 3차 재리뷰로 발견, 2026-07-24. CLI라 프로세스
+    # 종료로 대부분 회수되지만 routers/rag.py와 일관되게 맞춘다).
     conn = get_connection()
-    google = GoogleEmbeddingProvider()
-    local = LocalEmbeddingProvider()
-
-    print("=== HNSW 인덱스 자체 동작 확인(필터 없는 최소 조건 질의) ===")
-    for name, provider in [("google", google), ("local", local)]:
-        node = _verify_hnsw_index_itself_works(conn, provider)
-        print(f"{name}: {node}")
-    print()
-
-    rows = []
-    scan_nodes: dict[str, set[str]] = {"google_exact": set(), "google_hnsw": set(), "local_exact": set(), "local_hnsw": set()}
+    local = None
     try:
+        google = GoogleEmbeddingProvider()
+        local = LocalEmbeddingProvider()
+
+        print("=== HNSW 인덱스 자체 동작 확인(필터 없는 최소 조건 질의) ===")
+        for name, provider in [("google", google), ("local", local)]:
+            node = _verify_hnsw_index_itself_works(conn, provider)
+            print(f"{name}: {node}")
+        print()
+
+        rows = []
+        scan_nodes: dict[str, set[str]] = {"google_exact": set(), "google_hnsw": set(), "local_exact": set(), "local_hnsw": set()}
         for qid, question, skill, _keyword in QUESTIONS:
             truth = _ground_truth(conn, skill)
             row = {"qid": qid, "skill": skill}
@@ -136,7 +141,12 @@ def run() -> None:
                     row[f"{name}_{mode}_p95"] = _percentile(durations, 0.95) * 1000
             rows.append(row)
     finally:
-        local.close()
+        if local is not None:
+            try:
+                local.close()
+            except Exception:
+                pass
+        conn.close()
 
     print("=== 실제 gap-check 질의 형태(provider/model/source_type 필터 포함)에서 쓰인 스캔 방식 ===")
     for key, nodes in scan_nodes.items():
