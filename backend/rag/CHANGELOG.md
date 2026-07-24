@@ -8,6 +8,12 @@
 상세 이력·설계 논의는 `docs/rag-project-plans/00_claude_handoff.md`(git 미추적)에 exhaustively
 기록돼 있음 — 이 파일은 그걸 압축한 요약.
 
+## rag-v0.17.0 — Codex 4차 재리뷰 2건 추가 수정 + async 이벤트루프 이슈 문서화 (2026-07-24)
+
+- **[Medium] Google API 5xx 오류가 여전히 500으로 샘**: `except genai_errors.ClientError`가 4xx만 잡았음 — `ClientError`/`ServerError`는 둘 다 `APIError`의 하위 클래스인데(코드로 직접 확인) 상위 클래스로 안 잡아서 5xx는 누락. `APIError`로 확장
+- **[Low] `reindex.py`의 `prune_deleted_postings()`/`populate_posting_chunks()`/`schema_conn`이 여전히 try 밖에 있어서 그 구간 실패 시 conn 미종료** — 전체를 `_run_with_conn()`으로 분리해 바깥 try/finally로 감싸고, `schema_conn`도 개별 try/finally로 정리
+- **[신규 발견, Medium, 의도적으로 보류] `async def gap_check()`가 동기 DB/Google SDK/httpx 호출을 그대로 실행해 이벤트 루프를 막을 수 있음** — FastAPI는 `async def` 안에서 부른 일반 함수를 스레드풀로 자동 이동시켜주지 않음(공식 문서 확인). 특히 Local provider는 최대 600초 타임아웃이라 그 동안 같은 워커가 막힐 수 있음. **사용자 결정: 지금은 개인용 단일 사용자 툴이라 영향이 작아 문서화만 하고 넘어감** — 실제 다중 사용자 서비스로 확장할 때 재검토(`docs/rag-project-plans/00_claude_handoff.md` "향후 탐색 아이디어" 참고)
+
 ## rag-v0.16.0 — Codex 3차 재리뷰 4건 추가 수정 (2026-07-24)
 
 rag-v0.15.0의 4건 수정을 다시 재검토 요청 — 4건 모두 의도한 경로에 반영됨을 확인, 신규 Medium 2건·Low 2건 발견.
