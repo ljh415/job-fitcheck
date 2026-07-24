@@ -8,23 +8,23 @@
 상세 이력·설계 논의는 `docs/rag-project-plans/00_claude_handoff.md`(git 미추적)에 exhaustively
 기록돼 있음 — 이 파일은 그걸 압축한 요약.
 
-## rag-v0.18.0 — Codex 5차 재리뷰 2건 추가 수정 (2026-07-24)
+## rag-v0.13.5 — Codex 5차 재리뷰 2건 추가 수정 (2026-07-24)
 
-rag-v0.17.0의 2건 수정을 재검토 요청 — 둘 다 요청 범위에서 해결 확인, conn 중복 close도 없음. 신규 Medium 1건·Low 1건 발견.
+rag-v0.13.4의 2건 수정을 재검토 요청 — 둘 다 요청 범위에서 해결 확인, conn 중복 close도 없음. 신규 Medium 1건·Low 1건 발견.
 
 - **[Medium] RAG 라우터가 `LLMAPIError`를 안 잡아서 LLM 장애가 500으로 반환됨**: `assess_gap()`/`generate_action_plan()`이 쓰는 LLM provider(Claude/OpenAI/Gemini 텍스트 생성)의 인증 실패·rate limit·서버 오류는 `LLMAPIError`로 래핑되는데(`routers/companies.py` 등 기존 라우터가 이미 쓰는 패턴), `routers/rag.py`엔 이 except가 없었음 — `except LLMAPIError as e: raise HTTPException(e.status_code, ...)` 추가(자체 status_code 그대로 반영)
 - **[Low] `ingest_run()` 내부(`ingest_postings`/`ingest_skill_alias`/`ingest_candidate_evidence`) 실패 시 conn이 호출부에 반환 안 돼 정리 안 됨**: `reindex.py`의 `_run_with_conn()` 분리와는 별개의 더 안쪽 경계 — `ingest.run()`이 만든 연결이니 실패 시 자체적으로 닫고 재발생하도록 수정
-- 이제까지 총 5차 재검토, 누적 수정: High 1건(경고로 관리하는 정책으로 수용)·Medium 8건·Low 5건. async 이벤트루프 이슈만 의도적으로 미해결 상태 유지(문서화, 위 rag-v0.17.0 참고)
+- 이제까지 총 5차 재검토, 누적 수정: High 1건(경고로 관리하는 정책으로 수용)·Medium 8건·Low 5건. async 이벤트루프 이슈만 의도적으로 미해결 상태 유지(문서화, 위 rag-v0.13.4 참고)
 
-## rag-v0.17.0 — Codex 4차 재리뷰 2건 추가 수정 + async 이벤트루프 이슈 문서화 (2026-07-24)
+## rag-v0.13.4 — Codex 4차 재리뷰 2건 추가 수정 + async 이벤트루프 이슈 문서화 (2026-07-24)
 
 - **[Medium] Google API 5xx 오류가 여전히 500으로 샘**: `except genai_errors.ClientError`가 4xx만 잡았음 — `ClientError`/`ServerError`는 둘 다 `APIError`의 하위 클래스인데(코드로 직접 확인) 상위 클래스로 안 잡아서 5xx는 누락. `APIError`로 확장
 - **[Low] `reindex.py`의 `prune_deleted_postings()`/`populate_posting_chunks()`/`schema_conn`이 여전히 try 밖에 있어서 그 구간 실패 시 conn 미종료** — 전체를 `_run_with_conn()`으로 분리해 바깥 try/finally로 감싸고, `schema_conn`도 개별 try/finally로 정리
 - **[신규 발견, Medium, 의도적으로 보류] `async def gap_check()`가 동기 DB/Google SDK/httpx 호출을 그대로 실행해 이벤트 루프를 막을 수 있음** — FastAPI는 `async def` 안에서 부른 일반 함수를 스레드풀로 자동 이동시켜주지 않음(공식 문서 확인). 특히 Local provider는 최대 600초 타임아웃이라 그 동안 같은 워커가 막힐 수 있음. **사용자 결정: 지금은 개인용 단일 사용자 툴이라 영향이 작아 문서화만 하고 넘어감** — 실제 다중 사용자 서비스로 확장할 때 재검토(`docs/rag-project-plans/00_claude_handoff.md` "향후 탐색 아이디어" 참고)
 
-## rag-v0.16.0 — Codex 3차 재리뷰 4건 추가 수정 (2026-07-24)
+## rag-v0.13.3 — Codex 3차 재리뷰 4건 추가 수정 (2026-07-24)
 
-rag-v0.15.0의 4건 수정을 다시 재검토 요청 — 4건 모두 의도한 경로에 반영됨을 확인, 신규 Medium 2건·Low 2건 발견.
+rag-v0.13.2의 4건 수정을 다시 재검토 요청 — 4건 모두 의도한 경로에 반영됨을 확인, 신규 Medium 2건·Low 2건 발견.
 
 - **[Medium] Google 임베딩 API 오류가 500으로 샘**: `google.genai.errors.ClientError`(429 재시도 소진, API 키 오류 등)가 `RuntimeError`/`httpx.HTTPError`/`psycopg.Error` 어디에도 안 걸려 그대로 500으로 샜음(LocalEmbeddingProvider와 비대칭) — `except genai_errors.ClientError` 추가, 503 매핑
 - **[Medium] `except psycopg.Error`가 너무 넓어서 실제 버그도 503으로 가려질 수 있었음**: `psycopg.Error`는 연결 실패뿐 아니라 SQL 문법·제약조건 위반 같은 프로그램 버그도 포함 — `psycopg.OperationalError`(연결 계열만)로 좁힘. 응답 메시지도 내부 정보(호스트·스키마) 노출 없이 일반화
@@ -32,9 +32,9 @@ rag-v0.15.0의 4건 수정을 다시 재검토 요청 — 4건 모두 의도한 
 - **[Low] `hnsw_eval.py`/`reindex.py`의 CLI 자원 정리가 일부 경로에서 불완전**: provider 생성 실패 시 `conn`이 안 닫히거나, `hnsw_eval.py`는 정상 종료 경로에도 `conn.close()`가 없었음(smoke 검증도 try 밖) — 둘 다 프로세스 종료로 대부분 회수되는 CLI라 Low였지만 `routers/rag.py`와 일관되게 수정
 - 요청한 4건(provider 경고, DB 연결 503, HNSW N+1 제외, 자원 독립 정리) 전부 해결 확인됨
 
-## rag-v0.15.0 — Codex 재리뷰 3건 추가 수정 (2026-07-24)
+## rag-v0.13.2 — Codex 재리뷰 3건 추가 수정 (2026-07-24)
 
-rag-v0.14.0에서 반영한 6건 수정을 다시 Codex에 재검토 요청 — 5건은 해결 확인, High 1건은 "경고만 추가됐고 실제 문제는 남아있다"는 지적, 추가로 Medium 2건·Low 1건 신규 발견. 전부 재현·확인 후 수정.
+rag-v0.13.1에서 반영한 6건 수정을 다시 Codex에 재검토 요청 — 5건은 해결 확인, High 1건은 "경고만 추가됐고 실제 문제는 남아있다"는 지적, 추가로 Medium 2건·Low 1건 신규 발견. 전부 재현·확인 후 수정.
 
 - **[High, 부분 재발견] 다른 provider 경고가 삭제 이후 조회라 누락될 수 있었음**: `reindex.py`의 경고 로직이 `populate_posting_chunks()`가 이미 옛 임베딩을 삭제·커밋한 뒤 `SELECT DISTINCT provider FROM chunk_embedding`으로 "남아있는" provider를 조회했는데, 변경된 posting이 어떤 provider의 유일한 출처였다면 그 provider는 이미 삭제돼 조회에 안 잡히고 경고도 안 나옴. DB 상태 조회 대신 `PROVIDERS` 레지스트리 자체와 비교하도록 수정(항상 정확). 프로필 재임베딩 시에도 같은 경고 추가(기존엔 없었음)
 - **[Medium] DB 연결 실패가 503으로 안 잡힘**: `get_connection()` 실패는 `psycopg.OperationalError`(→`psycopg.Error`)인데 `RuntimeError`/`httpx.HTTPError`만 잡고 있어서 500으로 샜음 — `except psycopg.Error` 추가
@@ -42,7 +42,7 @@ rag-v0.14.0에서 반영한 6건 수정을 다시 Codex에 재검토 요청 — 
 - **[Low] `embed_provider.close()` 실패 시 `conn.close()`가 건너뛰어질 수 있었음**: `LocalEmbeddingProvider.close()`의 SSH 터널 종료 대기가 타임아웃 예외를 던지면 그다음 줄이 실행 안 됨 — 각 자원을 독립적으로 정리하도록 수정(하나가 실패해도 나머지는 정리됨)
 - 새 SQL injection·CHECK/HNSW 컬럼 오류는 발견되지 않음. `rebuild_schema()` 자체의 원자성은 안전하나 이후 적재·청킹·임베딩은 여전히 별도 커밋(원래 알던 트레이드오프, 이번에도 그대로 인지하고 넘어감)
 
-## rag-v0.14.0 — Codex 코드 리뷰 6건 수정 + Stage 4 HNSW 결론 정정 (2026-07-23)
+## rag-v0.13.1 — Codex 코드 리뷰 6건 수정 + Stage 4 HNSW 결론 정정 (2026-07-23)
 
 Plan B Stage 2~6(2496d96..HEAD) 전체를 Codex에 리뷰 요청, 실제 재현으로 6건 전부 확인 후 수정.
 
