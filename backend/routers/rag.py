@@ -9,6 +9,7 @@ Plan B 6단계(`rag/postgres/gap.py`, `rag/postgres/answer.py`)를 그대로 호
 main 브랜치엔 없는 라우터 — rag/main 전용.
 """
 import httpx
+import psycopg
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -62,9 +63,20 @@ async def gap_check(req: GapCheckRequest):
         # provider 생성 후 실제 embed_documents()/embed_query() 호출 중 네트워크 오류 —
         # 이것도 503(일시적 연결 문제)이지 500(서버 버그)이 아니다(Codex 재리뷰로 발견, 2026-07-23)
         raise HTTPException(503, f"임베딩 서버 통신 오류: {e}")
+    except psycopg.Error as e:
+        # get_connection() 실패(Postgres 다운·인증 오류 등)는 RuntimeError/httpx.HTTPError가
+        # 아니라 psycopg.Error 계열이라 이 except 없이는 그대로 500으로 샜다(Codex 재리뷰로 발견,
+        # 2026-07-23) — 이것도 서버 버그가 아니라 DB 연결 문제이므로 503.
+        raise HTTPException(503, f"DB 연결 오류: {e}")
     finally:
+        # 두 자원을 독립적으로 정리한다 — embed_provider.close()(SSH 터널 종료 대기라 실패할 수
+        # 있음)가 예외를 던지면 그다음 줄(conn.close())이 실행되지 않고 원래 예외까지 가려질 수
+        # 있었다(Codex 재리뷰로 발견, 2026-07-23).
         close = getattr(embed_provider, "close", None)
         if close:
-            close()
+            try:
+                close()
+            except Exception:
+                pass
         if conn is not None:
             conn.close()  # 명시적으로 닫아야 함 — GC(__del__)에 의존하면 idle in transaction 커넥션이 쌓일 수 있다(Codex 리뷰로 발견, 2026-07-23)
