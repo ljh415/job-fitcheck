@@ -8,6 +8,16 @@
 상세 이력·설계 논의는 `docs/rag-project-plans/00_claude_handoff.md`(git 미추적)에 exhaustively
 기록돼 있음 — 이 파일은 그걸 압축한 요약.
 
+## rag-v0.16.0 — Codex 3차 재리뷰 4건 추가 수정 (2026-07-24)
+
+rag-v0.15.0의 4건 수정을 다시 재검토 요청 — 4건 모두 의도한 경로에 반영됨을 확인, 신규 Medium 2건·Low 2건 발견.
+
+- **[Medium] Google 임베딩 API 오류가 500으로 샘**: `google.genai.errors.ClientError`(429 재시도 소진, API 키 오류 등)가 `RuntimeError`/`httpx.HTTPError`/`psycopg.Error` 어디에도 안 걸려 그대로 500으로 샜음(LocalEmbeddingProvider와 비대칭) — `except genai_errors.ClientError` 추가, 503 매핑
+- **[Medium] `except psycopg.Error`가 너무 넓어서 실제 버그도 503으로 가려질 수 있었음**: `psycopg.Error`는 연결 실패뿐 아니라 SQL 문법·제약조건 위반 같은 프로그램 버그도 포함 — `psycopg.OperationalError`(연결 계열만)로 좁힘. 응답 메시지도 내부 정보(호스트·스키마) 노출 없이 일반화
+- **[Low] 경고 문구가 최초 색인에서도 "사라졌습니다"로 부정확하게 표시됨**: 신규/변경 양쪽에 다 맞는 "생성되지 않았습니다"로 수정
+- **[Low] `hnsw_eval.py`/`reindex.py`의 CLI 자원 정리가 일부 경로에서 불완전**: provider 생성 실패 시 `conn`이 안 닫히거나, `hnsw_eval.py`는 정상 종료 경로에도 `conn.close()`가 없었음(smoke 검증도 try 밖) — 둘 다 프로세스 종료로 대부분 회수되는 CLI라 Low였지만 `routers/rag.py`와 일관되게 수정
+- 요청한 4건(provider 경고, DB 연결 503, HNSW N+1 제외, 자원 독립 정리) 전부 해결 확인됨
+
 ## rag-v0.15.0 — Codex 재리뷰 3건 추가 수정 (2026-07-24)
 
 rag-v0.14.0에서 반영한 6건 수정을 다시 Codex에 재검토 요청 — 5건은 해결 확인, High 1건은 "경고만 추가됐고 실제 문제는 남아있다"는 지적, 추가로 Medium 2건·Low 1건 신규 발견. 전부 재현·확인 후 수정.
