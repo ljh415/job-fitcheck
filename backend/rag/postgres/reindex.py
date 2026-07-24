@@ -31,11 +31,21 @@ def run(provider_name: str, include_profile: bool, rebuild_schema_flag: bool = F
         # `CREATE TABLE IF NOT EXISTS`는 기존 테이블에 새 컬럼을 안 추가해준다 — 스키마가
         # 바뀌었을 때(Stage 2→4→6처럼)는 드롭 후 재생성이 필요하다(Codex 리뷰로 발견, 2026-07-23).
         schema_conn = get_connection()
-        rebuild_schema(schema_conn)
-        schema_conn.close()
+        try:
+            rebuild_schema(schema_conn)
+        finally:
+            schema_conn.close()  # rebuild_schema() 실패해도 닫아야 함(Codex 4차 재리뷰로 발견, 2026-07-24)
         print("스키마 재생성 완료(기존 데이터 전부 삭제됨)")
 
     conn = ingest_run()  # 스키마 생성 + posting/posting_skill/skill_alias/candidate_evidence 적재
+    try:
+        _run_with_conn(conn, provider_name, include_profile)
+    finally:
+        conn.close()  # prune_deleted_postings()/populate_posting_chunks() 실패 경로도 여기서 닫힌다
+        # (원래는 try 밖에 있어서 이 둘이 실패하면 conn이 안 닫혔다 — Codex 4차 재리뷰로 발견, 2026-07-24)
+
+
+def _run_with_conn(conn, provider_name: str, include_profile: bool) -> None:
     n_pruned = prune_deleted_postings(conn)  # 원문이 삭제된 posting의 고아 청크/임베딩 정리
     if n_pruned:
         print(f"삭제된 공고 {n_pruned}건의 청크/임베딩 정리 완료")
@@ -79,13 +89,14 @@ def run(provider_name: str, include_profile: bool, rebuild_schema_flag: bool = F
             n_profile_embedded = run_embedding_pipeline(conn, provider, source_type="candidate_profile")
             print(f"프로필 청크 {n_profile_chunks}개, 임베딩 완료: {n_profile_embedded}개")
     finally:
+        # conn은 여기서 안 닫는다 — 호출부인 run()의 finally가 담당(prune_deleted_postings()/
+        # populate_posting_chunks() 실패 경로까지 한곳에서 책임지기 위해, 중복 close 방지).
         close = getattr(provider, "close", None)
         if close:
             try:
                 close()  # LocalEmbeddingProvider의 SSH 터널 종료 — 다른 provider는 close() 없음
             except Exception:
                 pass
-        conn.close()
 
 
 if __name__ == "__main__":
