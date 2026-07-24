@@ -8,6 +8,14 @@
 상세 이력·설계 논의는 `docs/rag-project-plans/00_claude_handoff.md`(git 미추적)에 exhaustively
 기록돼 있음 — 이 파일은 그걸 압축한 요약.
 
+## rag-v0.18.0 — Codex 5차 재리뷰 2건 추가 수정 (2026-07-24)
+
+rag-v0.17.0의 2건 수정을 재검토 요청 — 둘 다 요청 범위에서 해결 확인, conn 중복 close도 없음. 신규 Medium 1건·Low 1건 발견.
+
+- **[Medium] RAG 라우터가 `LLMAPIError`를 안 잡아서 LLM 장애가 500으로 반환됨**: `assess_gap()`/`generate_action_plan()`이 쓰는 LLM provider(Claude/OpenAI/Gemini 텍스트 생성)의 인증 실패·rate limit·서버 오류는 `LLMAPIError`로 래핑되는데(`routers/companies.py` 등 기존 라우터가 이미 쓰는 패턴), `routers/rag.py`엔 이 except가 없었음 — `except LLMAPIError as e: raise HTTPException(e.status_code, ...)` 추가(자체 status_code 그대로 반영)
+- **[Low] `ingest_run()` 내부(`ingest_postings`/`ingest_skill_alias`/`ingest_candidate_evidence`) 실패 시 conn이 호출부에 반환 안 돼 정리 안 됨**: `reindex.py`의 `_run_with_conn()` 분리와는 별개의 더 안쪽 경계 — `ingest.run()`이 만든 연결이니 실패 시 자체적으로 닫고 재발생하도록 수정
+- 이제까지 총 5차 재검토, 누적 수정: High 1건(경고로 관리하는 정책으로 수용)·Medium 8건·Low 5건. async 이벤트루프 이슈만 의도적으로 미해결 상태 유지(문서화, 위 rag-v0.17.0 참고)
+
 ## rag-v0.17.0 — Codex 4차 재리뷰 2건 추가 수정 + async 이벤트루프 이슈 문서화 (2026-07-24)
 
 - **[Medium] Google API 5xx 오류가 여전히 500으로 샘**: `except genai_errors.ClientError`가 4xx만 잡았음 — `ClientError`/`ServerError`는 둘 다 `APIError`의 하위 클래스인데(코드로 직접 확인) 상위 클래스로 안 잡아서 5xx는 누락. `APIError`로 확장
