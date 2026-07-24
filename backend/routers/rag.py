@@ -11,6 +11,7 @@ main 브랜치엔 없는 라우터 — rag/main 전용.
 import httpx
 import psycopg
 from fastapi import APIRouter, HTTPException
+from google.genai import errors as genai_errors
 from pydantic import BaseModel
 
 from rag.answer import generate_action_plan
@@ -63,11 +64,19 @@ async def gap_check(req: GapCheckRequest):
         # provider 생성 후 실제 embed_documents()/embed_query() 호출 중 네트워크 오류 —
         # 이것도 503(일시적 연결 문제)이지 500(서버 버그)이 아니다(Codex 재리뷰로 발견, 2026-07-23)
         raise HTTPException(503, f"임베딩 서버 통신 오류: {e}")
-    except psycopg.Error as e:
-        # get_connection() 실패(Postgres 다운·인증 오류 등)는 RuntimeError/httpx.HTTPError가
-        # 아니라 psycopg.Error 계열이라 이 except 없이는 그대로 500으로 샜다(Codex 재리뷰로 발견,
-        # 2026-07-23) — 이것도 서버 버그가 아니라 DB 연결 문제이므로 503.
-        raise HTTPException(503, f"DB 연결 오류: {e}")
+    except genai_errors.ClientError as e:
+        # LocalEmbeddingProvider는 통신 오류를 httpx.HTTPError로 던지지만 Google provider는
+        # google.genai.errors.ClientError를 그대로 재발생시켜서(429 재시도 소진, API 키 오류 등)
+        # 위 except들로 안 잡히고 그대로 500으로 샜다(Codex 3차 재리뷰로 발견, 2026-07-24) —
+        # 이것도 서버 버그가 아니라 외부 API 오류이므로 503.
+        raise HTTPException(503, f"Google 임베딩 API 오류: {e}")
+    except psycopg.OperationalError as e:
+        # get_connection() 실패(Postgres 다운·인증 오류 등)만 좁게 잡는다 — 처음엔 psycopg.Error
+        # 전체를 잡았는데, 그러면 assess_gap() 안의 SQL 문법·제약조건 위반 같은 실제 버그
+        # (ProgrammingError/IntegrityError 등도 psycopg.Error 하위)까지 "일시적 DB 연결 오류"로
+        # 둔갑해 500으로 표시돼야 할 게 503으로 가려질 수 있었다(Codex 3차 재리뷰로 발견,
+        # 2026-07-24). 메시지도 호스트/스키마 같은 내부 정보를 그대로 노출하지 않도록 일반화한다.
+        raise HTTPException(503, "DB 연결 오류 — 잠시 후 다시 시도하세요")
     finally:
         # 두 자원을 독립적으로 정리한다 — embed_provider.close()(SSH 터널 종료 대기라 실패할 수
         # 있음)가 예외를 던지면 그다음 줄(conn.close())이 실행되지 않고 원래 예외까지 가려질 수
