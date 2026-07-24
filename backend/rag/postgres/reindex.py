@@ -40,21 +40,24 @@ def run(provider_name: str, include_profile: bool, rebuild_schema_flag: bool = F
     if n_pruned:
         print(f"삭제된 공고 {n_pruned}건의 청크/임베딩 정리 완료")
     n_touched, n_chunks = populate_posting_chunks(conn)
-    if n_touched:
-        # 청크가 바뀌면 그 청크의 모든 provider 임베딩이 삭제되는데(document_chunk가 새 id로
-        # 재생성되므로), 이 실행에서는 provider_name 하나만 다시 채운다 — 이미 다른 provider로
-        # 임베딩해둔 게 있었다면 그 provider는 이 공고들에 대해 비어있는 채로 남는다(Codex
-        # 리뷰로 발견, 2026-07-23 — 실측으로 재현 확인됨).
-        other_providers = sorted(
-            {p for (p,) in conn.execute("SELECT DISTINCT provider FROM chunk_embedding").fetchall()}
-            - {provider_name}
-        )
-        if other_providers:
+    # 청크가 바뀌면 그 청크의 모든 provider 임베딩이 삭제되는데(document_chunk가 새 id로
+    # 재생성되므로), 이 실행에서는 provider_name 하나만 다시 채운다 — 다른 provider는 이
+    # 공고들에 대해 비어있는 채로 남는다(Codex 리뷰로 발견, 2026-07-23). 처음엔 이 시점에
+    # DB에 남아있는 provider를 조회해서 경고했는데, 그 조회 자체가 이미 삭제·커밋된 뒤라
+    # "삭제된 posting이 유일한 출처였던 provider"는 조회 결과에 안 잡혀 경고가 누락될 수 있었다
+    # (Codex 재리뷰로 발견, 2026-07-23) — DB 상태를 보는 대신 PROVIDERS 레지스트리 자체와
+    # 비교하도록 고쳐서 이 조건을 없앴다.
+    other_providers = sorted(set(PROVIDERS) - {provider_name})
+
+    def _warn_other_providers_stale(n: int, what: str) -> None:
+        if n and other_providers:
             print(
-                f"주의: 내용이 바뀐 공고 {n_touched}건의 청크가 재생성돼, 그 청크들의"
-                f" {', '.join(other_providers)} 임베딩이 사라졌습니다 — 검색 결과에서 빠지지"
-                f" 않으려면 해당 provider로도 재색인을 실행하세요."
+                f"주의: {what} {n}건의 청크가 재생성돼, 그 청크들의 {', '.join(other_providers)}"
+                f" 임베딩이 사라졌습니다 — 검색 결과에서 빠지지 않으려면 해당 provider로도"
+                f" 재색인을 실행하세요."
             )
+
+    _warn_other_providers_stale(n_touched, "내용이 바뀐 공고")
     provider = PROVIDERS[provider_name]()
     try:
         n_embedded = run_embedding_pipeline(conn, provider)
@@ -63,7 +66,8 @@ def run(provider_name: str, include_profile: bool, rebuild_schema_flag: bool = F
             f" 임베딩 완료: {n_embedded}개 (model={provider.model}, dim={provider.dimensions})"
         )
         if include_profile:
-            _, n_profile_chunks = populate_candidate_profile_chunks(conn)
+            profile_changed, n_profile_chunks = populate_candidate_profile_chunks(conn)
+            _warn_other_providers_stale(1 if profile_changed else 0, "프로필")
             n_profile_embedded = run_embedding_pipeline(conn, provider, source_type="candidate_profile")
             print(f"프로필 청크 {n_profile_chunks}개, 임베딩 완료: {n_profile_embedded}개")
     finally:
