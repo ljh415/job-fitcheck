@@ -14,6 +14,7 @@ from fastapi import APIRouter, HTTPException
 from google.genai import errors as genai_errors
 from pydantic import BaseModel
 
+from llm.base import LLMAPIError
 from rag.answer import generate_action_plan
 from rag.embed.google import GoogleEmbeddingProvider
 from rag.embed.local import LocalEmbeddingProvider
@@ -57,6 +58,14 @@ async def gap_check(req: GapCheckRequest):
             "action_plan": action_plan,
             "provider": req.provider,
         }
+    except LLMAPIError as e:
+        # assess_gap()/generate_action_plan()이 쓰는 LLM provider(Claude/OpenAI/Gemini 텍스트
+        # 생성)의 인증 실패·rate limit·서버 오류는 LLMAPIError로 래핑되는데(routers/companies.py
+        # 등 기존 라우터가 이미 쓰는 패턴), RAG 라우터엔 이 except가 없어서 그대로 500으로 샜다
+        # (Codex 5차 재리뷰로 발견, 2026-07-24). LLMAPIError가 자체 status_code(401/429/503 등)를
+        # 갖고 있으니 그대로 반영한다 — 임베딩 API 오류와는 다른 조각(LLM 텍스트 생성 쪽)이라
+        # genai_errors.APIError로는 안 잡힘.
+        raise HTTPException(status_code=e.status_code, detail=str(e))
     except RuntimeError as e:
         # LocalEmbeddingProvider의 SSH 터널/모델 검증 실패, assess_gap()의 프로필 미임베딩 감지 등
         raise HTTPException(503, f"RAG 파이프라인 연결/설정 오류: {e}")
