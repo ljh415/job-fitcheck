@@ -64,11 +64,14 @@ async def gap_check(req: GapCheckRequest):
         # provider 생성 후 실제 embed_documents()/embed_query() 호출 중 네트워크 오류 —
         # 이것도 503(일시적 연결 문제)이지 500(서버 버그)이 아니다(Codex 재리뷰로 발견, 2026-07-23)
         raise HTTPException(503, f"임베딩 서버 통신 오류: {e}")
-    except genai_errors.ClientError as e:
+    except genai_errors.APIError as e:
         # LocalEmbeddingProvider는 통신 오류를 httpx.HTTPError로 던지지만 Google provider는
-        # google.genai.errors.ClientError를 그대로 재발생시켜서(429 재시도 소진, API 키 오류 등)
-        # 위 except들로 안 잡히고 그대로 500으로 샜다(Codex 3차 재리뷰로 발견, 2026-07-24) —
-        # 이것도 서버 버그가 아니라 외부 API 오류이므로 503.
+        # google.genai.errors.ClientError/ServerError를 그대로 재발생시켜서(429 재시도 소진,
+        # API 키 오류, Google 서버 5xx 등) 위 except들로 안 잡히고 그대로 500으로 샜다(Codex
+        # 3차 재리뷰로 발견, 2026-07-24). 처음엔 ClientError만 잡았는데 ClientError/ServerError
+        # 둘 다 APIError의 하위 클래스라 4xx만 잡히고 5xx는 여전히 샜다(Codex 4차 재리뷰로
+        # 발견, 2026-07-24) — 공통 상위 클래스 APIError로 잡아서 둘 다 커버한다. 이것도 서버
+        # 버그가 아니라 외부 API 오류이므로 503.
         raise HTTPException(503, f"Google 임베딩 API 오류: {e}")
     except psycopg.OperationalError as e:
         # get_connection() 실패(Postgres 다운·인증 오류 등)만 좁게 잡는다 — 처음엔 psycopg.Error
