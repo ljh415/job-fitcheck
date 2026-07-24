@@ -91,17 +91,20 @@ def _percentile(values: list[float], p: float) -> float:
 
 
 def _timed_search(conn, provider, qvec: list[float], exact: bool) -> tuple[list[int], list[float], str]:
+    """벡터 검색 SQL 자체만 타이머로 잰다 — `ranked_postings_by_score()`가 chunk_id마다 별도
+    SQL(N+1)을 실행해서, 원래는 그것까지 타이머 안에 포함돼 exact/HNSW 인덱스 자체의 차이를
+    가리고 있었다(Codex 재리뷰로 발견, 2026-07-23). posting 매핑은 반복 밖에서 한 번만 한다."""
     durations = []
-    ranked: list[int] = []
+    scored: list[tuple[float, int, str]] = []
     scan_node = ""
     for i in range(REPEATS):
         _set_mode(conn, exact)
         start = time.perf_counter()
         scored = _search_by_vector(conn, provider, qvec, TOP_K_CHUNKS, "posting_raw")
-        ranked = ranked_postings_by_score(conn, [(score, chunk_id) for score, chunk_id, _text in scored])
         durations.append(time.perf_counter() - start)
         if i == 0:
             scan_node = _explain_scan_node(conn, provider, qvec, TOP_K_CHUNKS, "posting_raw")
+    ranked = ranked_postings_by_score(conn, [(score, chunk_id) for score, chunk_id, _text in scored])
     return ranked, durations, scan_node
 
 
