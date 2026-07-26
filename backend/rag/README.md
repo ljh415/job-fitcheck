@@ -1,10 +1,10 @@
 # RAG 서브프로젝트 — `backend/rag/`
 
-Job FitCheck가 이미 모아둔 채용공고 데이터와 본인 프로필을 가지고 **"검색으로 관련 정보를 찾아서, 그 근거를 바탕으로 LLM이 답하게 하는"** 시스템(RAG = Retrieval-Augmented Generation)을 직접 만들어보는 학습용 서브프로젝트입니다. 계획 자체(Plan A/B/C 전체 로드맵)는 `docs/rag-project-plans/`(git 미추적, 로컬 전용)에 있고, 이 문서는 **지금까지 실제로 만든 코드가 뭘 하는지**를 처음 보는 사람도 알 수 있게 설명하는 게 목적입니다.
+Job FitCheck가 이미 모아둔 채용공고 데이터와 본인 프로필을 가지고 **"검색으로 관련 정보를 찾아서, 그 근거를 바탕으로 LLM이 답하게 하는"** 시스템(RAG = Retrieval-Augmented Generation)을 직접 만들어보는 학습용 서브프로젝트입니다. 계획 자체(전체 로드맵)는 `docs/rag-project-plans/`(git 미추적, 로컬 전용)에 있고, 이 문서는 **지금까지 실제로 만든 코드가 뭘 하는지**를 처음 보는 사람도 알 수 있게 설명하는 게 목적입니다.
 
 ## 한눈에 보기
 
-- **지금 상태**: Plan A(검색 기준선, 8단계)·Plan B(PostgreSQL+pgvector 전환, 6단계) 전체 완료 + Codex 코드 리뷰 5차 재검토까지 반영됨. Plan C(Qdrant·reranker·GraphRAG 비교)는 설계만 있고 미착수.
+- **지금 상태**: Plan A(검색 기준선, 8단계)·Plan B(PostgreSQL+pgvector 전환, 6단계) 전체 완료 + Codex 코드 리뷰 5차 재검토까지 반영됨. 다음 단계인 "대화형 근거 기반 RAG"·"RAG 모듈 안정화"는 설계 확정, 착수 전.
 - **실제 서비스 경로**: `POST /api/rag/gap-check` → `backend/rag/postgres/` (PostgreSQL+pgvector). SQLite 코드(`backend/rag/*.py`)는 삭제 안 하고 Plan A 검증 결과 재현용으로만 남아있음 — 지금 웹 UI는 이 코드를 안 씀.
 - **핵심 수치**: 검색 품질(Precision@5/Recall@10) — FTS5 0.75/0.41, Google 임베딩 0.68/0.33, 로컬 임베딩(Jina v5-text-small) 0.65/0.42. Gap 판정 정확도 10/10(정답지 기준).
 - **한번 써보려면**: (저자의 로컬 dev 환경 기준) `docker compose -f docker-compose.dev.yml up --build -d` 후 `http://localhost:8100/rag-test.html`에서 기술/개념(또는 자연어 질문)을 입력. `docker-compose.dev.yml`은 git 미추적 파일이라 새로 clone한 환경에는 없음 — `rag-postgres` 서비스 정의를 직접 추가해야 재현 가능(`schema.py`의 `SCHEMA_SQL` 참고).
@@ -115,7 +115,7 @@ python3 -m rag.postgres.answer --aggregate   # 우선순위·강점·순서계�
 
 Plan A(1~8단계)·Plan B(1~6단계) 전체 완료 + Codex 코드 리뷰 5차 재검토 반영까지 끝났습니다. 상세 이력(단계별 결과, 발견·수정된 버그, 정정된 결론 등)은 전부 `CHANGELOG.md`(이 폴더)에 버전별로 정리돼 있습니다 — 특히 `rag-v0.13.1`~`0.13.5`(Plan B Codex 재검토 5회차, Stage 4 HNSW 결론 정정 포함)를 보면 무슨 문제가 발견되고 어떻게 고쳤는지 다 나옵니다.
 
-**아직 안 된 것**: Plan C(Qdrant·reranker·GraphRAG 비교) 미착수. corpus 균질성이 검색 변별력을 떨어뜨리는 근본 문제와 `gap-check` 지연시간 최적화는 의도적으로 뒤로 미룸(아래 6번 참고).
+**아직 안 된 것**: "대화형 근거 기반 RAG"·"RAG 모듈 안정화"(다음 개발 단계, 설계 확정·착수 전) 미착수. corpus 균질성이 검색 변별력을 떨어뜨리는 근본 문제와 `gap-check` 지연시간 최적화는 의도적으로 뒤로 미룸(아래 6번 참고).
 
 ---
 
@@ -126,7 +126,8 @@ Plan A(1~8단계)·Plan B(1~6단계) 전체 완료 + Codex 코드 리뷰 5차 �
 | `docs/rag-project-plans/00_meta/STATUS.md` | 로컬 전용 | 지금 상태·다음 할 일·원칙(가장 먼저 읽는 문서) | ❌ |
 | `docs/rag-project-plans/00_meta/HISTORY.md` | 로컬 전용 | 날짜별 진행 히스토리(궁금할 때만) | ❌ |
 | `docs/rag-project-plans/00_meta/concepts.md` | 로컬 전용 | RAG 개념을 이 프로젝트 맥락으로 풀어쓴 설명 | ❌ |
-| `docs/rag-project-plans/plan-a/`~`plan-d/` | 로컬 전용 | Plan별 설계·단계별 실행계획 | ❌ |
+| `docs/rag-project-plans/plan-a/`, `plan-b/` | 로컬 전용 | 완료된 단계별 설계·실행계획 | ❌ |
+| `docs/rag-project-plans/conversational-rag/`, `rag-stabilization/` | 로컬 전용 | 다음 개발 단계 설계(착수 전) | ❌ |
 | **이 README** | `backend/rag/` | 코드가 뭐고 왜 이렇게 짰는지, 처음 보는 사람 기준 | ✅ |
 | `CHANGELOG.md` | `backend/rag/` | 버전별(`rag-v0.x.y`) 변경 이력 | ✅ |
 
@@ -136,7 +137,7 @@ Plan A(1~8단계)·Plan B(1~6단계) 전체 완료 + Codex 코드 리뷰 5차 �
 
 ## 6. 향후 방향 (요약, 상세는 로컬 전용 `STATUS.md`)
 
-- **Plan D — 대화형 라우팅 RAG**: 자연어 질문을 지금의 단일 기술 판정 파이프라인에 그대로 넣으면 질문 의도를 못 알아듣는 문제 발견 — 질문 분류/라우팅 레이어 필요. 논의 중, 설계 문서 아직 없음.
-- **Plan C — Qdrant·reranker·GraphRAG 비교**: 설계만 있고 미착수, Plan D 이후 재논의.
+- **대화형 근거 기반 RAG**: 자연어 질문을 지금의 단일 기술 판정 파이프라인에 그대로 넣으면 질문 의도를 못 알아듣는 문제에서 시작 — 질문 분류·라우팅, 하이브리드 근거 검색, 멀티턴 대화까지 다루는 다음 개발 단계. 설계 확정, 착수 전(`conversational-rag/00_design.md`).
+- **RAG 모듈 안정화**: 위 결과를 독립 모듈로 정리 + 필요할 때만 Qdrant·reranker·GraphRAG 조건부 실험. 설계 확정, 착수 전(`rag-stabilization/00_design.md`).
 - **corpus 주제 균질성 문제**: 비슷한 직군 공고들로만 이뤄진 corpus라 검색 변별력에 근본적 한계 — 전체 개발 종료 후 별도 R&D 대상.
 - **`gap-check` 지연시간 최적화**, **3090Ti+Triton 멀티모델 서빙 실습**, **웹 검색 하이브리드**, **임베딩 비용 트래킹**: 전부 백로그, 아직 미착수.
