@@ -236,4 +236,13 @@ private 저장소를 지인 대상 셀프호스팅 공개로 전환하기 위한
 - ✅ `docs/phase1_comparison_report.md`/`phase2_gemini_experiment.md`/`phase_d_plan.md`(실제 지원 검토 회사명·부정 평가 포함) 3개 파일을 `git filter-repo`로 전체 히스토리(140개 커밋, 태그 18개, main·dev 브랜치)에서 완전 제거 후 force-push, `.gitignore`에 `docs/phase*.md` 추가. 재작성 전 히스토리는 로컬 백업 bundle로 보관
 - ✅ backend 모듈 구조 리팩터링 (v1.2.2~v1.2.3, 기능 변경 없음) — `main.py`(1436줄)를 `auth.py`(로그인/JWT/인증 미들웨어), `export.py`(백업/export 유틸), `routers/{settings,profile,companies,qa}.py`로 분리해 53줄로 축소. `notify.py`/`notify_format.py`/`discord.py`/`slack.py`/`telegram.py` → `notify/` 패키지, `usage_tracker.py`/`pdf_parser.py`/`scraper.py`/`jobplanet.py` → `services/` 패키지로 재배치. 라우트 32개 경로·순서 동일 여부를 실제 앱 로드로 대조, 원본과 새 코드를 함수 단위 AST 비교로 검증(45개 함수 중 의도한 이름 변경 7건 외 차이 없음), dev/prod 재빌드 후 전 엔드포인트 실제 요청으로 확인
 - ✅ provider/모델/알림설정/주간요약 스케줄 재시작 후 리셋되던 문제 수정 (v1.2.4) — `data/runtime_settings.json`에 원자적 저장(`.tmp`→`os.replace()`), 재시작 시 자동 복원. dev/prod에서 실제 컨테이너 재시작으로 유지 여부 검증
-- 🔧 **RAG 서브프로젝트** — main에는 merge하지 않는 영구 브랜치 `rag/main`에서 별도 진행 중. 상세 진행상황·다음 할 일은 그 브랜치의 `backend/rag/README.md`와 `docs/rag-project-plans/00_claude_handoff.md`에서 관리 — 이 TODO.md에는 더 이상 세부 내용을 적지 않는다.
+- 🔧 **RAG 서브프로젝트** — main에는 merge하지 않는 영구 브랜치 `rag/main`에서 별도 진행 중. 상세 진행상황·다음 할 일은 그 브랜치의 `backend/rag/README.md`와 `docs/rag-project-plans/00_meta/STATUS.md`에서 관리 — 이 TODO.md에는 더 이상 세부 내용을 적지 않는다.
+
+---
+
+## Phase 11 — RAG 서브프로젝트 main 반영 + MCP 설계 (계획 배경만 정리, 구체화 전)
+
+> 상세: `docs/mcp_plan_notes.md`(MCP 부분). RAG는 `rag/main` 브랜치에서 별도 진행 중(대화형 근거 기반 RAG → RAG 모듈 안정화, 상세는 `rag/main` 브랜치의 `docs/rag-project-plans/00_meta/STATUS.md`).
+
+- ⬜ RAG(`rag/main`) 완료 후 main 반영 — 브랜치를 통째로 merge하지 않고, 완성된 코드만 새 `feat/...` 브랜치로 재작성해 main에 반영(실험·시행착오 히스토리는 `rag/main`에만 남김)
+- ⬜ 그 다음 MCP 설계·구현 착수 — 세부 도구·전송 방식·인증·쓰기 승인 정책은 아직 미확정
