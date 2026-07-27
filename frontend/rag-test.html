@@ -24,6 +24,7 @@
   .rag-section h4 { margin: 0 0 6px; color: var(--text-secondary); }
   .rag-excerpt { font-size: .9em; color: var(--text-muted); border-left: 3px solid var(--border); padding-left: 10px; margin: 6px 0; }
   .rag-error { color: #991b1b; background: #fee2e2; padding: 10px 14px; border-radius: 6px; }
+  .rag-loading { color: var(--text-muted); padding: 10px 14px; border-radius: 6px; background: var(--bg-surface); border: 1px dashed var(--border); }
   .rag-note { font-size: .85em; color: var(--text-dimmed); margin-top: 24px; }
   .rag-divider { border: none; border-top: 1px solid var(--border); margin: 32px 0; }
   .rag-table { width: 100%; border-collapse: collapse; margin-top: 8px; }
@@ -180,7 +181,7 @@ async function runAsk(event) {
 
   btn.disabled = true;
   btn.textContent = '질문하는 중...';
-  resultEl.innerHTML = '';
+  resultEl.innerHTML = '<div class="rag-loading">답변을 생성하고 있습니다. 질문 종류에 따라 최대 30~40초 정도 걸릴 수 있습니다...</div>';
 
   try {
     const token = localStorage.getItem('job-fitcheck-token');
