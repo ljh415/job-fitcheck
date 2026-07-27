@@ -9,7 +9,7 @@
 """
 import psycopg
 
-from llm.router import capture_snapshot, light_from_snapshot
+from llm.router import capture_snapshot, high_from_snapshot, light_from_snapshot
 from rag.answer import (
     generate_action_plan,
     generate_sequenced_plan,
@@ -17,7 +17,17 @@ from rag.answer import (
     summarize_strengths,
 )
 from rag.embed.base import EmbeddingProvider
+from rag.gap import (
+    JUDGE_CANDIDATES_SYSTEM,
+    JUDGE_CANDIDATES_TOOL_DESCRIPTION,
+    JUDGE_CANDIDATES_TOOL_NAME,
+    JUDGE_CANDIDATES_TOOL_SCHEMA,
+)
 from rag.postgres.gap import assess_all_gaps, assess_gap, market_demand_hybrid
+from rag.postgres.retrieval import search_chunks
+from rag.skills import TRACKED_SKILLS
+
+TOPIC_LOCAL_TOP_K = 15  # method="local"일 때 벡터 검색 반환 개수(비교/실험용)
 
 QUERY_TYPES = [
     "single_skill_gap",
@@ -157,7 +167,85 @@ def compare_postings(conn: psycopg.Connection, company_names: list[str]) -> list
     return results
 
 
-async def answer_query(conn: psycopg.Connection, question: str, embed_provider: EmbeddingProvider) -> dict:
+async def _judge_topic_postings_llm(conn: psycopg.Connection, topic: str) -> list[dict]:
+    """자유 텍스트 주제(TRACKED_SKILLS 밖)를 corpus 전체 원문으로 LLM이 직접 판정한다.
+
+    벡터 코사인 유사도로 후보를 미리 추려서 넘기면(_candidate_postings 패턴) 이 corpus에서는
+    1차 검색 단계 자체가 진짜 정답을 통째로 놓치는 사례가 실측으로 확인됐다(2026-07-28,
+    docs/rag-project-plans/00_meta/HISTORY.md 해당 항목). corpus 규모가 작아(공고 수십~백 건)
+    점수로 거르지 않고 전체를 LLM에 넘기는 쪽이 비용 대비 recall이 훨씬 낫다."""
+    rows = conn.execute(
+        "SELECT po.id, po.slug, po.company_name, po.job_title, dc.text"
+        " FROM document_chunk dc JOIN posting po ON po.slug = dc.source_id"
+        " WHERE dc.source_type = 'posting_raw' ORDER BY po.id, dc.chunk_index"
+    ).fetchall()
+    postings: dict[int, dict] = {}
+    order: list[int] = []
+    for pid, slug, company, job_title, text in rows:
+        if pid not in postings:
+            postings[pid] = {"slug": slug, "company_name": company, "job_title": job_title, "text": ""}
+            order.append(pid)
+        postings[pid]["text"] += text
+    plist = [postings[pid] for pid in order]
+    if not plist:
+        return []
+
+    listing = "\n".join(
+        f"{i + 1}. {p['company_name']} / {p['job_title']} — {p['text']}" for i, p in enumerate(plist)
+    )
+    snap = capture_snapshot()
+    high, high_model = high_from_snapshot(snap)
+    result = await high.extract_structured(
+        system=JUDGE_CANDIDATES_SYSTEM,
+        user=f"기술/개념: {topic}\n\n후보 공고 목록:\n{listing}",
+        tool_name=JUDGE_CANDIDATES_TOOL_NAME,
+        tool_description=JUDGE_CANDIDATES_TOOL_DESCRIPTION,
+        tool_schema=JUDGE_CANDIDATES_TOOL_SCHEMA,
+        model=high_model,
+        operation="주제 공고 판정(전체원문)",
+        reasoning_effort=snap.reasoning_effort,
+    )
+    valid_numbers = sorted({n for n in result["relevant_numbers"] if 1 <= n <= len(plist)})
+    return [
+        {"slug": plist[n - 1]["slug"], "company_name": plist[n - 1]["company_name"],
+         "job_title": plist[n - 1]["job_title"], "method": "llm"}
+        for n in valid_numbers
+    ]
+
+
+def _judge_topic_postings_local(conn: psycopg.Connection, topic: str, embed_provider: EmbeddingProvider) -> list[dict]:
+    """벡터 검색만으로 top-k를 그대로 반환한다(판정 없이 순위만) — LLM 호출 없는 비교/실험용 경로.
+    이번 corpus에서는 점수 격차가 razor-thin이라 신뢰도가 낮다는 게 이미 확인됐다(정확도 우선이면
+    method="llm" 기본값을 쓴다)."""
+    results = search_chunks(conn, embed_provider, topic, source_type="posting_raw", top_k=60)
+    seen: set[int] = set()
+    postings: list[dict] = []
+    for _score, chunk_id, _text in results:
+        row = conn.execute(
+            "SELECT po.id, po.slug, po.company_name, po.job_title FROM document_chunk dc"
+            " JOIN posting po ON po.slug = dc.source_id WHERE dc.id = %s",
+            (chunk_id,),
+        ).fetchone()
+        if not row or row[0] in seen:
+            continue
+        seen.add(row[0])
+        postings.append({"slug": row[1], "company_name": row[2], "job_title": row[3], "method": "local"})
+        if len(postings) >= TOPIC_LOCAL_TOP_K:
+            break
+    return postings
+
+
+async def judge_topic_postings(
+    conn: psycopg.Connection, topic: str, embed_provider: EmbeddingProvider, method: str = "llm"
+) -> list[dict]:
+    if method == "local":
+        return _judge_topic_postings_local(conn, topic, embed_provider)
+    return await _judge_topic_postings_llm(conn, topic)
+
+
+async def answer_query(
+    conn: psycopg.Connection, question: str, embed_provider: EmbeddingProvider, method: str = "llm"
+) -> dict:
     classification = await classify_query(question)
     query_type = classification.get("query_type", "unanswerable")
     skill = classification.get("skill") or None
@@ -188,7 +276,11 @@ async def answer_query(conn: psycopg.Connection, question: str, embed_provider: 
         return {"query_type": query_type, "priority_gaps": priority_gaps, "plan": plan}
 
     if query_type == "posting_list":
-        postings = list_postings(conn, skill=skill or "", job_title=classification.get("job_role") or "")
+        job_title = classification.get("job_role") or ""
+        if not skill or skill in TRACKED_SKILLS:
+            postings = list_postings(conn, skill=skill or "", job_title=job_title)
+        else:
+            postings = await judge_topic_postings(conn, skill, embed_provider, method=method)
         return {"query_type": query_type, "postings": postings}
 
     if query_type == "posting_comparison":

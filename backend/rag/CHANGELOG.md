@@ -8,6 +8,26 @@
 상세 이력·설계 논의는 `docs/rag-project-plans/00_meta/HISTORY.md`(git 미추적)에 exhaustively
 기록돼 있음 — 이 파일은 그걸 압축한 요약.
 
+## rag-v0.15.0 — Phase 2: 서술형 주제 검색을 전체원문 LLM 판정으로 교체 (2026-07-28)
+
+`posting_list`의 자유 텍스트 주제(`TRACKED_SKILLS` 밖) 검색이 임베딩+FTS 후보 필터링(`_candidate_postings`)
+단계에서 정답을 통째로 놓치는 사례가 실측으로 확인됨(예: "TVING"이 25건 후보 목록에 아예 없었음).
+화이트닝(naive+완전 SVD covariance whitening)·cross-encoder reranker(bge-reranker-v2-m3)도 함께
+실측했으나 둘 다 이 corpus에서는 순위 품질을 개선하지 못해 기각. 최종적으로 corpus 규모가 작다는 점에
+착안해 후보를 점수로 미리 거르지 않고 전체 원문을 LLM 판정에 그대로 넘기는 방식을 채택.
+
+- **신규** `query_router.py`의 `judge_topic_postings()`: `method="llm"`(기본값, 공고 전체 원문을
+  `JUDGE_CANDIDATES_SYSTEM`으로 판정) / `method="local"`(벡터 검색 top-15 그대로 반환, LLM 호출 없는
+  비교·실험용)
+- `JUDGE_CANDIDATES_SYSTEM`(`rag/gap.py`)에 "주요업무 우선, 우대사항 키워드 단독 언급만으로 인정
+  금지" 규칙 추가 — 전체원문 판정 시 우대사항의 부수적 키워드 언급만으로 오탐(예: 이커머스 우대사항의
+  "결제")이 발생하던 문제 해결
+- `answer_query()`의 `posting_list` 분기가 `TRACKED_SKILLS` 여부로 기존 정확매칭/`judge_topic_postings()`로
+  갈리도록 수정, `AskRequest`에 `method` 필드 추가
+- 실측(자연어 평가셋 5문항, 정답지는 검토 깊이 통일 후 대폭 보정): 기존 25건 후보 방식 대비 Q5
+  recall 0.43→1.00, Q6 recall 0.41→0.95. 비용은 건당 약 $0.132(gemini-3.5-flash 기준, 기존 대비
+  늘지만 개인용 앱 기준 무시 가능)
+
 ## rag-v0.14.0 — 대화형 근거 기반 RAG Phase 1: 질문 이해와 라우팅 (2026-07-27)
 
 자연어 질문(`POST /api/rag/ask`)이 7종류로 분류·라우팅되도록 신규 구현. 처음엔 "지금 있는 함수 종류"에

@@ -32,7 +32,8 @@ class GapCheckRequest(BaseModel):
 
 class AskRequest(BaseModel):
     question: str
-    provider: str = "google"  # "google" | "local"
+    provider: str = "google"  # "google" | "local" — 임베딩 provider
+    method: str = "llm"  # "llm" | "local" — posting_list 자유 텍스트 주제 판정 방식
 
 
 @router.post("/gap-check")
@@ -116,13 +117,15 @@ async def ask(req: AskRequest):
     그대로 복제(Codex 리뷰로 다듬어진 부분이라 새로 설계하지 않음)."""
     if req.provider not in ("google", "local"):
         raise HTTPException(400, "provider는 'google' 또는 'local'만 가능합니다")
+    if req.method not in ("llm", "local"):
+        raise HTTPException(400, "method는 'llm' 또는 'local'만 가능합니다")
 
     conn = None
     embed_provider = None
     try:
         conn = get_connection()
         embed_provider = GoogleEmbeddingProvider() if req.provider == "google" else LocalEmbeddingProvider()
-        result = await answer_query(conn, req.question, embed_provider)
+        result = await answer_query(conn, req.question, embed_provider, method=req.method)
         result["provider"] = req.provider
         return result
     except LLMAPIError as e:
