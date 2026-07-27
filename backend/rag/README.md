@@ -4,8 +4,9 @@ Job FitCheck가 이미 모아둔 채용공고 데이터와 본인 프로필을 �
 
 ## 한눈에 보기
 
-- **지금 상태**: Plan A·B 전체 완료 + "대화형 근거 기반 RAG" Phase 1(질문 이해와 라우팅)까지 완료. Phase 2(하이브리드 근거 검색)·"RAG 모듈 안정화"는 착수 전.
-- **실제 서비스 경로**: `POST /api/rag/gap-check`(기술명 직접 지정) + `POST /api/rag/ask`(자연어 질문 → 7종 분류·라우팅, 신규) → `backend/rag/postgres/` (PostgreSQL+pgvector). SQLite 코드(`backend/rag/*.py`)는 삭제 안 하고 Plan A 검증 결과 재현용으로만 남아있음 — 지금 웹 UI는 이 코드를 안 씀.
+- **지금 상태**: Plan A·B 전체 완료 + "대화형 근거 기반 RAG" Phase 1(질문 이해와 라우팅)·Phase 2(하이브리드 근거 검색)까지 완료. "RAG 모듈 안정화"는 착수 전.
+- **실제 서비스 경로**: `POST /api/rag/gap-check`(기술명 직접 지정) + `POST /api/rag/ask`(자연어 질문 → 7종 분류·라우팅) → `backend/rag/postgres/` (PostgreSQL+pgvector). SQLite 코드(`backend/rag/*.py`)는 삭제 안 하고 Plan A 검증 결과 재현용으로만 남아있음 — 지금 웹 UI는 이 코드를 안 씀.
+- **자유 텍스트 주제 검색(Phase 2 신규)**: `posting_list`에서 `TRACKED_SKILLS` 밖 자유 텍스트 주제는 임베딩/FTS로 후보를 미리 거르지 않고 `judge_topic_postings()`가 공고 전체 원문을 LLM에 판정시킨다(`method="llm"` 기본값) — 이 corpus 규모(공고 수십~백 건)에서는 코사인 유사도·reranker 절대점수 모두 관련/무관을 못 가른다는 게 실측으로 확인돼(`docs/rag-project-plans/00_meta/HISTORY.md` 2026-07-28 항목), 점수 필터링 자체를 없애는 쪽을 택함. `method="local"`(벡터 검색만, LLM 호출 없음)은 비교·실험용으로 병존.
 - **핵심 수치**: 검색 품질(Precision@5/Recall@10) — FTS5 0.75/0.41, Google 임베딩 0.68/0.33, 로컬 임베딩(Jina v5-text-small) 0.65/0.42. Gap 판정 정확도 10/10(정답지 기준).
 - **한번 써보려면**: (저자의 로컬 dev 환경 기준) `docker compose -f docker-compose.dev.yml up --build -d` 후 `http://localhost:8100/rag-test.html`에서 기술/개념(또는 자연어 질문)을 입력. `docker-compose.dev.yml`은 git 미추적 파일이라 새로 clone한 환경에는 없음 — `rag-postgres` 서비스 정의를 직접 추가해야 재현 가능(`schema.py`의 `SCHEMA_SQL` 참고).
 
@@ -113,9 +114,11 @@ python3 -m rag.postgres.answer --aggregate   # 우선순위·강점·순서계�
 
 ## 4. 현재 상태
 
-Plan A(1~8단계)·Plan B(1~6단계) 전체 완료 + Codex 코드 리뷰 5차 재검토 반영까지 끝났습니다. "대화형 근거 기반 RAG" Phase 1(질문 이해와 라우팅, `POST /api/rag/ask`)도 완료됐습니다. 상세 이력(단계별 결과, 발견·수정된 버그, 정정된 결론 등)은 전부 `CHANGELOG.md`(이 폴더)에 버전별로 정리돼 있습니다 — 특히 `rag-v0.14.0`(대화형 RAG Phase 1), `rag-v0.13.1`~`0.13.5`(Plan B Codex 재검토 5회차, Stage 4 HNSW 결론 정정 포함)를 보면 무슨 문제가 발견되고 어떻게 고쳤는지 다 나옵니다.
+Plan A(1~8단계)·Plan B(1~6단계) 전체 완료 + Codex 코드 리뷰 5차 재검토 반영까지 끝났습니다. "대화형 근거 기반 RAG" Phase 1(질문 이해와 라우팅)·Phase 2(하이브리드 근거 검색)도 완료됐습니다. 상세 이력(단계별 결과, 발견·수정된 버그, 정정된 결론 등)은 전부 `CHANGELOG.md`(이 폴더)에 버전별로 정리돼 있습니다 — 특히 `rag-v0.15.0`(Phase 2, 서술형 주제 검색 전체원문 LLM 판정), `rag-v0.14.0`(대화형 RAG Phase 1), `rag-v0.13.1`~`0.13.5`(Plan B Codex 재검토 5회차, Stage 4 HNSW 결론 정정 포함)를 보면 무슨 문제가 발견되고 어떻게 고쳤는지 다 나옵니다.
 
-**아직 안 된 것**: "대화형 근거 기반 RAG" Phase 2~5(하이브리드 검색·근거 답변·멀티턴·평가), "RAG 모듈 안정화" 미착수. corpus 균질성이 검색 변별력을 떨어뜨리는 근본 문제와 `gap-check`/`ask`(전체 Gap·행동 계획 경로) 지연시간 최적화는 의도적으로 뒤로 미룸(아래 6번 참고).
+Phase 2에서는 화이트닝(naive mean-centering·완전 SVD covariance whitening)과 cross-encoder reranker(bge-reranker-v2-m3)를 자연어 평가셋(5문항)으로 실측했으나 둘 다 이 corpus 규모·균질성에서는 순위 품질을 개선하지 못해 기각했고, corpus가 작다는 점에 착안해 후보를 점수로 미리 거르지 않고 전체 원문을 LLM 판정에 넘기는 쪽을 채택했습니다(위 "자유 텍스트 주제 검색" 참고).
+
+**아직 안 된 것**: "대화형 근거 기반 RAG" Phase 3~5(근거 답변·멀티턴·평가), "RAG 모듈 안정화" 미착수. corpus 균질성이 검색 변별력을 떨어뜨리는 근본 문제(화이트닝·reranker로도 해결 안 됨, `posting_list`는 점수 필터링을 없애는 우회책으로 대응했지만 `market_aggregate` 등 다른 경로는 여전히 남은 문제)와 `gap-check`/`ask`(전체 Gap·행동 계획 경로) 지연시간 최적화는 의도적으로 뒤로 미룸(아래 6번 참고).
 
 ---
 
@@ -137,7 +140,7 @@ Plan A(1~8단계)·Plan B(1~6단계) 전체 완료 + Codex 코드 리뷰 5차 �
 
 ## 6. 향후 방향 (요약, 상세는 로컬 전용 `STATUS.md`)
 
-- **대화형 근거 기반 RAG**: 자연어 질문을 지금의 단일 기술 판정 파이프라인에 그대로 넣으면 질문 의도를 못 알아듣는 문제에서 시작 — 질문 분류·라우팅(Phase 1, **완료**), 하이브리드 근거 검색(Phase 2)·근거 기반 답변(Phase 3)·멀티턴 대화(Phase 4)·평가(Phase 5)는 착수 전(`conversational-rag/00_design.md`).
-- **RAG 모듈 안정화**: 위 결과를 독립 모듈로 정리 + 필요할 때만 Qdrant·reranker·GraphRAG 조건부 실험. 설계 확정, 착수 전(`rag-stabilization/00_design.md`).
-- **corpus 주제 균질성 문제**: 비슷한 직군 공고들로만 이뤄진 corpus라 검색 변별력에 근본적 한계 — 전체 개발 종료 후 별도 R&D 대상.
+- **대화형 근거 기반 RAG**: 자연어 질문을 지금의 단일 기술 판정 파이프라인에 그대로 넣으면 질문 의도를 못 알아듣는 문제에서 시작 — 질문 분류·라우팅(Phase 1, **완료**), 하이브리드 근거 검색(Phase 2, **완료**), 근거 기반 답변(Phase 3)·멀티턴 대화(Phase 4)·평가(Phase 5)는 착수 전(`conversational-rag/00_design.md`).
+- **RAG 모듈 안정화**: 위 결과를 독립 모듈로 정리 + 필요할 때만 Qdrant·GraphRAG 조건부 실험(reranker는 Phase 2에서 이미 실측 기각). 설계 확정, 착수 전(`rag-stabilization/00_design.md`).
+- **corpus 주제 균질성 문제**: 비슷한 직군 공고들로만 이뤄진 corpus라 검색 변별력에 근본적 한계 — `posting_list`는 Phase 2에서 우회책(점수 필터링 없이 전체 LLM 판정)으로 대응했지만, `market_aggregate` 등 다른 경로의 벡터 채널 신뢰도 문제는 여전히 남아있어 전체 개발 종료 후 별도 R&D 대상.
 - **`gap-check` 지연시간 최적화**, **3090Ti+Triton 멀티모델 서빙 실습**, **웹 검색 하이브리드**, **임베딩 비용 트래킹**: 전부 백로그, 아직 미착수.
