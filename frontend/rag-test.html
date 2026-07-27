@@ -166,6 +166,19 @@ function renderGapCard(data) {
   return html;
 }
 
+function renderSkillEvidenceCard(g) {
+  const badgeClass = LEVEL_CLASS[g.evidence_level] || 'none';
+  let html = `<div class="rag-excerpt"><strong>${escapeHtml(g.skill)}</strong> — <span class="rag-badge ${badgeClass}">${escapeHtml(g.evidence_level)}</span>`;
+  if (g.reasoning) {
+    html += `<p>${escapeHtml(g.reasoning)}</p>`;
+  }
+  if (g.excerpts && g.excerpts.length) {
+    html += g.excerpts.map(e => `<p class="rag-note">발췌: ${escapeHtml(e)}</p>`).join('');
+  }
+  html += `</div>`;
+  return html;
+}
+
 function render(data) {
   const html = `<div class="rag-result">${renderGapCard(data)}<p class="rag-note">provider: ${escapeHtml(data.provider)}</p></div>`;
   document.getElementById('result').innerHTML = html;
@@ -218,19 +231,25 @@ function renderAsk(data) {
   if (data.query_type === 'single_skill_gap') {
     inner += renderGapCard(data);
   } else if (data.query_type === 'all_gaps') {
-    inner += '<div class="rag-section"><h4>우선순위 Gap</h4>' + (data.priority_gaps || []).map(g => `<div class="rag-excerpt">${escapeHtml(g.skill)} — <span class="rag-badge ${LEVEL_CLASS[g.evidence_level] || 'none'}">${escapeHtml(g.evidence_level)}</span></div>`).join('') + '</div>';
-    inner += '<div class="rag-section"><h4>강점</h4>' + (data.strengths || []).map(g => `<div class="rag-excerpt">${escapeHtml(g.skill)} — <span class="rag-badge ${LEVEL_CLASS[g.evidence_level] || 'none'}">${escapeHtml(g.evidence_level)}</span></div>`).join('') + '</div>';
+    inner += '<div class="rag-section"><h4>우선순위 Gap</h4>' + (data.priority_gaps || []).map(renderSkillEvidenceCard).join('') + '</div>';
+    inner += '<div class="rag-section"><h4>강점</h4>' + (data.strengths || []).map(renderSkillEvidenceCard).join('') + '</div>';
   } else if (data.query_type === 'market_aggregate') {
     const demand = data.market_demand;
-    inner += `<div class="rag-section"><h4>${escapeHtml(data.skill)} 시장 수요</h4><p>전체 공고 ${demand.total}건 중 ${demand.matched}건 요구 (${(demand.ratio * 100).toFixed(1)}%)</p></div>`;
+    const methodNote = demand.method === 'exact'
+      ? '정확 매칭(구조화 데이터 기준, 전체 공고 대상)'
+      : `LLM 추정 판정(검색으로 모은 후보 ${demand.candidate_count}건만 대상 — 전체 공고를 다 본 결과가 아님)`;
+    inner += `<div class="rag-section"><h4>${escapeHtml(data.skill)} 시장 수요</h4><p>전체 공고 ${demand.total}건 중 ${demand.matched}건 요구 (${(demand.ratio * 100).toFixed(1)}%)</p><p class="rag-note">${escapeHtml(methodNote)}</p></div>`;
   } else if (data.query_type === 'action_plan') {
-    inner += '<div class="rag-section"><h4>우선순위 Gap</h4>' + (data.priority_gaps || []).map(g => `<div class="rag-excerpt">${escapeHtml(g.skill)}</div>`).join('') + '</div>';
+    inner += '<div class="rag-section"><h4>우선순위 Gap</h4>' + (data.priority_gaps || []).map(renderSkillEvidenceCard).join('') + '</div>';
     if (data.plan) {
       inner += '<div class="rag-section"><h4>순서 계획</h4>' + (data.plan.phases || []).map(p => `<div class="rag-excerpt"><strong>${p.order}단계</strong> (${escapeHtml((p.skills || []).join(', '))}) — ${escapeHtml(p.activity)}<br/>완료조건: ${escapeHtml(p.completion_criteria)}</div>`).join('') + '</div>';
     }
   } else if (data.query_type === 'posting_list') {
-    const rows = (data.postings || []).map(p => `<tr><td>${escapeHtml(p.company_name)}</td><td>${escapeHtml(p.job_title)}</td></tr>`).join('');
-    inner += `<div class="rag-section"><h4>공고 목록 (${(data.postings || []).length}건)</h4><table class="rag-table"><tr><th>회사</th><th>직무</th></tr>${rows}</table></div>`;
+    const postings = data.postings || [];
+    const hasEvidence = postings.some(p => p.evidence);
+    const rows = postings.map(p => `<tr><td>${escapeHtml(p.company_name)}</td><td>${escapeHtml(p.job_title)}</td>${hasEvidence ? `<td>${escapeHtml(p.evidence || '(정확 매칭 — 근거 문장 없음)')}</td>` : ''}</tr>`).join('');
+    const evidenceHeader = hasEvidence ? '<th>판정 근거</th>' : '';
+    inner += `<div class="rag-section"><h4>공고 목록 (${postings.length}건)</h4><table class="rag-table"><tr><th>회사</th><th>직무</th>${evidenceHeader}</tr>${rows}</table></div>`;
   } else if (data.query_type === 'posting_comparison') {
     inner += '<div class="rag-section"><h4>공고 비교</h4>' + (data.comparison || []).map(c => c.found
       ? `<div class="rag-excerpt"><strong>${escapeHtml(c.company_name)}</strong> — ${escapeHtml(c.job_title || '')}<br/>기술스택: ${escapeHtml((c.tech_stack || []).join(', ') || '정보 없음')}<br/>잡플래닛: ${c.jobplanet_score ?? '정보 없음'} / 적합도: ${c.fit_score ?? '정보 없음'}</div>`

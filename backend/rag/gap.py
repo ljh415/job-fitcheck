@@ -84,17 +84,27 @@ JUDGE_CANDIDATES_SYSTEM = """당신은 채용공고가 특정 기술/개념과 �
   결제 시스템을 개발한다는 뜻은 아닙니다)."""
 
 JUDGE_CANDIDATES_TOOL_NAME = "judge_relevant_postings"
-JUDGE_CANDIDATES_TOOL_DESCRIPTION = "실제로 관련 있는 후보 공고 번호 목록을 제출합니다."
+JUDGE_CANDIDATES_TOOL_DESCRIPTION = "실제로 관련 있는 후보 공고 번호와 판정 근거를 제출합니다."
 JUDGE_CANDIDATES_TOOL_SCHEMA = {
     "type": "object",
     "properties": {
-        "relevant_numbers": {
+        "relevant": {
             "type": "array",
-            "items": {"type": "integer"},
-            "description": "후보 목록의 번호(1부터) 중 실제로 관련 있는 것만",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "number": {"type": "integer", "description": "후보 목록의 번호(1부터)"},
+                    "reason": {
+                        "type": "string",
+                        "description": "발췌문 중 이 공고를 관련 있다고 판단한 근거(짧은 인용 또는 요약, 1문장 이내)",
+                    },
+                },
+                "required": ["number", "reason"],
+            },
+            "description": "실제로 관련 있는 후보만, 번호와 판정 근거를 함께",
         },
     },
-    "required": ["relevant_numbers"],
+    "required": ["relevant"],
 }
 
 
@@ -187,7 +197,7 @@ async def market_demand_hybrid(conn: sqlite3.Connection, skill: str, embed_provi
     )
     # LLM이 후보 범위 밖 번호나 중복 번호를 반환해도 그대로 세면 matched가 candidate_count보다
     # 커지는 모순이 생길 수 있다(Codex 리뷰로 발견, 2026-07-23) — 유효 범위로 걸러내고 중복 제거.
-    valid_numbers = {n for n in result["relevant_numbers"] if 1 <= n <= len(candidates)}
+    valid_numbers = {r["number"] for r in result["relevant"] if 1 <= r["number"] <= len(candidates)}
     matched = len(valid_numbers)
     return {
         "matched": matched,

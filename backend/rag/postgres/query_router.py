@@ -205,11 +205,11 @@ async def _judge_topic_postings_llm(conn: psycopg.Connection, topic: str) -> lis
         operation="주제 공고 판정(전체원문)",
         reasoning_effort=snap.reasoning_effort,
     )
-    valid_numbers = sorted({n for n in result["relevant_numbers"] if 1 <= n <= len(plist)})
+    valid = {r["number"]: r["reason"] for r in result["relevant"] if 1 <= r["number"] <= len(plist)}
     return [
         {"slug": plist[n - 1]["slug"], "company_name": plist[n - 1]["company_name"],
-         "job_title": plist[n - 1]["job_title"], "method": "llm"}
-        for n in valid_numbers
+         "job_title": plist[n - 1]["job_title"], "method": "llm", "evidence": reason}
+        for n, reason in sorted(valid.items())
     ]
 
 

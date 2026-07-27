@@ -121,7 +121,7 @@ async def market_demand_hybrid(conn: psycopg.Connection, skill: str, embed_provi
         operation="시장 수요 후보 판정",
         reasoning_effort=snap.reasoning_effort,
     )
-    valid_numbers = {n for n in result["relevant_numbers"] if 1 <= n <= len(candidates)}
+    valid_numbers = {r["number"] for r in result["relevant"] if 1 <= r["number"] <= len(candidates)}
     matched = len(valid_numbers)
     return {
         "matched": matched,
