@@ -1,0 +1,200 @@
+"""대화형 근거 기반 RAG Phase 1 — 질문 이해와 라우팅.
+
+지금 있는 함수(assess_gap 등)에 맞춰 질문을 끼워맞추는 게 아니라, "유연한 챗봇에 필요한 능력"을
+먼저 정하고(단일 기술 Gap/전체 Gap·우선순위/시장 수요 통계/행동 계획/공고 목록 조회/공고 비교) 그중
+없던 두 가지(공고 목록 조회, 공고 비교)를 이번에 새로 만들었다. `unanswerable`은 진짜 이 도메인
+데이터로 답할 수 없는 질문에만 쓴다 — 위 6개 능력 중 하나에 해당하는데 여기로 떨어지면 버그다.
+
+경위·설계 결정 상세는 `docs/rag-project-plans/conversational-rag/00_design.md` Phase 1 참고.
+"""
+import psycopg
+
+from llm.router import capture_snapshot, light_from_snapshot
+from rag.answer import (
+    generate_action_plan,
+    generate_sequenced_plan,
+    rank_priority_gaps,
+    summarize_strengths,
+)
+from rag.embed.base import EmbeddingProvider
+from rag.postgres.gap import assess_all_gaps, assess_gap, market_demand_hybrid
+
+QUERY_TYPES = [
+    "single_skill_gap",
+    "all_gaps",
+    "market_aggregate",
+    "action_plan",
+    "posting_list",
+    "posting_comparison",
+    "unanswerable",
+]
+
+CLASSIFY_SYSTEM = """당신은 채용 공고·후보자 프로필 RAG 시스템에 들어온 질문을 아래 7개 유형 중
+하나로 분류하고, 필요한 조건을 추출하는 라우터입니다.
+
+- single_skill_gap: 기술/개념 하나에 대해 후보자가 근거(경험)를 갖고 있는지 묻는 질문
+  (예: "AWS를 안 해봤으면 단점이 될까?", "저 Redis 경험 있어요?")
+- all_gaps: 여러 기술을 종합해서 강점·부족한 부분 전체를 묻는 질문 (예: "가장 부족한 스킬이 뭘까?",
+  "내 강점이 뭐야?") — 특정 기술 하나로 좁혀지지 않는 질문
+- market_aggregate: 시장에서 특정 기술을 요구하는 정도를 숫자로 묻는 질문 (예: "AWS 요구하는 공고
+  몇 개야?", "Redis 수요가 얼마나 돼?") — "몇 개/얼마나"처럼 개수·비율을 원하는 질문
+- action_plan: 부족한 부분을 어떻게 보완할지 순서·계획을 묻는 질문 (예: "뭘 준비해야 돼?", "어떤
+  순서로 공부하면 좋을까?")
+- posting_list: 특정 조건(기술·직무 등)에 맞는 공고를 목록으로 나열해달라는 질문 (예: "Redis
+  요구하는 공고 어디어디야?", "백엔드 공고 뭐 있어?") — "어디어디/뭐 있어"처럼 목록을 원하는 질문.
+  market_aggregate와 헷갈리지 말 것: 개수만 원하면 market_aggregate, 실제 목록을 원하면 posting_list.
+- posting_comparison: 특정 회사 둘 이상을 직접 비교해달라는 질문 (예: "네이버랑 카카오 공고 비교해줘")
+  — compare_targets에 언급된 회사명을 모두 추출
+- unanswerable: 위 6개 중 어디에도 해당하지 않는 질문. 채용/기술 gap과 관련 없는 완전히 다른 주제일
+  수도 있고, 이 도메인과 관련은 있지만 지금 갖고 있는 데이터(수집한 공고 원문, 후보자 프로필)로는
+  원천적으로 답할 수 없는 질문(예: "제가 이 회사에 최종 합격할 수 있을까요?" — 면접 결과나 미래
+  예측은 corpus에 없는 정보)일 수도 있다. 둘 다 unanswerable로 분류한다.
+
+skill 필드에는 질문에서 언급된 구체적 기술/개념명을 추출한다(단일 기술 gap·시장 수요·공고 목록
+질문일 때만 채움). compare_targets에는 posting_comparison일 때 언급된 회사명을 모두 배열로 담는다.
+질문에 없는 정보는 채우지 않는다 — 추측하지 않는다."""
+
+CLASSIFY_TOOL_NAME = "classify_rag_query"
+CLASSIFY_TOOL_DESCRIPTION = "질문을 7개 유형 중 하나로 분류하고 필요한 조건을 추출해 제출합니다."
+CLASSIFY_TOOL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "query_type": {"type": "string", "enum": QUERY_TYPES},
+        "skill": {
+            "type": "string",
+            "description": "질문에서 언급된 구체적 기술/개념명. 없으면 빈 문자열.",
+        },
+        "job_role": {
+            "type": "string",
+            "description": "질문에서 언급된 직무명(posting_list 필터용). 없으면 빈 문자열.",
+        },
+        "compare_targets": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "posting_comparison일 때 언급된 회사명 목록. 그 외엔 빈 배열.",
+        },
+    },
+    "required": ["query_type"],
+}
+
+UNANSWERABLE_MESSAGE = (
+    "이 질문은 지금 갖고 있는 데이터(수집한 채용 공고, 후보자 프로필)로는 답할 수 없습니다. 기술"
+    " gap·시장 수요·공고 조회·비교·행동 계획 관련 질문을 해주세요."
+)
+
+
+async def classify_query(question: str) -> dict:
+    snap = capture_snapshot()
+    light, light_model = light_from_snapshot(snap)
+    result = await light.extract_structured(
+        system=CLASSIFY_SYSTEM,
+        user=question,
+        tool_name=CLASSIFY_TOOL_NAME,
+        tool_description=CLASSIFY_TOOL_DESCRIPTION,
+        tool_schema=CLASSIFY_TOOL_SCHEMA,
+        model=light_model,
+        operation="RAG 질문 분류",
+        reasoning_effort=snap.reasoning_effort,
+    )
+    return result
+
+
+def list_postings(
+    conn: psycopg.Connection, skill: str = "", job_title: str = "", limit: int = 50
+) -> list[dict]:
+    """공고 목록 조회/필터 — 순수 SQL, LLM 호출 없음."""
+    if skill:
+        rows = conn.execute(
+            "SELECT p.slug, p.company_name, p.job_title FROM posting p"
+            " JOIN posting_skill ps ON ps.posting_id = p.id"
+            " WHERE ps.skill = %s ORDER BY p.company_name LIMIT %s",
+            (skill, limit),
+        ).fetchall()
+    elif job_title:
+        rows = conn.execute(
+            "SELECT slug, company_name, job_title FROM posting WHERE job_title ILIKE %s"
+            " ORDER BY company_name LIMIT %s",
+            (f"%{job_title}%", limit),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT slug, company_name, job_title FROM posting ORDER BY company_name LIMIT %s",
+            (limit,),
+        ).fetchall()
+    return [{"slug": r[0], "company_name": r[1], "job_title": r[2]} for r in rows]
+
+
+def compare_postings(conn: psycopg.Connection, company_names: list[str]) -> list[dict]:
+    """공고 비교 — posting의 구조화 필드를 그대로 나열(메인 앱 /api/companies/compare와 같은
+    원리). LLM 호출 없음 — "왜 더 나은지" 판단은 이번 범위 밖(Phase 2 하이브리드 검색 이후)."""
+    results = []
+    for name in company_names:
+        row = conn.execute(
+            "SELECT slug, company_name, job_title, tech_stack, benefits, stability,"
+            " employee_count, investment_stage, jobplanet_score, fit_score, strengths, gaps"
+            " FROM posting WHERE company_name ILIKE %s LIMIT 1",
+            (f"%{name}%",),
+        ).fetchone()
+        if not row:
+            results.append({"query": name, "found": False})
+            continue
+        results.append({
+            "query": name,
+            "found": True,
+            "slug": row[0],
+            "company_name": row[1],
+            "job_title": row[2],
+            "tech_stack": row[3],
+            "benefits": row[4],
+            "stability": row[5],
+            "employee_count": row[6],
+            "investment_stage": row[7],
+            "jobplanet_score": row[8],
+            "fit_score": row[9],
+            "strengths": row[10],
+            "gaps": row[11],
+        })
+    return results
+
+
+async def answer_query(conn: psycopg.Connection, question: str, embed_provider: EmbeddingProvider) -> dict:
+    classification = await classify_query(question)
+    query_type = classification.get("query_type", "unanswerable")
+    skill = classification.get("skill") or None
+
+    if query_type == "single_skill_gap" and skill:
+        gap_result = await assess_gap(conn, skill, embed_provider)
+        action_plan = None
+        if gap_result["evidence_level"] != "직접 근거":
+            action_plan = await generate_action_plan(gap_result)
+        return {"query_type": query_type, **gap_result, "action_plan": action_plan}
+
+    if query_type == "all_gaps":
+        results = await assess_all_gaps(conn, embed_provider)
+        return {
+            "query_type": query_type,
+            "priority_gaps": rank_priority_gaps(results),
+            "strengths": summarize_strengths(results),
+        }
+
+    if query_type == "market_aggregate" and skill:
+        demand = await market_demand_hybrid(conn, skill, embed_provider)
+        return {"query_type": query_type, "skill": skill, "market_demand": demand}
+
+    if query_type == "action_plan":
+        results = await assess_all_gaps(conn, embed_provider)
+        priority_gaps = rank_priority_gaps(results)
+        plan = await generate_sequenced_plan(priority_gaps) if priority_gaps else None
+        return {"query_type": query_type, "priority_gaps": priority_gaps, "plan": plan}
+
+    if query_type == "posting_list":
+        postings = list_postings(conn, skill=skill or "", job_title=classification.get("job_role") or "")
+        return {"query_type": query_type, "postings": postings}
+
+    if query_type == "posting_comparison":
+        names = classification.get("compare_targets") or []
+        return {"query_type": query_type, "comparison": compare_postings(conn, names)}
+
+    # unanswerable, 또는 skill이 필요한데 못 뽑은 경우 — 후자는 "미지원"이 아니라 분류 실패이므로
+    # 같은 안내 메시지로 정직하게 답하되 query_type은 그대로 남겨 프론트/로그에서 원인 구분 가능.
+    return {"query_type": "unanswerable", "message": UNANSWERABLE_MESSAGE}

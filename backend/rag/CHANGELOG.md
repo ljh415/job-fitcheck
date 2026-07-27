@@ -8,6 +8,27 @@
 상세 이력·설계 논의는 `docs/rag-project-plans/00_meta/HISTORY.md`(git 미추적)에 exhaustively
 기록돼 있음 — 이 파일은 그걸 압축한 요약.
 
+## rag-v0.14.0 — 대화형 근거 기반 RAG Phase 1: 질문 이해와 라우팅 (2026-07-27)
+
+자연어 질문(`POST /api/rag/ask`)이 7종류로 분류·라우팅되도록 신규 구현. 처음엔 "지금 있는 함수 종류"에
+맞춰 6개로 분류하려 했으나, "유연한 챗봇에 필요한 능력"을 먼저 정하는 방향으로 재검토 — 없던 능력(공고
+목록 조회, 공고 비교)도 이번에 새로 만듦.
+
+- **신규** `backend/rag/postgres/query_router.py`: `classify_query()`(Lightweight 티어, 7종 분류 —
+  단일 기술 Gap/전체 Gap/시장 수요 통계/행동 계획/공고 목록 조회/공고 비교/답변 불가), `answer_query()`
+  (라우팅), `list_postings()`/`compare_postings()`(순수 SQL, LLM 호출 없음)
+- **공고 비교용 구조화 필드 추가**: `posting` 테이블에 `tech_stack`/`benefits`/`stability`/
+  `employee_count`/`investment_stage`/`jobplanet_score`/`fit_score`/`strengths`/`gaps` 9개 컬럼 —
+  `ingest_postings()`가 이미 메모리에 읽어둔 frontmatter에서 그대로 뽑아옴(새 파싱 없음)
+- **신규 API** `POST /api/rag/ask`: 기존 `/gap-check`의 conn/embed_provider 생성·정리·예외 처리 패턴을
+  그대로 재사용(Codex 리뷰로 다듬어진 부분이라 새로 설계하지 않음)
+- `frontend/rag-test.html`에 자연어 질문 입력 섹션 추가, `query_type`별 렌더링 분기
+- 검증: 분류 정확도 7/7(실패했던 두 질문 포함, "몇 개"↔"어디어디" 핵심 구분 정확), 7종 전부 curl
+  end-to-end 확인(`posting_comparison`은 실제 corpus 회사 2곳으로), Playwright 브라우저 렌더링 확인,
+  기존 `/gap-check` 회귀 없음
+- **발견(범위 밖)**: `all_gaps`/`action_plan`은 13개 기술 순차 LLM 호출 구조라 45~54초 소요 실측
+  확인 — 기존에 알려진 지연시간 이슈와 동일 원인, 이번 범위 밖
+
 ## rag-v0.13.5 — Codex 5차 재리뷰 2건 추가 수정 (2026-07-24)
 
 rag-v0.13.4의 2건 수정을 재검토 요청 — 둘 다 요청 범위에서 해결 확인, conn 중복 close도 없음. 신규 Medium 1건·Low 1건 발견.

@@ -45,8 +45,10 @@ def ingest_postings(conn: psycopg.Connection) -> int:
             fm = post.metadata
 
         row = conn.execute(
-            "INSERT INTO posting (slug, company_name, job_title, industry, experience_required, collected_at, raw_path, raw_hash)"
-            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+            "INSERT INTO posting (slug, company_name, job_title, industry, experience_required,"
+            " collected_at, raw_path, raw_hash, tech_stack, benefits, stability, employee_count,"
+            " investment_stage, jobplanet_score, fit_score, strengths, gaps)"
+            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
             (
                 slug,
                 fm.get("company_name", ""),
@@ -56,6 +58,18 @@ def ingest_postings(conn: psycopg.Connection) -> int:
                 fm.get("created_at", ""),
                 str(raw_path),
                 _raw_hash(raw_text),
+                # 공고 비교(대화형 근거 기반 RAG Phase 1)용 — 이미 메모리에 있는 frontmatter에서
+                # 그대로 뽑아온다(새로 파싱하지 않음). 없으면 NULL(스칼라)/빈 배열 취급은 조회
+                # 쪽에서 처리.
+                fm.get("tech_stack"),
+                fm.get("benefits"),
+                fm.get("stability"),
+                fm.get("employee_count"),
+                fm.get("investment_stage"),
+                fm.get("jobplanet_score"),
+                fm.get("fit_score"),
+                fm.get("strengths"),
+                fm.get("gaps"),
             ),
         ).fetchone()
         posting_id = row[0]

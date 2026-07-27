@@ -20,12 +20,18 @@ from rag.embed.google import GoogleEmbeddingProvider
 from rag.embed.local import LocalEmbeddingProvider
 from rag.postgres.db import get_connection
 from rag.postgres.gap import assess_gap
+from rag.postgres.query_router import answer_query
 
 router = APIRouter(prefix="/api/rag")
 
 
 class GapCheckRequest(BaseModel):
     skill: str
+    provider: str = "google"  # "google" | "local"
+
+
+class AskRequest(BaseModel):
+    question: str
     provider: str = "google"  # "google" | "local"
 
 
@@ -101,3 +107,40 @@ async def gap_check(req: GapCheckRequest):
                 pass
         if conn is not None:
             conn.close()  # 명시적으로 닫아야 함 — GC(__del__)에 의존하면 idle in transaction 커넥션이 쌓일 수 있다(Codex 리뷰로 발견, 2026-07-23)
+
+
+@router.post("/ask")
+async def ask(req: AskRequest):
+    """대화형 근거 기반 RAG Phase 1 진입점 — 자연어 질문을 받아 query_router.answer_query()로
+    분류·라우팅한다. conn/embed_provider 생성·정리·예외 처리는 gap_check()와 동일한 패턴을
+    그대로 복제(Codex 리뷰로 다듬어진 부분이라 새로 설계하지 않음)."""
+    if req.provider not in ("google", "local"):
+        raise HTTPException(400, "provider는 'google' 또는 'local'만 가능합니다")
+
+    conn = None
+    embed_provider = None
+    try:
+        conn = get_connection()
+        embed_provider = GoogleEmbeddingProvider() if req.provider == "google" else LocalEmbeddingProvider()
+        result = await answer_query(conn, req.question, embed_provider)
+        result["provider"] = req.provider
+        return result
+    except LLMAPIError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(503, f"RAG 파이프라인 연결/설정 오류: {e}")
+    except httpx.HTTPError as e:
+        raise HTTPException(503, f"임베딩 서버 통신 오류: {e}")
+    except genai_errors.APIError as e:
+        raise HTTPException(503, f"Google 임베딩 API 오류: {e}")
+    except psycopg.OperationalError as e:
+        raise HTTPException(503, "DB 연결 오류 — 잠시 후 다시 시도하세요")
+    finally:
+        close = getattr(embed_provider, "close", None)
+        if close:
+            try:
+                close()
+            except Exception:
+                pass
+        if conn is not None:
+            conn.close()

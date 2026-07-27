@@ -25,6 +25,9 @@
   .rag-excerpt { font-size: .9em; color: var(--text-muted); border-left: 3px solid var(--border); padding-left: 10px; margin: 6px 0; }
   .rag-error { color: #991b1b; background: #fee2e2; padding: 10px 14px; border-radius: 6px; }
   .rag-note { font-size: .85em; color: var(--text-dimmed); margin-top: 24px; }
+  .rag-divider { border: none; border-top: 1px solid var(--border); margin: 32px 0; }
+  .rag-table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+  .rag-table th, .rag-table td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); font-size: .9em; }
 </style>
 </head>
 <body>
@@ -36,6 +39,7 @@
 
 <p class="rag-note">Plan A 6~7단계(Gap 판정 + 행동 계획) 파이프라인을 직접 호출하는 테스트 화면입니다. rag/main 브랜치 전용 — main 브랜치엔 없습니다.</p>
 
+<h3>기술명으로 바로 확인</h3>
 <form class="rag-form" onsubmit="runGapCheck(event)">
   <input type="text" id="skill-input" placeholder="기술/개념 (예: GCP, CI/CD, Kubernetes)" required />
   <select id="provider-select">
@@ -46,6 +50,20 @@
 </form>
 
 <div id="result"></div>
+
+<hr class="rag-divider" />
+
+<h3>자연어로 질문하기 (대화형 근거 기반 RAG — Phase 1)</h3>
+<form class="rag-form" onsubmit="runAsk(event)">
+  <input type="text" id="question-input" placeholder="예: AWS를 안 해봤으면 단점이 될까? / 가장 부족한 스킬이 뭘까? / Redis 요구하는 공고 어디어디야?" required />
+  <select id="ask-provider-select">
+    <option value="google">Google</option>
+    <option value="local">Local</option>
+  </select>
+  <button type="submit" id="ask-submit-btn">질문하기</button>
+</form>
+
+<div id="ask-result"></div>
 
 <script>
 const saved = localStorage.getItem('job-fitcheck-theme');
@@ -110,22 +128,21 @@ async function runGapCheck(event) {
   }
 }
 
-function render(data) {
+function renderGapCard(data) {
   const badgeClass = LEVEL_CLASS[data.evidence_level] || 'none';
   const demand = data.market_demand;
   let html = `
-    <div class="rag-result">
-      <h3>${escapeHtml(data.skill)} <span class="rag-badge ${badgeClass}">${escapeHtml(data.evidence_level)}</span></h3>
-      <div class="rag-section">
-        <h4>시장 수요 ${demand.method === 'exact' ? '' : '<span class="rag-badge partial">추정치</span>'}</h4>
-        <p>${demand.method === 'exact'
-          ? `전체 공고 ${demand.total}건 중 ${demand.matched}건 요구 (${(demand.ratio * 100).toFixed(1)}%)`
-          : `약 ${demand.matched}건 / 전체 ${demand.total}건 (${(demand.ratio * 100).toFixed(1)}%) — 임베딩+키워드 검색으로 모은 후보 ${demand.candidate_count ?? '?'}건 중 LLM이 판정한 추정치입니다. 정확한 전수 집계가 아닙니다.`}</p>
-      </div>
-      <div class="rag-section">
-        <h4>판정 근거</h4>
-        <p>${escapeHtml(data.reasoning)}</p>
-      </div>
+    <h3>${escapeHtml(data.skill)} <span class="rag-badge ${badgeClass}">${escapeHtml(data.evidence_level)}</span></h3>
+    <div class="rag-section">
+      <h4>시장 수요 ${demand.method === 'exact' ? '' : '<span class="rag-badge partial">추정치</span>'}</h4>
+      <p>${demand.method === 'exact'
+        ? `전체 공고 ${demand.total}건 중 ${demand.matched}건 요구 (${(demand.ratio * 100).toFixed(1)}%)`
+        : `약 ${demand.matched}건 / 전체 ${demand.total}건 (${(demand.ratio * 100).toFixed(1)}%) — 임베딩+키워드 검색으로 모은 후보 ${demand.candidate_count ?? '?'}건 중 LLM이 판정한 추정치입니다. 정확한 전수 집계가 아닙니다.`}</p>
+    </div>
+    <div class="rag-section">
+      <h4>판정 근거</h4>
+      <p>${escapeHtml(data.reasoning)}</p>
+    </div>
   `;
   if (data.excerpts && data.excerpts.length) {
     html += `<div class="rag-section"><h4>검색된 프로필 발췌문 (${data.excerpts.length}건)</h4>`;
@@ -145,8 +162,84 @@ function render(data) {
       </div>
     `;
   }
-  html += `<p class="rag-note">provider: ${escapeHtml(data.provider)}</p></div>`;
+  return html;
+}
+
+function render(data) {
+  const html = `<div class="rag-result">${renderGapCard(data)}<p class="rag-note">provider: ${escapeHtml(data.provider)}</p></div>`;
   document.getElementById('result').innerHTML = html;
+}
+
+async function runAsk(event) {
+  event.preventDefault();
+  const question = document.getElementById('question-input').value.trim();
+  const provider = document.getElementById('ask-provider-select').value;
+  const btn = document.getElementById('ask-submit-btn');
+  const resultEl = document.getElementById('ask-result');
+  if (!question) return;
+
+  btn.disabled = true;
+  btn.textContent = '질문하는 중...';
+  resultEl.innerHTML = '';
+
+  try {
+    const token = localStorage.getItem('job-fitcheck-token');
+    const res = await fetch('/api/rag/ask', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ question, provider }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `요청 실패 (${res.status})`);
+    }
+    const data = await res.json();
+    renderAsk(data);
+  } catch (e) {
+    resultEl.innerHTML = `<div class="rag-error">${escapeHtml(e.message)}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '질문하기';
+  }
+}
+
+function renderAsk(data) {
+  const resultEl = document.getElementById('ask-result');
+  const typeLabel = {
+    single_skill_gap: '단일 기술 Gap', all_gaps: '전체 Gap·강점', market_aggregate: '시장 수요 통계',
+    action_plan: '행동 계획', posting_list: '공고 목록', posting_comparison: '공고 비교', unanswerable: '답변 불가',
+  }[data.query_type] || data.query_type;
+  let inner = `<p class="rag-note">분류: <strong>${escapeHtml(typeLabel)}</strong></p>`;
+
+  if (data.query_type === 'single_skill_gap') {
+    inner += renderGapCard(data);
+  } else if (data.query_type === 'all_gaps') {
+    inner += '<div class="rag-section"><h4>우선순위 Gap</h4>' + (data.priority_gaps || []).map(g => `<div class="rag-excerpt">${escapeHtml(g.skill)} — <span class="rag-badge ${LEVEL_CLASS[g.evidence_level] || 'none'}">${escapeHtml(g.evidence_level)}</span></div>`).join('') + '</div>';
+    inner += '<div class="rag-section"><h4>강점</h4>' + (data.strengths || []).map(g => `<div class="rag-excerpt">${escapeHtml(g.skill)} — <span class="rag-badge ${LEVEL_CLASS[g.evidence_level] || 'none'}">${escapeHtml(g.evidence_level)}</span></div>`).join('') + '</div>';
+  } else if (data.query_type === 'market_aggregate') {
+    const demand = data.market_demand;
+    inner += `<div class="rag-section"><h4>${escapeHtml(data.skill)} 시장 수요</h4><p>전체 공고 ${demand.total}건 중 ${demand.matched}건 요구 (${(demand.ratio * 100).toFixed(1)}%)</p></div>`;
+  } else if (data.query_type === 'action_plan') {
+    inner += '<div class="rag-section"><h4>우선순위 Gap</h4>' + (data.priority_gaps || []).map(g => `<div class="rag-excerpt">${escapeHtml(g.skill)}</div>`).join('') + '</div>';
+    if (data.plan) {
+      inner += '<div class="rag-section"><h4>순서 계획</h4>' + (data.plan.phases || []).map(p => `<div class="rag-excerpt"><strong>${p.order}단계</strong> (${escapeHtml((p.skills || []).join(', '))}) — ${escapeHtml(p.activity)}<br/>완료조건: ${escapeHtml(p.completion_criteria)}</div>`).join('') + '</div>';
+    }
+  } else if (data.query_type === 'posting_list') {
+    const rows = (data.postings || []).map(p => `<tr><td>${escapeHtml(p.company_name)}</td><td>${escapeHtml(p.job_title)}</td></tr>`).join('');
+    inner += `<div class="rag-section"><h4>공고 목록 (${(data.postings || []).length}건)</h4><table class="rag-table"><tr><th>회사</th><th>직무</th></tr>${rows}</table></div>`;
+  } else if (data.query_type === 'posting_comparison') {
+    inner += '<div class="rag-section"><h4>공고 비교</h4>' + (data.comparison || []).map(c => c.found
+      ? `<div class="rag-excerpt"><strong>${escapeHtml(c.company_name)}</strong> — ${escapeHtml(c.job_title || '')}<br/>기술스택: ${escapeHtml((c.tech_stack || []).join(', ') || '정보 없음')}<br/>잡플래닛: ${c.jobplanet_score ?? '정보 없음'} / 적합도: ${c.fit_score ?? '정보 없음'}</div>`
+      : `<div class="rag-excerpt">"${escapeHtml(c.query)}" 관련 공고를 찾지 못했습니다.</div>`).join('') + '</div>';
+  } else {
+    inner += `<div class="rag-section"><p>${escapeHtml(data.message || '답변할 수 없는 질문입니다.')}</p></div>`;
+  }
+
+  inner += `<p class="rag-note">provider: ${escapeHtml(data.provider)}</p>`;
+  resultEl.innerHTML = `<div class="rag-result">${inner}</div>`;
 }
 
 function escapeHtml(s) {
