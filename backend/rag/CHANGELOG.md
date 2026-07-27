@@ -8,6 +8,21 @@
 상세 이력·설계 논의는 `docs/rag-project-plans/00_meta/HISTORY.md`(git 미추적)에 exhaustively
 기록돼 있음 — 이 파일은 그걸 압축한 요약.
 
+## rag-v0.16.0 — Phase 3: 답변에 판정 근거·표본 범위 노출 (2026-07-28)
+
+- `JUDGE_CANDIDATES_TOOL_SCHEMA`(`rag/gap.py`)를 `relevant_numbers`(정수 배열)에서 `relevant`
+  (번호+근거 객체 배열)로 확장 — LLM이 각 공고를 관련 있다고 판단한 근거(짧은 인용/요약)를 같이 반환.
+  이 스키마를 공유하는 두 호출부(`market_demand_hybrid()`, `judge_topic_postings()`) 모두 반영
+- `posting_list`(method="llm") 응답에 `evidence` 필드 추가, 프론트(`rag-test.html`)에 "판정 근거"
+  컬럼으로 표시
+- `market_aggregate` 응답에 정확매칭/LLM 추정 판정 구분 문구 추가(추정일 때 후보 개수·전체 미검토
+  안내 포함) — `single_skill_gap`(`renderGapCard`)에 이미 있던 패턴을 재사용
+- `all_gaps`/`action_plan`: 백엔드는 이미 `excerpts`/`reasoning`을 갖고 있었는데 프론트 렌더링에서
+  스킬명·근거수준만 보여주고 근거 텍스트를 안 보여주고 있었던 것 발견·수정(`renderSkillEvidenceCard()`)
+- 회귀 확인: `CANDIDATE_EVIDENCE` 10개 기준 Google provider로 9/10 일치(1건은 `TRACKED_SKILLS`
+  정확매칭 경로의 프로필 판정 차이로, 오늘 변경한 `JUDGE_CANDIDATES_*` 스키마와 무관). 로컬(Jina)
+  provider는 이 dev DB에 프로필 임베딩이 없어 비교 불가(기존 상태, 오늘 변경과 무관)
+
 ## rag-v0.15.0 — Phase 2: 서술형 주제 검색을 전체원문 LLM 판정으로 교체 (2026-07-28)
 
 `posting_list`의 자유 텍스트 주제(`TRACKED_SKILLS` 밖) 검색이 임베딩+FTS 후보 필터링(`_candidate_postings`)
