@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>RAG 테스트 — Job FitCheck</title>
 <link rel="stylesheet" href="/style.css" />
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
 <style>
   body { max-width: 720px; margin: 40px auto; padding: 0 20px; }
   .rag-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
@@ -31,12 +33,16 @@
   .rag-table th, .rag-table td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); font-size: .9em; }
   .rag-chat-panel { height: 560px; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 8px; padding: 12px; background: var(--bg-surface); }
   .rag-chat-panel .qa-input-row { border-top: 1px solid var(--border); }
-  .rag-chat-panel .qa-input-row input[type="text"] { flex: 1 1 auto; width: auto; min-width: 0; padding: 10px 12px; border: 1px solid var(--border-input); border-radius: 6px; background: var(--bg-surface); color: var(--text); }
+  .rag-chat-panel .qa-input-row textarea { flex: 1 1 auto; width: auto; min-width: 0; resize: none; padding: 10px 12px; border: 1px solid var(--border-input); border-radius: 6px; background: var(--bg-surface); color: var(--text); font-family: inherit; }
   .rag-chat-panel .qa-input-row select { flex: 0 0 auto; width: auto; padding: 10px 12px; border: 1px solid var(--border-input); border-radius: 6px; background: var(--bg-surface); color: var(--text); }
   .rag-chat-panel .qa-input-row button { flex: 0 0 auto; width: auto; white-space: nowrap; padding: 10px 18px; border: none; border-radius: 6px; background: var(--primary); color: var(--text-inverse); cursor: pointer; }
   .rag-chat-panel .qa-input-row button:disabled { opacity: .6; cursor: default; }
   .qa-bubble.assistant { max-width: 95%; }
   .qa-bubble.assistant .rag-section:first-child { margin-top: 0; }
+  .rag-markdown { font-size: .9em; line-height: 1.6; }
+  .rag-markdown p { margin: 4px 0; }
+  .rag-markdown h1, .rag-markdown h2, .rag-markdown h3 { font-size: 1em; margin: 8px 0 4px; }
+  .rag-markdown ul, .rag-markdown ol { margin: 4px 0; padding-left: 20px; }
 </style>
 </head>
 <body>
@@ -70,7 +76,7 @@
 <div class="rag-chat-panel">
   <div id="ask-result" class="qa-messages"></div>
   <form class="qa-input-row" onsubmit="runAsk(event)">
-    <input type="text" id="question-input" placeholder="예: AWS를 안 해봤으면 단점이 될까? / Redis 요구하는 공고 어디어디야? / (이어서) 그중에서 몇 개야?" required />
+    <textarea id="question-input" rows="2" placeholder="예: AWS를 안 해봤으면 단점이 될까? / Redis 요구하는 공고 어디어디야? / (이어서) 그중에서 몇 개야? (Shift+Enter 줄바꿈)" required></textarea>
     <select id="ask-provider-select">
       <option value="google">Google</option>
       <option value="local">Local</option>
@@ -105,6 +111,18 @@ const LEVEL_CLASS = {
   '인접 경험': 'adjacent',
   '근거 없음': 'none',
 };
+
+marked.setOptions({ breaks: true });
+
+function parseMarkdown(text) {
+  // 발췌문·판정 근거가 마크다운 이력서/LLM 산문이라 그대로 escape만 하면 **, ### 등이 글자 그대로
+  // 노출돼 지저분해 보임(메인 앱 QnA의 parseMarkdown()과 동일 로직 — app.js 안 불러오고 이 함수만 복제).
+  const normalized = (text || '').replace(/\*\*([^*\n]+?)\*\*/g, '<strong>$1</strong>');
+  let html = marked.parse(normalized);
+  html = html.replace(/==([^=\n]+)==/g, '<mark class="mark-pos">$1</mark>');
+  html = html.replace(/!!([^!\n]+)!!/g, '<mark class="mark-neg">$1</mark>');
+  return DOMPurify.sanitize(html, { ADD_ATTR: ['class'] });
+}
 
 async function runGapCheck(event) {
   event.preventDefault();
@@ -155,13 +173,13 @@ function renderGapCard(data) {
     </div>
     <div class="rag-section">
       <h4>판정 근거</h4>
-      <p>${escapeHtml(data.reasoning)}</p>
+      <div class="rag-markdown">${parseMarkdown(data.reasoning)}</div>
     </div>
   `;
   if (data.excerpts && data.excerpts.length) {
     html += `<div class="rag-section"><h4>검색된 프로필 발췌문 (${data.excerpts.length}건)</h4>`;
     for (const e of data.excerpts) {
-      html += `<div class="rag-excerpt">${escapeHtml(e)}</div>`;
+      html += `<div class="rag-excerpt rag-markdown">${parseMarkdown(e)}</div>`;
     }
     html += `</div>`;
   }
@@ -170,9 +188,9 @@ function renderGapCard(data) {
     html += `
       <div class="rag-section">
         <h4>행동 계획</h4>
-        <p><strong>활동:</strong> ${escapeHtml(ap.activity)}</p>
-        <p><strong>남길 증거:</strong> ${escapeHtml(ap.evidence_to_produce)}</p>
-        <p><strong>완료 조건:</strong> ${escapeHtml(ap.completion_criteria)}</p>
+        <p><strong>활동:</strong></p><div class="rag-markdown">${parseMarkdown(ap.activity)}</div>
+        <p><strong>남길 증거:</strong></p><div class="rag-markdown">${parseMarkdown(ap.evidence_to_produce)}</div>
+        <p><strong>완료 조건:</strong></p><div class="rag-markdown">${parseMarkdown(ap.completion_criteria)}</div>
       </div>
     `;
   }
@@ -183,10 +201,10 @@ function renderSkillEvidenceCard(g) {
   const badgeClass = LEVEL_CLASS[g.evidence_level] || 'none';
   let html = `<div class="rag-excerpt"><strong>${escapeHtml(g.skill)}</strong> — <span class="rag-badge ${badgeClass}">${escapeHtml(g.evidence_level)}</span>`;
   if (g.reasoning) {
-    html += `<p>${escapeHtml(g.reasoning)}</p>`;
+    html += `<div class="rag-markdown">${parseMarkdown(g.reasoning)}</div>`;
   }
   if (g.excerpts && g.excerpts.length) {
-    html += g.excerpts.map(e => `<p class="rag-note">발췌: ${escapeHtml(e)}</p>`).join('');
+    html += g.excerpts.map(e => `<div class="rag-note rag-markdown">발췌: ${parseMarkdown(e)}</div>`).join('');
   }
   html += `</div>`;
   return html;
@@ -332,7 +350,7 @@ function renderAskAnswer(data) {
   } else if (data.query_type === 'action_plan') {
     inner += '<div class="rag-section"><h4>우선순위 Gap</h4>' + (data.priority_gaps || []).map(renderSkillEvidenceCard).join('') + '</div>';
     if (data.plan) {
-      inner += '<div class="rag-section"><h4>순서 계획</h4>' + (data.plan.phases || []).map(p => `<div class="rag-excerpt"><strong>${p.order}단계</strong> (${escapeHtml((p.skills || []).join(', '))}) — ${escapeHtml(p.activity)}<br/>완료조건: ${escapeHtml(p.completion_criteria)}</div>`).join('') + '</div>';
+      inner += '<div class="rag-section"><h4>순서 계획</h4>' + (data.plan.phases || []).map(p => `<div class="rag-excerpt"><strong>${p.order}단계</strong> (${escapeHtml((p.skills || []).join(', '))})<div class="rag-markdown">${parseMarkdown(p.activity)}</div><p class="rag-note">완료조건:</p><div class="rag-markdown">${parseMarkdown(p.completion_criteria)}</div></div>`).join('') + '</div>';
     }
   } else if (data.query_type === 'posting_list') {
     const postings = data.postings || [];
@@ -357,6 +375,16 @@ function escapeHtml(s) {
   div.textContent = s ?? '';
   return div.innerHTML;
 }
+
+function handleAskKeydown(e) {
+  // Shift+Enter는 줄바꿈, Enter만 누르면 전송 — 메인 앱 QnA(app.js의 handleQAKeydown)와 동일 패턴.
+  // e.isComposing 체크는 한글 입력 중 조합 확정으로 눌리는 Enter까지 전송으로 오인하지 않기 위함.
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+    e.preventDefault();
+    e.target.closest('form').requestSubmit();
+  }
+}
+document.getElementById('question-input').addEventListener('keydown', handleAskKeydown);
 
 renderChatDropdown();
 switchChat(getCurrentChatId());
