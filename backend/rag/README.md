@@ -4,8 +4,8 @@ Job FitCheck가 이미 모아둔 채용공고 데이터와 본인 프로필을 �
 
 ## 한눈에 보기
 
-- **지금 상태**: Plan A·B 전체 완료 + "대화형 근거 기반 RAG" Phase 1(질문 이해와 라우팅)~Phase 4(멀티턴 대화)까지 전부 완료. Phase 5(평가)·"RAG 모듈 안정화"는 착수 전.
-- **멀티턴 대화(Phase 4 신규)**: `POST /api/rag/ask`가 `session_state`(작고 고정된 조건 객체 — query_type/skill/job_role/compare_targets)를 받아 "그중에서", "왜?" 같은 후속 질문에서 이전 조건을 이어받는다. 서버는 상태를 안 들고 있고(메인 앱 Q&A와 같은 원칙), `rag-test.html`이 채팅 세션별로 `localStorage`에 저장·전환(드롭다운 + "새 채팅" 버튼), 메인 앱 Q&A 탭과 같은 채팅 버블 레이아웃.
+- **지금 상태**: Plan A·B 전체 완료 + "대화형 근거 기반 RAG" Phase 1~4 구현·검증 완료. **다만 Phase 1의 "질문 분류→고정 함수 실행" 방식은 구조적 결함(애매한 질문에 무관한 답)이 실사용 중 발견돼, Agentic RAG(Agent가 RAG 도구들을 스스로 선택·조합) 구조로 전환 중(진행 중, 전수 검증 전)** — 상세는 아래 6번, `conversational-rag/00_design.md`의 "아키텍처 전환" 섹션.
+- **정체성 — Agentic RAG**: `POST /api/rag/ask`는 이제 질문을 고정 분류하지 않는다. `assess_skill_gap`/`list_matching_postings`/`get_market_demand` 등 RAG 동작(검색 후 LLM 판정) 하나하나를 도구로 노출하고, Claude가 질문마다 무엇을 몇 개나 쓸지 스스로 판단해 답을 종합한다(`rag/postgres/agent.py`, `llm/anthropic.py`의 `run_agent()`). 도구 선택은 코드 분기가 아니라 Anthropic API의 `tool_choice` 기본값(`auto`)에 위임돼 있다.
 - **실제 서비스 경로**: `POST /api/rag/gap-check`(기술명 직접 지정) + `POST /api/rag/ask`(자연어 질문 → 7종 분류·라우팅) → `backend/rag/postgres/` (PostgreSQL+pgvector). SQLite 코드(`backend/rag/*.py`)는 삭제 안 하고 Plan A 검증 결과 재현용으로만 남아있음 — 지금 웹 UI는 이 코드를 안 씀.
 - **자유 텍스트 주제 검색(Phase 2 신규)**: `posting_list`에서 `TRACKED_SKILLS` 밖 자유 텍스트 주제는 임베딩/FTS로 후보를 미리 거르지 않고 `judge_topic_postings()`가 공고 전체 원문을 LLM에 판정시킨다(`method="llm"` 기본값) — 이 corpus 규모(공고 수십~백 건)에서는 코사인 유사도·reranker 절대점수 모두 관련/무관을 못 가른다는 게 실측으로 확인돼(`docs/rag-project-plans/00_meta/HISTORY.md` 2026-07-28 항목), 점수 필터링 자체를 없애는 쪽을 택함. `method="local"`(벡터 검색만, LLM 호출 없음)은 비교·실험용으로 병존.
 - **핵심 수치**: 검색 품질(Precision@5/Recall@10) — FTS5 0.75/0.41, Google 임베딩 0.68/0.33, 로컬 임베딩(Jina v5-text-small) 0.65/0.42. Gap 판정 정확도 10/10(정답지 기준).
