@@ -29,6 +29,14 @@
   .rag-divider { border: none; border-top: 1px solid var(--border); margin: 32px 0; }
   .rag-table { width: 100%; border-collapse: collapse; margin-top: 8px; }
   .rag-table th, .rag-table td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); font-size: .9em; }
+  .rag-chat-panel { height: 560px; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 8px; padding: 12px; background: var(--bg-surface); }
+  .rag-chat-panel .qa-input-row { border-top: 1px solid var(--border); }
+  .rag-chat-panel .qa-input-row input[type="text"] { flex: 1 1 auto; width: auto; min-width: 0; padding: 10px 12px; border: 1px solid var(--border-input); border-radius: 6px; background: var(--bg-surface); color: var(--text); }
+  .rag-chat-panel .qa-input-row select { flex: 0 0 auto; width: auto; padding: 10px 12px; border: 1px solid var(--border-input); border-radius: 6px; background: var(--bg-surface); color: var(--text); }
+  .rag-chat-panel .qa-input-row button { flex: 0 0 auto; width: auto; white-space: nowrap; padding: 10px 18px; border: none; border-radius: 6px; background: var(--primary); color: var(--text-inverse); cursor: pointer; }
+  .rag-chat-panel .qa-input-row button:disabled { opacity: .6; cursor: default; }
+  .qa-bubble.assistant { max-width: 95%; }
+  .qa-bubble.assistant .rag-section:first-child { margin-top: 0; }
 </style>
 </head>
 <body>
@@ -59,16 +67,17 @@
   <select id="chat-select" onchange="switchChat(this.value)"></select>
   <button type="button" id="new-chat-btn" onclick="createNewChat()">+ 새 채팅</button>
 </div>
-<form class="rag-form" onsubmit="runAsk(event)">
-  <input type="text" id="question-input" placeholder="예: AWS를 안 해봤으면 단점이 될까? / Redis 요구하는 공고 어디어디야? / (이어서) 그중에서 몇 개야?" required />
-  <select id="ask-provider-select">
-    <option value="google">Google</option>
-    <option value="local">Local</option>
-  </select>
-  <button type="submit" id="ask-submit-btn">질문하기</button>
-</form>
-
-<div id="ask-result"></div>
+<div class="rag-chat-panel">
+  <div id="ask-result" class="qa-messages"></div>
+  <form class="qa-input-row" onsubmit="runAsk(event)">
+    <input type="text" id="question-input" placeholder="예: AWS를 안 해봤으면 단점이 될까? / Redis 요구하는 공고 어디어디야? / (이어서) 그중에서 몇 개야?" required />
+    <select id="ask-provider-select">
+      <option value="google">Google</option>
+      <option value="local">Local</option>
+    </select>
+    <button type="submit" id="ask-submit-btn">전송</button>
+  </form>
+</div>
 
 <script>
 const saved = localStorage.getItem('job-fitcheck-theme');
@@ -242,12 +251,12 @@ function switchChat(chatId) {
 
 function renderThread(messages) {
   const resultEl = document.getElementById('ask-result');
+  resultEl.className = 'qa-messages';
   resultEl.innerHTML = messages.map(m => `
-    <div class="rag-result" style="margin-bottom:12px;">
-      <p class="rag-note"><strong>Q.</strong> ${escapeHtml(m.question)}</p>
-      ${renderAskAnswer(m.data)}
-    </div>
+    <div class="qa-bubble user">${escapeHtml(m.question)}</div>
+    <div class="qa-bubble assistant">${renderAskAnswer(m.data)}</div>
   `).join('');
+  resultEl.scrollTop = resultEl.scrollHeight;
 }
 
 async function runAsk(event) {
@@ -263,8 +272,13 @@ async function runAsk(event) {
   const chat = chats[chatId];
 
   btn.disabled = true;
-  btn.textContent = '질문하는 중...';
-  resultEl.innerHTML += '<div class="rag-loading">답변을 생성하고 있습니다. 질문 종류에 따라 최대 30~40초 정도 걸릴 수 있습니다...</div>';
+  btn.textContent = '전송 중...';
+  resultEl.className = 'qa-messages';
+  resultEl.innerHTML += `
+    <div class="qa-bubble user">${escapeHtml(question)}</div>
+    <div class="qa-bubble assistant rag-loading">답변을 생성하고 있습니다. 질문 종류에 따라 최대 30~40초 정도 걸릴 수 있습니다...</div>
+  `;
+  resultEl.scrollTop = resultEl.scrollHeight;
 
   try {
     const token = localStorage.getItem('job-fitcheck-token');
@@ -289,10 +303,11 @@ async function runAsk(event) {
     renderThread(chat.messages);
     document.getElementById('question-input').value = '';
   } catch (e) {
+    renderThread(chat.messages);
     resultEl.innerHTML += `<div class="rag-error">${escapeHtml(e.message)}</div>`;
   } finally {
     btn.disabled = false;
-    btn.textContent = '질문하기';
+    btn.textContent = '전송';
   }
 }
 
