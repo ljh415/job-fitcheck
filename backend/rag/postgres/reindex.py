@@ -85,9 +85,33 @@ def _run_with_conn(conn, provider_name: str, include_profile: bool) -> None:
         )
         if include_profile:
             profile_changed, n_profile_chunks = populate_candidate_profile_chunks(conn)
-            _warn_other_providers_stale(1 if profile_changed else 0, "프로필")
             n_profile_embedded = run_embedding_pipeline(conn, provider, source_type="candidate_profile")
             print(f"프로필 청크 {n_profile_chunks}개, 임베딩 완료: {n_profile_embedded}개")
+            # 프로필 청크가 바뀌면(document_chunk가 새 id로 재생성) 모든 provider의 기존 임베딩이
+            # 함께 삭제되는데, 예전엔 --provider로 지정한 것 하나만 다시 채우고 나머지는 경고만
+            # 남긴 뒤 방치됐다 — 경고가 CLI stdout 한 줄이라 놓치기 쉬웠고, 실제로 이 방식으로
+            # local provider 프로필 임베딩이 통째로 빠진 채 방치된 사고가 있었다(2026-07-28 발견).
+            # 이제 감지되면 나머지 provider도 바로 재임베딩을 시도한다 — 특정 provider 인프라가
+            # 그 순간 죽어있어도(예: 3050Ti 터널) 그것만 실패로 격리하고 나머지는 계속 진행한다.
+            if profile_changed and other_providers:
+                for other_name in other_providers:
+                    other_provider = None
+                    try:
+                        other_provider = PROVIDERS[other_name]()
+                        n = run_embedding_pipeline(conn, other_provider, source_type="candidate_profile")
+                        print(f"프로필 {other_name} 임베딩도 자동 재생성 완료: {n}개")
+                    except Exception as e:
+                        print(
+                            f"주의: 프로필 {other_name} 임베딩 자동 재생성 실패({e}) — 나중에"
+                            f" `--provider {other_name} --include-profile`로 직접 재색인하세요."
+                        )
+                    finally:
+                        close = getattr(other_provider, "close", None)
+                        if close:
+                            try:
+                                close()
+                            except Exception:
+                                pass
     finally:
         # conn은 여기서 안 닫는다 — 호출부인 run()의 finally가 담당(prune_deleted_postings()/
         # populate_posting_chunks() 실패 경로까지 한곳에서 책임지기 위해, 중복 close 방지).
