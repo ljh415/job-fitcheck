@@ -43,6 +43,8 @@
   .rag-markdown p { margin: 4px 0; }
   .rag-markdown h1, .rag-markdown h2, .rag-markdown h3 { font-size: 1em; margin: 8px 0 4px; }
   .rag-markdown ul, .rag-markdown ol { margin: 4px 0; padding-left: 20px; }
+  .rag-tool-result { font-size: .8em; overflow-x: auto; white-space: pre-wrap; word-break: break-word; background: var(--bg-surface); padding: 6px; border-radius: 4px; margin-top: 4px; }
+  details.rag-excerpt summary { cursor: pointer; }
 </style>
 </head>
 <body>
@@ -72,6 +74,7 @@
 <div class="rag-form">
   <select id="chat-select" onchange="switchChat(this.value)"></select>
   <button type="button" id="new-chat-btn" onclick="createNewChat()">+ 새 채팅</button>
+  <button type="button" id="delete-chat-btn" onclick="deleteCurrentChat()">🗑 삭제</button>
 </div>
 <div class="rag-chat-panel">
   <div id="ask-result" class="qa-messages"></div>
@@ -242,6 +245,18 @@ function createNewChat() {
   renderThread([]);
 }
 
+function deleteCurrentChat() {
+  const chats = loadChats();
+  const currentId = getCurrentChatId();
+  if (!currentId || !chats[currentId]) return;
+  if (!confirm('이 채팅을 삭제하시겠습니까?')) return;
+  delete chats[currentId];
+  saveChats(chats);
+  localStorage.removeItem(RAG_CURRENT_CHAT_KEY);
+  renderChatDropdown();
+  switchChat(getCurrentChatId());
+}
+
 function renderChatDropdown() {
   const chats = loadChats();
   const select = document.getElementById('chat-select');
@@ -291,6 +306,7 @@ async function runAsk(event) {
 
   btn.disabled = true;
   btn.textContent = '전송 중...';
+  document.getElementById('question-input').value = '';  // 채팅 UX상 전송 즉시 비움(응답 기다리는 동안 X)
   resultEl.className = 'qa-messages';
   resultEl.innerHTML += `
     <div class="qa-bubble user">${escapeHtml(question)}</div>
@@ -300,13 +316,20 @@ async function runAsk(event) {
 
   try {
     const token = localStorage.getItem('job-fitcheck-token');
+    // Agent는 session_state가 아니라 실제 대화 history를 본다 — 이전 turn의 질문/답변을
+    // Anthropic 메시지 포맷(role+content)으로 그대로 넘긴다.
+    const history = [];
+    for (const m of chat.messages) {
+      history.push({ role: 'user', content: m.question });
+      history.push({ role: 'assistant', content: (m.data && m.data.answer) || '' });
+    }
     const res = await fetch('/api/rag/ask', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
       },
-      body: JSON.stringify({ question, provider, session_state: chat.sessionState }),
+      body: JSON.stringify({ question, provider, history }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
@@ -314,12 +337,10 @@ async function runAsk(event) {
     }
     const data = await res.json();
     chat.messages.push({ question, data });
-    chat.sessionState = data.session_state || null;
     if (!chat.title) chat.title = question.slice(0, 24) + (question.length > 24 ? '…' : '');
     saveChats(chats);
     renderChatDropdown();
     renderThread(chat.messages);
-    document.getElementById('question-input').value = '';
   } catch (e) {
     renderThread(chat.messages);
     resultEl.innerHTML += `<div class="rag-error">${escapeHtml(e.message)}</div>`;
@@ -330,42 +351,16 @@ async function runAsk(event) {
 }
 
 function renderAskAnswer(data) {
-  const typeLabel = {
-    single_skill_gap: '단일 기술 Gap', all_gaps: '전체 Gap·강점', market_aggregate: '시장 수요 통계',
-    action_plan: '행동 계획', posting_list: '공고 목록', posting_comparison: '공고 비교', unanswerable: '답변 불가',
-  }[data.query_type] || data.query_type;
-  let inner = `<p class="rag-note">분류: <strong>${escapeHtml(typeLabel)}</strong></p>`;
-
-  if (data.query_type === 'single_skill_gap') {
-    inner += renderGapCard(data);
-  } else if (data.query_type === 'all_gaps') {
-    inner += '<div class="rag-section"><h4>우선순위 Gap</h4>' + (data.priority_gaps || []).map(renderSkillEvidenceCard).join('') + '</div>';
-    inner += '<div class="rag-section"><h4>강점</h4>' + (data.strengths || []).map(renderSkillEvidenceCard).join('') + '</div>';
-  } else if (data.query_type === 'market_aggregate') {
-    const demand = data.market_demand;
-    const methodNote = demand.method === 'exact'
-      ? '정확 매칭(구조화 데이터 기준, 전체 공고 대상)'
-      : `LLM 추정 판정(검색으로 모은 후보 ${demand.candidate_count}건만 대상 — 전체 공고를 다 본 결과가 아님)`;
-    inner += `<div class="rag-section"><h4>${escapeHtml(data.skill)} 시장 수요</h4><p>전체 공고 ${demand.total}건 중 ${demand.matched}건 요구 (${(demand.ratio * 100).toFixed(1)}%)</p><p class="rag-note">${escapeHtml(methodNote)}</p></div>`;
-  } else if (data.query_type === 'action_plan') {
-    inner += '<div class="rag-section"><h4>우선순위 Gap</h4>' + (data.priority_gaps || []).map(renderSkillEvidenceCard).join('') + '</div>';
-    if (data.plan) {
-      inner += '<div class="rag-section"><h4>순서 계획</h4>' + (data.plan.phases || []).map(p => `<div class="rag-excerpt"><strong>${p.order}단계</strong> (${escapeHtml((p.skills || []).join(', '))})<div class="rag-markdown">${parseMarkdown(p.activity)}</div><p class="rag-note">완료조건:</p><div class="rag-markdown">${parseMarkdown(p.completion_criteria)}</div></div>`).join('') + '</div>';
+  // Agent 응답: {answer, tool_calls, provider} — 옛 분류 기반 응답({query_type, postings, ...})과
+  // 완전히 다른 형태라 렌더링도 새로 짠다(2026-07-28, Agent 전환).
+  let inner = `<div class="rag-markdown">${parseMarkdown(data.answer || '(응답 없음)')}</div>`;
+  if (data.tool_calls && data.tool_calls.length) {
+    inner += `<div class="rag-section"><h4>사용한 도구 (${data.tool_calls.length}건)</h4>`;
+    for (const tc of data.tool_calls) {
+      inner += `<details class="rag-excerpt"><summary>${escapeHtml(tc.tool)}(${escapeHtml(JSON.stringify(tc.args))})</summary><pre class="rag-tool-result">${escapeHtml(JSON.stringify(tc.result, null, 2))}</pre></details>`;
     }
-  } else if (data.query_type === 'posting_list') {
-    const postings = data.postings || [];
-    const hasEvidence = postings.some(p => p.evidence);
-    const rows = postings.map(p => `<tr><td>${escapeHtml(p.company_name)}</td><td>${escapeHtml(p.job_title)}</td>${hasEvidence ? `<td>${escapeHtml(p.evidence || '(정확 매칭 — 근거 문장 없음)')}</td>` : ''}</tr>`).join('');
-    const evidenceHeader = hasEvidence ? '<th>판정 근거</th>' : '';
-    inner += `<div class="rag-section"><h4>공고 목록 (${postings.length}건)</h4><table class="rag-table"><tr><th>회사</th><th>직무</th>${evidenceHeader}</tr>${rows}</table></div>`;
-  } else if (data.query_type === 'posting_comparison') {
-    inner += '<div class="rag-section"><h4>공고 비교</h4>' + (data.comparison || []).map(c => c.found
-      ? `<div class="rag-excerpt"><strong>${escapeHtml(c.company_name)}</strong> — ${escapeHtml(c.job_title || '')}<br/>기술스택: ${escapeHtml((c.tech_stack || []).join(', ') || '정보 없음')}<br/>잡플래닛: ${c.jobplanet_score ?? '정보 없음'} / 적합도: ${c.fit_score ?? '정보 없음'}</div>`
-      : `<div class="rag-excerpt">"${escapeHtml(c.query)}" 관련 공고를 찾지 못했습니다.</div>`).join('') + '</div>';
-  } else {
-    inner += `<div class="rag-section"><p>${escapeHtml(data.message || '답변할 수 없는 질문입니다.')}</p></div>`;
+    inner += `</div>`;
   }
-
   inner += `<p class="rag-note">provider: ${escapeHtml(data.provider)}</p>`;
   return inner;
 }
