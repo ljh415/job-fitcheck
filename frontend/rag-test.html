@@ -54,9 +54,13 @@
 
 <hr class="rag-divider" />
 
-<h3>자연어로 질문하기 (대화형 근거 기반 RAG — Phase 1)</h3>
+<h3>자연어로 질문하기 (대화형 근거 기반 RAG — Phase 1~4)</h3>
+<div class="rag-form">
+  <select id="chat-select" onchange="switchChat(this.value)"></select>
+  <button type="button" id="new-chat-btn" onclick="createNewChat()">+ 새 채팅</button>
+</div>
 <form class="rag-form" onsubmit="runAsk(event)">
-  <input type="text" id="question-input" placeholder="예: AWS를 안 해봤으면 단점이 될까? / 가장 부족한 스킬이 뭘까? / Redis 요구하는 공고 어디어디야?" required />
+  <input type="text" id="question-input" placeholder="예: AWS를 안 해봤으면 단점이 될까? / Redis 요구하는 공고 어디어디야? / (이어서) 그중에서 몇 개야?" required />
   <select id="ask-provider-select">
     <option value="google">Google</option>
     <option value="local">Local</option>
@@ -184,6 +188,68 @@ function render(data) {
   document.getElementById('result').innerHTML = html;
 }
 
+const RAG_CHATS_KEY = 'job-fitcheck-rag-chats';
+const RAG_CURRENT_CHAT_KEY = 'job-fitcheck-rag-current-chat';
+
+function loadChats() {
+  return JSON.parse(localStorage.getItem(RAG_CHATS_KEY) || '{}');
+}
+function saveChats(chats) {
+  localStorage.setItem(RAG_CHATS_KEY, JSON.stringify(chats));
+}
+function getCurrentChatId() {
+  return localStorage.getItem(RAG_CURRENT_CHAT_KEY);
+}
+function setCurrentChatId(id) {
+  localStorage.setItem(RAG_CURRENT_CHAT_KEY, id);
+}
+
+function createNewChat() {
+  const chats = loadChats();
+  const id = `chat-${Date.now()}`;
+  chats[id] = { title: null, createdAt: Date.now(), messages: [], sessionState: null };
+  saveChats(chats);
+  setCurrentChatId(id);
+  document.getElementById('question-input').value = '';
+  renderChatDropdown();
+  renderThread([]);
+}
+
+function renderChatDropdown() {
+  const chats = loadChats();
+  const select = document.getElementById('chat-select');
+  let ids = Object.keys(chats).sort((a, b) => chats[b].createdAt - chats[a].createdAt);
+  if (ids.length === 0) {
+    createNewChat();
+    return;
+  }
+  let current = getCurrentChatId();
+  if (!current || !chats[current]) {
+    current = ids[0];
+    setCurrentChatId(current);
+  }
+  select.innerHTML = ids.map(id => {
+    const title = chats[id].title || '(새 채팅)';
+    return `<option value="${id}" ${id === current ? 'selected' : ''}>${escapeHtml(title)}</option>`;
+  }).join('');
+}
+
+function switchChat(chatId) {
+  setCurrentChatId(chatId);
+  const chats = loadChats();
+  renderThread((chats[chatId] && chats[chatId].messages) || []);
+}
+
+function renderThread(messages) {
+  const resultEl = document.getElementById('ask-result');
+  resultEl.innerHTML = messages.map(m => `
+    <div class="rag-result" style="margin-bottom:12px;">
+      <p class="rag-note"><strong>Q.</strong> ${escapeHtml(m.question)}</p>
+      ${renderAskAnswer(m.data)}
+    </div>
+  `).join('');
+}
+
 async function runAsk(event) {
   event.preventDefault();
   const question = document.getElementById('question-input').value.trim();
@@ -192,9 +258,13 @@ async function runAsk(event) {
   const resultEl = document.getElementById('ask-result');
   if (!question) return;
 
+  const chats = loadChats();
+  const chatId = getCurrentChatId();
+  const chat = chats[chatId];
+
   btn.disabled = true;
   btn.textContent = '질문하는 중...';
-  resultEl.innerHTML = '<div class="rag-loading">답변을 생성하고 있습니다. 질문 종류에 따라 최대 30~40초 정도 걸릴 수 있습니다...</div>';
+  resultEl.innerHTML += '<div class="rag-loading">답변을 생성하고 있습니다. 질문 종류에 따라 최대 30~40초 정도 걸릴 수 있습니다...</div>';
 
   try {
     const token = localStorage.getItem('job-fitcheck-token');
@@ -204,24 +274,29 @@ async function runAsk(event) {
         'Content-Type': 'application/json',
         ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
       },
-      body: JSON.stringify({ question, provider }),
+      body: JSON.stringify({ question, provider, session_state: chat.sessionState }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.detail || `요청 실패 (${res.status})`);
     }
     const data = await res.json();
-    renderAsk(data);
+    chat.messages.push({ question, data });
+    chat.sessionState = data.session_state || null;
+    if (!chat.title) chat.title = question.slice(0, 24) + (question.length > 24 ? '…' : '');
+    saveChats(chats);
+    renderChatDropdown();
+    renderThread(chat.messages);
+    document.getElementById('question-input').value = '';
   } catch (e) {
-    resultEl.innerHTML = `<div class="rag-error">${escapeHtml(e.message)}</div>`;
+    resultEl.innerHTML += `<div class="rag-error">${escapeHtml(e.message)}</div>`;
   } finally {
     btn.disabled = false;
     btn.textContent = '질문하기';
   }
 }
 
-function renderAsk(data) {
-  const resultEl = document.getElementById('ask-result');
+function renderAskAnswer(data) {
   const typeLabel = {
     single_skill_gap: '단일 기술 Gap', all_gaps: '전체 Gap·강점', market_aggregate: '시장 수요 통계',
     action_plan: '행동 계획', posting_list: '공고 목록', posting_comparison: '공고 비교', unanswerable: '답변 불가',
@@ -259,7 +334,7 @@ function renderAsk(data) {
   }
 
   inner += `<p class="rag-note">provider: ${escapeHtml(data.provider)}</p>`;
-  resultEl.innerHTML = `<div class="rag-result">${inner}</div>`;
+  return inner;
 }
 
 function escapeHtml(s) {
@@ -267,6 +342,9 @@ function escapeHtml(s) {
   div.textContent = s ?? '';
   return div.innerHTML;
 }
+
+renderChatDropdown();
+switchChat(getCurrentChatId());
 </script>
 
 </body>

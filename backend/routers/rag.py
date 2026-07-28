@@ -34,6 +34,7 @@ class AskRequest(BaseModel):
     question: str
     provider: str = "google"  # "google" | "local" — 임베딩 provider
     method: str = "llm"  # "llm" | "local" — posting_list 자유 텍스트 주제 판정 방식
+    session_state: dict | None = None  # 직전 턴에서 돌려받은 상태(멀티턴 조건 이어받기, Phase 4)
 
 
 @router.post("/gap-check")
@@ -125,7 +126,7 @@ async def ask(req: AskRequest):
     try:
         conn = get_connection()
         embed_provider = GoogleEmbeddingProvider() if req.provider == "google" else LocalEmbeddingProvider()
-        result = await answer_query(conn, req.question, embed_provider, method=req.method)
+        result = await answer_query(conn, req.question, embed_provider, method=req.method, session_state=req.session_state)
         result["provider"] = req.provider
         return result
     except LLMAPIError as e:

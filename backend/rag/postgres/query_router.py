@@ -7,6 +7,8 @@
 
 경위·설계 결정 상세는 `docs/rag-project-plans/conversational-rag/00_design.md` Phase 1 참고.
 """
+import json
+
 import psycopg
 
 from llm.router import capture_snapshot, high_from_snapshot, light_from_snapshot
@@ -62,7 +64,15 @@ CLASSIFY_SYSTEM = """당신은 채용 공고·후보자 프로필 RAG 시스템�
 
 skill 필드에는 질문에서 언급된 구체적 기술/개념명을 추출한다(단일 기술 gap·시장 수요·공고 목록
 질문일 때만 채움). compare_targets에는 posting_comparison일 때 언급된 회사명을 모두 배열로 담는다.
-질문에 없는 정보는 채우지 않는다 — 추측하지 않는다."""
+질문에 없는 정보는 채우지 않는다 — 추측하지 않는다.
+
+이전 대화 상태가 함께 주어질 수 있다(직전 턴에서 쓰인 query_type/skill/job_role/compare_targets):
+- 질문이 "그중에서", "거기서", "그거", "왜?" 등으로 이전 답변을 참조하면, 질문 자체에 새로 언급되지
+  않은 필드는 이전 상태 값을 그대로 이어받아 채운다.
+- 질문이 새로운 기술/직무/회사명을 명확히 언급하면, 그 필드는 이전 상태를 무시하고 새로 추출한 값을
+  쓴다(주제가 바뀐 것이므로).
+- 이전 대화 상태가 없거나 질문이 이전 내용과 무관한 완전히 새로운 주제면, 이전 상태를 참고하지 않고
+  질문만으로 처음부터 분류한다."""
 
 CLASSIFY_TOOL_NAME = "classify_rag_query"
 CLASSIFY_TOOL_DESCRIPTION = "질문을 7개 유형 중 하나로 분류하고 필요한 조건을 추출해 제출합니다."
@@ -93,12 +103,15 @@ UNANSWERABLE_MESSAGE = (
 )
 
 
-async def classify_query(question: str) -> dict:
+async def classify_query(question: str, session_state: dict | None = None) -> dict:
+    user = question
+    if session_state:
+        user = f"이전 대화 상태: {json.dumps(session_state, ensure_ascii=False)}\n\n질문: {question}"
     snap = capture_snapshot()
     light, light_model = light_from_snapshot(snap)
     result = await light.extract_structured(
         system=CLASSIFY_SYSTEM,
-        user=question,
+        user=user,
         tool_name=CLASSIFY_TOOL_NAME,
         tool_description=CLASSIFY_TOOL_DESCRIPTION,
         tool_schema=CLASSIFY_TOOL_SCHEMA,
@@ -244,49 +257,64 @@ async def judge_topic_postings(
 
 
 async def answer_query(
-    conn: psycopg.Connection, question: str, embed_provider: EmbeddingProvider, method: str = "llm"
+    conn: psycopg.Connection,
+    question: str,
+    embed_provider: EmbeddingProvider,
+    method: str = "llm",
+    session_state: dict | None = None,
 ) -> dict:
-    classification = await classify_query(question)
+    classification = await classify_query(question, session_state)
     query_type = classification.get("query_type", "unanswerable")
     skill = classification.get("skill") or None
+    job_role = classification.get("job_role") or None
+    compare_targets = classification.get("compare_targets") or []
+    # 이번 턴에 실제로 쓰인 조건 — 다음 턴에 프론트가 그대로 돌려보내면 후속 질문("그중에서" 등)이
+    # 이걸 이어받는다. 배열로 계속 쌓이는 대화 로그가 아니라, 매 턴 덮어써지는 작은 상태 하나다
+    # (설계 근거: `conversational-rag/00_design.md` Phase 4 "필요한 직무·필터·공고 참조만 유지").
+    new_session_state = {
+        "query_type": query_type, "skill": skill, "job_role": job_role, "compare_targets": compare_targets,
+    }
 
     if query_type == "single_skill_gap" and skill:
         gap_result = await assess_gap(conn, skill, embed_provider)
         action_plan = None
         if gap_result["evidence_level"] != "직접 근거":
             action_plan = await generate_action_plan(gap_result)
-        return {"query_type": query_type, **gap_result, "action_plan": action_plan}
+        result = {"query_type": query_type, **gap_result, "action_plan": action_plan}
 
-    if query_type == "all_gaps":
+    elif query_type == "all_gaps":
         results = await assess_all_gaps(conn, embed_provider)
-        return {
+        result = {
             "query_type": query_type,
             "priority_gaps": rank_priority_gaps(results),
             "strengths": summarize_strengths(results),
         }
 
-    if query_type == "market_aggregate" and skill:
+    elif query_type == "market_aggregate" and skill:
         demand = await market_demand_hybrid(conn, skill, embed_provider)
-        return {"query_type": query_type, "skill": skill, "market_demand": demand}
+        result = {"query_type": query_type, "skill": skill, "market_demand": demand}
 
-    if query_type == "action_plan":
+    elif query_type == "action_plan":
         results = await assess_all_gaps(conn, embed_provider)
         priority_gaps = rank_priority_gaps(results)
         plan = await generate_sequenced_plan(priority_gaps) if priority_gaps else None
-        return {"query_type": query_type, "priority_gaps": priority_gaps, "plan": plan}
+        result = {"query_type": query_type, "priority_gaps": priority_gaps, "plan": plan}
 
-    if query_type == "posting_list":
-        job_title = classification.get("job_role") or ""
+    elif query_type == "posting_list":
+        job_title = job_role or ""
         if not skill or skill in TRACKED_SKILLS:
             postings = list_postings(conn, skill=skill or "", job_title=job_title)
         else:
             postings = await judge_topic_postings(conn, skill, embed_provider, method=method)
-        return {"query_type": query_type, "postings": postings}
+        result = {"query_type": query_type, "postings": postings}
 
-    if query_type == "posting_comparison":
-        names = classification.get("compare_targets") or []
-        return {"query_type": query_type, "comparison": compare_postings(conn, names)}
+    elif query_type == "posting_comparison":
+        result = {"query_type": query_type, "comparison": compare_postings(conn, compare_targets)}
 
-    # unanswerable, 또는 skill이 필요한데 못 뽑은 경우 — 후자는 "미지원"이 아니라 분류 실패이므로
-    # 같은 안내 메시지로 정직하게 답하되 query_type은 그대로 남겨 프론트/로그에서 원인 구분 가능.
-    return {"query_type": "unanswerable", "message": UNANSWERABLE_MESSAGE}
+    else:
+        # unanswerable, 또는 skill이 필요한데 못 뽑은 경우 — 후자는 "미지원"이 아니라 분류 실패이므로
+        # 같은 안내 메시지로 정직하게 답하되 query_type은 그대로 남겨 프론트/로그에서 원인 구분 가능.
+        result = {"query_type": "unanswerable", "message": UNANSWERABLE_MESSAGE}
+
+    result["session_state"] = new_session_state
+    return result
