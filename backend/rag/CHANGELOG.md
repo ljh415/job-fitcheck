@@ -8,6 +8,23 @@
 상세 이력·설계 논의는 `docs/rag-project-plans/00_meta/HISTORY.md`(git 미추적)에 exhaustively
 기록돼 있음 — 이 파일은 그걸 압축한 요약.
 
+## rag-v0.16.1 — 프로필 재색인 시 provider 드리프트 자동 방지 (2026-07-28)
+
+이 dev DB에서 로컬(Jina) provider의 후보자 프로필 임베딩이 통째로 비어있는 걸 발견 — 2026-07-23에는
+google·local 둘 다 11개씩 있었는데(Plan B 2단계 검증 기록), 그 사이 누군가 `reindex --provider google
+--include-profile`을 실행했을 때 프로필 청크 해시 변경이 감지돼 **모든 provider의 기존 임베딩이 함께
+삭제되고 google만 다시 채워진** 것으로 추정(`populate_candidate_profile_chunks()`가 provider와 무관하게
+`document_chunk`를 공유하기 때문). 이 상황 자체는 이미 stdout 경고로 안내되고 있었지만
+(`reindex.py`의 `_warn_other_providers_stale()`), CLI 출력 한 줄이라 놓치기 쉬웠고 실제로 놓쳐서
+방치됐음.
+
+- `reindex.py`: 프로필 청크 변경이 감지되면(`profile_changed`) 지정한 provider 하나만이 아니라
+  **등록된 모든 provider로 자동 재임베딩**하도록 수정. 특정 provider 인프라가 그 순간 불가능해도
+  (예: 3050Ti SSH 터널 다운) 그 provider만 실패로 격리하고 나머지는 계속 진행 — 재시도 방법을 안내하는
+  경고만 남기고 전체 재색인은 안 막음
+- 즉시 조치: `reindex --provider local --include-profile` 실행해 로컬 프로필 임베딩 11개 복구,
+  `CANDIDATE_EVIDENCE` 10/10 재확인(로컬 provider 원래 기준과 정확히 일치)
+
 ## rag-v0.16.0 — Phase 3: 답변에 판정 근거·표본 범위 노출 (2026-07-28)
 
 - `JUDGE_CANDIDATES_TOOL_SCHEMA`(`rag/gap.py`)를 `relevant_numbers`(정수 배열)에서 `relevant`
