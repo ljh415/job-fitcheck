@@ -18,9 +18,9 @@ from llm.base import LLMAPIError
 from rag.answer import generate_action_plan
 from rag.embed.google import GoogleEmbeddingProvider
 from rag.embed.local import LocalEmbeddingProvider
+from rag.postgres.agent import answer_query_agent
 from rag.postgres.db import get_connection
 from rag.postgres.gap import assess_gap
-from rag.postgres.query_router import answer_query
 
 router = APIRouter(prefix="/api/rag")
 
@@ -32,9 +32,8 @@ class GapCheckRequest(BaseModel):
 
 class AskRequest(BaseModel):
     question: str
-    provider: str = "google"  # "google" | "local" — 임베딩 provider
-    method: str = "llm"  # "llm" | "local" — posting_list 자유 텍스트 주제 판정 방식
-    session_state: dict | None = None  # 직전 턴에서 돌려받은 상태(멀티턴 조건 이어받기, Phase 4)
+    provider: str = "google"  # "google" | "local" — 임베딩 provider(도구 내부 검색용)
+    history: list[dict] = []  # [{"role": "user"|"assistant", "content": str}, ...] — 이전 대화 turn
 
 
 @router.post("/gap-check")
@@ -113,20 +112,20 @@ async def gap_check(req: GapCheckRequest):
 
 @router.post("/ask")
 async def ask(req: AskRequest):
-    """대화형 근거 기반 RAG Phase 1 진입점 — 자연어 질문을 받아 query_router.answer_query()로
-    분류·라우팅한다. conn/embed_provider 생성·정리·예외 처리는 gap_check()와 동일한 패턴을
-    그대로 복제(Codex 리뷰로 다듬어진 부분이라 새로 설계하지 않음)."""
+    """대화형 근거 기반 RAG 진입점 — 자연어 질문을 Agent(tool-use)로 답한다(2026-07-28, Phase 1~4의
+    "질문 분류→고정 함수 실행" 구조를 대체). 질문이 애매하거나 여러 능력을 조합해야 답할 수 있을 때
+    완전히 무관한 답을 내놓는 구조적 결함이 실측으로 확인돼(`docs/rag-project-plans/00_meta/HISTORY.md`
+    2026-07-28 항목), LLM이 도구를 스스로 골라 쓰며 답하는 구조로 전환. conn/embed_provider 생성·정리·
+    예외 처리는 gap_check()와 동일한 패턴(Codex 리뷰로 다듬어진 부분이라 그대로 유지)."""
     if req.provider not in ("google", "local"):
         raise HTTPException(400, "provider는 'google' 또는 'local'만 가능합니다")
-    if req.method not in ("llm", "local"):
-        raise HTTPException(400, "method는 'llm' 또는 'local'만 가능합니다")
 
     conn = None
     embed_provider = None
     try:
         conn = get_connection()
         embed_provider = GoogleEmbeddingProvider() if req.provider == "google" else LocalEmbeddingProvider()
-        result = await answer_query(conn, req.question, embed_provider, method=req.method, session_state=req.session_state)
+        result = await answer_query_agent(conn, req.question, embed_provider, history=req.history)
         result["provider"] = req.provider
         return result
     except LLMAPIError as e:

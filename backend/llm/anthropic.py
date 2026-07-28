@@ -4,7 +4,9 @@ Anthropic Claude provider 구현.
 구조화 추출: tool_choice={"type": "tool"} 로 특정 툴 강제 호출
 스트리밍: messages.stream() 컨텍스트 매니저 사용
 """
-from collections.abc import AsyncIterator
+import json
+from collections.abc import AsyncIterator, Awaitable, Callable
+from typing import Any
 
 import anthropic
 
@@ -114,6 +116,74 @@ class AnthropicProvider(LLMProvider):
             if hasattr(block, "text"):
                 return block.text  # type: ignore[union-attr]
         return ""
+
+    async def run_agent(
+        self,
+        system: str,
+        question: str,
+        tools: list[dict],
+        tool_executor: Callable[[str, dict], Awaitable[Any]],
+        model: str,
+        operation: str = "",
+        history: list[dict] | None = None,
+        max_iterations: int = 6,
+    ) -> dict:
+        tool_defs = [
+            anthropic.types.ToolParam(
+                name=t["name"], description=t["description"], input_schema=t["input_schema"]
+            )
+            for t in tools
+        ]
+        messages: list[dict] = list(history or [])
+        messages.append({"role": "user", "content": question})
+        tool_calls_trace: list[dict] = []
+
+        for _ in range(max_iterations):
+            try:
+                response = await self._client.messages.create(
+                    model=model,
+                    max_tokens=4096,
+                    system=system,
+                    messages=messages,  # type: ignore[arg-type]
+                    tools=tool_defs,
+                )
+            except anthropic.AuthenticationError:
+                raise LLMAPIError("LLM API 인증 실패 — 설정에서 Anthropic API 키를 확인해주세요.", 401)
+            except anthropic.RateLimitError:
+                raise LLMAPIError("LLM API 요청 한도 초과 — 잠시 후 다시 시도해주세요.", 429)
+            except anthropic.APIStatusError as e:
+                raise LLMAPIError(f"LLM 서비스 오류 ({e.status_code}) — 잠시 후 다시 시도해주세요.", 503)
+            except anthropic.APIConnectionError:
+                raise LLMAPIError("LLM 서비스 연결 실패 — 네트워크 상태를 확인해주세요.", 503)
+
+            usage_tracker.append_usage(
+                operation=operation,
+                model=model,
+                input_tokens=response.usage.input_tokens,
+                output_tokens=response.usage.output_tokens,
+            )
+
+            tool_use_blocks = [b for b in response.content if b.type == "tool_use"]
+            if not tool_use_blocks:
+                text = "".join(b.text for b in response.content if hasattr(b, "text"))
+                return {"text": text, "tool_calls": tool_calls_trace}
+
+            messages.append({"role": "assistant", "content": response.content})
+            tool_results = []
+            for block in tool_use_blocks:
+                result = await tool_executor(block.name, block.input)
+                tool_calls_trace.append({"tool": block.name, "args": block.input, "result": result})
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": json.dumps(result, ensure_ascii=False, default=str),
+                })
+            messages.append({"role": "user", "content": tool_results})
+
+        return {
+            "text": "죄송합니다, 이 질문에 답하는 데 필요한 정보를 정리하지 못했습니다(도구 호출 반복 한도 초과).",
+            "tool_calls": tool_calls_trace,
+        }
 
     async def stream(
         self,
