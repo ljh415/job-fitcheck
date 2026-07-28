@@ -8,6 +8,25 @@
 상세 이력·설계 논의는 `docs/rag-project-plans/00_meta/HISTORY.md`(git 미추적)에 exhaustively
 기록돼 있음 — 이 파일은 그걸 압축한 요약.
 
+## rag-v0.17.0 — Phase 4: 멀티턴 대화 + 채팅 세션 UI (2026-07-28)
+
+메인 앱 Q&A(`routers/qa.py`)는 raw 대화 히스토리 배열(최대 40개)을 매번 통째로 재해석하는 방식인데,
+RAG는 몇 개 필드(skill/job_role/query_type)만 이어받으면 되는 구조라 그대로 베끼지 않고 **작고 고정된
+세션 상태 객체**로 설계(배열처럼 안 자람, 매 턴 덮어써짐).
+
+- `query_router.py`: `classify_query()`가 `session_state`를 받아 "그중에서/왜?" 같은 참조 표현이면
+  이전 skill/job_role을 이어받고, 새 주제가 명확하면 교체하도록 `CLASSIFY_SYSTEM`에 규칙 추가.
+  `answer_query()`가 매 턴 실제로 쓰인 조건을 `session_state`로 응답에 포함
+- `routers/rag.py`: `AskRequest`에 `session_state: dict | None` 필드 추가
+- `rag-test.html`: 채팅 세션 여러 개를 `localStorage`에 저장·전환하는 UI(드롭다운 + "새 채팅" 버튼),
+  메인 앱 Q&A 탭과 같은 채팅 버블 레이아웃(`qa-messages`/`qa-input-row` 재사용 — 메시지 영역 내부
+  스크롤 + 입력창 하단 고정)으로 재구성
+- 실측: Redis 세션 상태를 준 채로 "그중에서 몇 개야?"(스킬 언급 없음) → market_aggregate로 정확히
+  이어받아 분류됨. 완전히 다른 주제(AWS) 질문 시 이전 조건 정확히 교체(carry-over 오작동 없음) 확인
+- 구현 중 CSS 버그 2건 발견·수정: 전역 `select { width: 100% }`가 입력행 select를 전체 폭으로
+  늘려버린 문제(scoped `width: auto`로 해결), `scrollIntoView()`가 내부 스크롤이 아니라 페이지
+  스크롤만 움직여 최신 메시지가 입력창에 가려지던 문제(`scrollTop = scrollHeight`로 해결)
+
 ## rag-v0.16.1 — 프로필 재색인 시 provider 드리프트 자동 방지 (2026-07-28)
 
 이 dev DB에서 로컬(Jina) provider의 후보자 프로필 임베딩이 통째로 비어있는 걸 발견 — 2026-07-23에는
