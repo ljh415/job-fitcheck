@@ -51,8 +51,12 @@
 
 <div class="rag-header">
   <h2>🧪 RAG 테스트</h2>
-  <button id="theme-toggle-btn" onclick="toggleTheme()" title="다크모드 전환">🌙</button>
+  <div style="display:flex; gap:8px; align-items:center;">
+    <button id="reindex-btn" onclick="runReindex()" title="공고/프로필 변경사항을 google+local 임베딩에 반영">🔄 재색인</button>
+    <button id="theme-toggle-btn" onclick="toggleTheme()" title="다크모드 전환">🌙</button>
+  </div>
 </div>
+<p id="reindex-status" class="rag-note"></p>
 
 <p class="rag-note">Plan A 6~7단계(Gap 판정 + 행동 계획) 파이프라인을 직접 호출하는 테스트 화면입니다. rag/main 브랜치 전용 — main 브랜치엔 없습니다.</p>
 
@@ -80,9 +84,9 @@
   <div id="ask-result" class="qa-messages"></div>
   <form class="qa-input-row" onsubmit="runAsk(event)">
     <textarea id="question-input" rows="2" placeholder="예: AWS를 안 해봤으면 단점이 될까? / Redis 요구하는 공고 어디어디야? / (이어서) 그중에서 몇 개야? (Shift+Enter 줄바꿈)" required></textarea>
-    <select id="ask-provider-select">
-      <option value="google">Google</option>
-      <option value="local">Local</option>
+    <select id="ask-provider-select" title="임베딩 provider(검색용) — 판정/답변은 항상 Claude">
+      <option value="google">임베딩: Google</option>
+      <option value="local">임베딩: Local</option>
     </select>
     <button type="submit" id="ask-submit-btn">전송</button>
   </form>
@@ -125,6 +129,34 @@ function parseMarkdown(text) {
   html = html.replace(/==([^=\n]+)==/g, '<mark class="mark-pos">$1</mark>');
   html = html.replace(/!!([^!\n]+)!!/g, '<mark class="mark-neg">$1</mark>');
   return DOMPurify.sanitize(html, { ADD_ATTR: ['class'] });
+}
+
+async function runReindex() {
+  // google+local 둘 다 프로필 포함해서 대칭 실행(백엔드 결정) — Google은 유료 티어 확정이라
+  // 호출 자체는 안전하지만 API 비용이 발생하니 확인창은 남겨둔다.
+  if (!confirm('공고/프로필 변경사항을 google+local 임베딩에 반영합니다. Google API 호출 비용이 발생할 수 있습니다. 계속할까요?')) return;
+  const btn = document.getElementById('reindex-btn');
+  const statusEl = document.getElementById('reindex-status');
+  btn.disabled = true;
+  btn.textContent = '재색인 중...';
+  statusEl.innerHTML = '';
+  try {
+    const token = localStorage.getItem('job-fitcheck-token');
+    const res = await fetch('/api/rag/reindex', {
+      method: 'POST',
+      headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `요청 실패 (${res.status})`);
+    }
+    statusEl.textContent = '재색인 완료 (google+local, 프로필 포함)';
+  } catch (e) {
+    statusEl.innerHTML = `<span class="rag-error">${escapeHtml(e.message)}</span>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🔄 재색인';
+  }
 }
 
 async function runGapCheck(event) {
@@ -287,9 +319,26 @@ function renderThread(messages) {
   resultEl.className = 'qa-messages';
   resultEl.innerHTML = messages.map(m => `
     <div class="qa-bubble user">${escapeHtml(m.question)}</div>
-    <div class="qa-bubble assistant">${renderAskAnswer(m.data)}</div>
+    <div class="qa-bubble assistant${m.pending ? ' rag-loading' : ''}">${
+      m.pending
+        ? '답변을 생성하고 있습니다. 질문 종류에 따라 최대 30~40초 정도 걸릴 수 있습니다...'
+        : renderAskAnswer(m.data)
+    }</div>
   `).join('');
   resultEl.scrollTop = resultEl.scrollHeight;
+}
+
+function cleanupPendingMessages() {
+  // 응답을 기다리던 중 새로고침 등으로 요청 자체가 끊기면 pending 항목이 영원히 안 끝난다 —
+  // 페이지 로드 시 한 번 정리한다.
+  const chats = loadChats();
+  let changed = false;
+  for (const id of Object.keys(chats)) {
+    const before = chats[id].messages.length;
+    chats[id].messages = chats[id].messages.filter(m => !m.pending);
+    if (chats[id].messages.length !== before) changed = true;
+  }
+  if (changed) saveChats(chats);
 }
 
 async function runAsk(event) {
@@ -297,32 +346,37 @@ async function runAsk(event) {
   const question = document.getElementById('question-input').value.trim();
   const provider = document.getElementById('ask-provider-select').value;
   const btn = document.getElementById('ask-submit-btn');
-  const resultEl = document.getElementById('ask-result');
   if (!question) return;
 
-  const chats = loadChats();
-  const chatId = getCurrentChatId();
+  const chatId = getCurrentChatId();  // 이 요청이 어느 채팅 소속인지 고정 — 응답 도착 시 사용자가
+  const chats = loadChats();          // 다른 채팅으로 옮겨가 있어도 엉뚱한 화면에 덮어쓰지 않기 위함
   const chat = chats[chatId];
+  if (!chat) return;
 
+  // Agent는 session_state가 아니라 실제 대화 history를 본다 — 이전 turn의 질문/답변을
+  // Anthropic 메시지 포맷(role+content)으로 그대로 넘긴다. 아직 응답 안 온 pending 항목은 제외.
+  const history = [];
+  for (const m of chat.messages) {
+    if (m.pending) continue;
+    history.push({ role: 'user', content: m.question });
+    history.push({ role: 'assistant', content: (m.data && m.data.answer) || '' });
+  }
+
+  // 질문을 pending 상태로 즉시 저장한다 — 응답 오기 전에 다른 채팅으로 이동했다 돌아와도
+  // 남아있어야 하기 때문(버그 리포트: 전송 직후 DOM에만 붙여두고 저장은 응답 도착 후에야
+  // 했더니, 채팅 전환이 그 DOM을 지워버려 질문 자체가 사라져 보였음).
+  const entry = { question, data: null, pending: true };
+  chat.messages.push(entry);
+  if (!chat.title) chat.title = question.slice(0, 24) + (question.length > 24 ? '…' : '');
+  saveChats(chats);
+  renderChatDropdown();
+  document.getElementById('question-input').value = '';  // 채팅 UX상 전송 즉시 비움(응답 기다리는 동안 X)
   btn.disabled = true;
   btn.textContent = '전송 중...';
-  document.getElementById('question-input').value = '';  // 채팅 UX상 전송 즉시 비움(응답 기다리는 동안 X)
-  resultEl.className = 'qa-messages';
-  resultEl.innerHTML += `
-    <div class="qa-bubble user">${escapeHtml(question)}</div>
-    <div class="qa-bubble assistant rag-loading">답변을 생성하고 있습니다. 질문 종류에 따라 최대 30~40초 정도 걸릴 수 있습니다...</div>
-  `;
-  resultEl.scrollTop = resultEl.scrollHeight;
+  if (getCurrentChatId() === chatId) renderThread(chat.messages);
 
   try {
     const token = localStorage.getItem('job-fitcheck-token');
-    // Agent는 session_state가 아니라 실제 대화 history를 본다 — 이전 turn의 질문/답변을
-    // Anthropic 메시지 포맷(role+content)으로 그대로 넘긴다.
-    const history = [];
-    for (const m of chat.messages) {
-      history.push({ role: 'user', content: m.question });
-      history.push({ role: 'assistant', content: (m.data && m.data.answer) || '' });
-    }
     const res = await fetch('/api/rag/ask', {
       method: 'POST',
       headers: {
@@ -335,15 +389,18 @@ async function runAsk(event) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.detail || `요청 실패 (${res.status})`);
     }
-    const data = await res.json();
-    chat.messages.push({ question, data });
-    if (!chat.title) chat.title = question.slice(0, 24) + (question.length > 24 ? '…' : '');
+    entry.data = await res.json();
+    entry.pending = false;
     saveChats(chats);
-    renderChatDropdown();
-    renderThread(chat.messages);
+    if (getCurrentChatId() === chatId) renderThread(chat.messages);
   } catch (e) {
-    renderThread(chat.messages);
-    resultEl.innerHTML += `<div class="rag-error">${escapeHtml(e.message)}</div>`;
+    const idx = chat.messages.indexOf(entry);
+    if (idx !== -1) chat.messages.splice(idx, 1);  // 실패한 pending 질문은 지워서 재시도 가능하게
+    saveChats(chats);
+    if (getCurrentChatId() === chatId) {
+      renderThread(chat.messages);
+      document.getElementById('ask-result').innerHTML += `<div class="rag-error">${escapeHtml(e.message)}</div>`;
+    }
   } finally {
     btn.disabled = false;
     btn.textContent = '전송';
@@ -361,7 +418,7 @@ function renderAskAnswer(data) {
     }
     inner += `</div>`;
   }
-  inner += `<p class="rag-note">provider: ${escapeHtml(data.provider)}</p>`;
+  inner += `<p class="rag-note">임베딩 provider: ${escapeHtml(data.provider)} · 판정/답변: Claude 고정</p>`;
   return inner;
 }
 
@@ -381,6 +438,7 @@ function handleAskKeydown(e) {
 }
 document.getElementById('question-input').addEventListener('keydown', handleAskKeydown);
 
+cleanupPendingMessages();
 renderChatDropdown();
 switchChat(getCurrentChatId());
 </script>

@@ -11,12 +11,23 @@ Phase 1~4의 "질문을 7종 중 하나로 분류 → 그 유형에 고정된 �
 스스로 판단해 답하게 한다(ReAct 스타일 tool-use 루프, `llm.base.LLMProvider.run_agent()`).
 
 Claude만 이 루프를 지원한다(2026-07-28 확정 — "Claude 먼저 만들고 나중에 provider 확장"). 메인 앱의
-provider 설정(Gemini 등)과 무관하게, 이 에이전트는 항상 Claude를 직접 쓴다.
+provider 설정(Gemini 등)과 무관하게, 이 에이전트는 임베딩만 빼고 항상 Claude를 직접 쓴다 — 오케스트
+레이션(`answer_query_agent()`)과 도구 내부 판정(`_make_tool_executor()`)이 **같은 provider/model
+인스턴스 하나**를 공유하도록 만들어서, 나중에 Claude 외 provider로 확장할 때 한 곳만 바꾸면 되게
+했다(2026-07-29 — 이전엔 두 곳에 각각 `AnthropicProvider()`를 따로 하드코딩해서 구조적으로 어긋날
+위험이 있었음).
 """
+import json
+import logging
+import uuid
+from datetime import datetime
+
 import psycopg
 
 from config import settings
 from llm.anthropic import AnthropicProvider
+from llm.base import LLMProvider
+from services.usage_tracker import current_request_id
 from rag.answer import (
     generate_action_plan,
     generate_sequenced_plan,
@@ -27,6 +38,8 @@ from rag.embed.base import EmbeddingProvider
 from rag.postgres.gap import assess_all_gaps, assess_gap, market_demand_hybrid
 from rag.postgres.query_router import compare_postings, judge_topic_postings, list_postings
 from rag.skills import TRACKED_SKILLS
+
+logger = logging.getLogger(__name__)
 
 AGENT_SYSTEM = """당신은 채용공고·후보자 프로필 데이터를 근거로 커리어 질문에 답하는 어시스턴트입니다.
 
@@ -107,19 +120,48 @@ TOOL_DEFS = [
 ]
 
 
-def _make_tool_executor(conn: psycopg.Connection, embed_provider: EmbeddingProvider):
+def _without_excerpts(gap_result: dict) -> dict:
+    """Agent에게 여러 기술을 한 번에 요약해줄 때, 기술마다 딸려오는 이력서 원문 발췌(`excerpts`)를
+    그대로 다 넘기면 입력 토큰이 기술 수만큼 불어난다(2026-07-29 실측: 13개 기술 합산 시 4~9만
+    토큰까지 치솟음). 요약 판단에는 skill/evidence_level/reasoning/market_demand만 있으면 충분하고,
+    특정 기술의 발췌문이 필요하면 Agent가 assess_skill_gap(단일 기술)을 별도로 불러 확인하면 된다."""
+    return {k: v for k, v in gap_result.items() if k != "excerpts"}
+
+
+def _make_tool_executor(
+    conn: psycopg.Connection, embed_provider: EmbeddingProvider, llm: tuple[LLMProvider, str, str | None]
+):
+    # 도구의 판정 LLM은 임베딩(embed_provider)만 빼고 오케스트레이션과 같은 provider/model을 쓴다
+    # (`llm`은 answer_query_agent()가 만든 것 그대로 전달받음 — 이 함수 안에서 별도로 다시
+    # 만들지 않는다. Provider를 하드코딩한 자리가 두 곳으로 나뉘면, 나중에 Claude 외 provider로
+    # Agent를 확장할 때 한쪽만 고치고 다른 쪽을 놓칠 수 있다). 이 함수들은 /api/rag/gap-check 등
+    # 기존 호출부와도 공유되므로, 여기서 `llm`을 명시적으로 넘길 때만 이 지정이 적용되고 그 외
+    # 호출부는 기존처럼 메인 앱 설정을 그대로 따른다(회귀 없음).
+    claude_llm = llm
+    all_gaps_cache: list[dict] | None = None
+
+    async def get_all_gaps() -> list[dict]:
+        # 한 턴 안에서 assess_all_gaps_summary와 generate_sequenced_plan_for_priority_gaps를
+        # 둘 다 부르면(도구 설명이 그 순서를 안내함) 같은 13개 기술이 두 번 판정되는 걸 막는다
+        # — 이 executor는 요청 1건마다 새로 만들어지므로(_make_tool_executor 호출 시점), 캐시가
+        # 다음 요청으로 새는 일은 없다.
+        nonlocal all_gaps_cache
+        if all_gaps_cache is None:
+            all_gaps_cache = await assess_all_gaps(conn, embed_provider, llm=claude_llm)
+        return all_gaps_cache
+
     async def execute(name: str, args: dict) -> dict:
         if name == "get_market_demand":
-            return await market_demand_hybrid(conn, args["skill"], embed_provider)
+            return await market_demand_hybrid(conn, args["skill"], embed_provider, llm=claude_llm)
 
         if name == "assess_skill_gap":
-            return await assess_gap(conn, args["skill"], embed_provider)
+            return await assess_gap(conn, args["skill"], embed_provider, llm=claude_llm)
 
         if name == "assess_all_gaps_summary":
-            results = await assess_all_gaps(conn, embed_provider)
+            results = await get_all_gaps()
             return {
-                "priority_gaps": rank_priority_gaps(results),
-                "strengths": summarize_strengths(results),
+                "priority_gaps": [_without_excerpts(r) for r in rank_priority_gaps(results)],
+                "strengths": [_without_excerpts(r) for r in summarize_strengths(results)],
             }
 
         if name == "list_matching_postings":
@@ -129,29 +171,69 @@ def _make_tool_executor(conn: psycopg.Connection, embed_provider: EmbeddingProvi
                 return {"postings": list_postings(conn, skill=topic, job_title=job_role)}
             if job_role and not topic:
                 return {"postings": list_postings(conn, job_title=job_role)}
-            return {"postings": await judge_topic_postings(conn, topic, embed_provider, method="llm")}
+            return {"postings": await judge_topic_postings(conn, topic, embed_provider, method="llm", llm=claude_llm)}
 
         if name == "compare_companies":
             return {"comparison": compare_postings(conn, args["company_names"])}
 
         if name == "generate_action_plan_for_skill":
-            gap_result = await assess_gap(conn, args["skill"], embed_provider)
+            gap_result = await assess_gap(conn, args["skill"], embed_provider, llm=claude_llm)
             if gap_result["evidence_level"] == "직접 근거":
                 return {"message": "이미 직접 근거가 있어 행동 계획이 불필요합니다.", "gap": gap_result}
-            plan = await generate_action_plan(gap_result)
+            plan = await generate_action_plan(gap_result, llm=claude_llm)
             return {"gap": gap_result, "action_plan": plan}
 
         if name == "generate_sequenced_plan_for_priority_gaps":
-            results = await assess_all_gaps(conn, embed_provider)
+            results = await get_all_gaps()
             priority_gaps = rank_priority_gaps(results)
             if not priority_gaps:
                 return {"message": "보완이 필요한 우선순위 gap이 없습니다."}
-            plan = await generate_sequenced_plan(priority_gaps)
-            return {"priority_gaps": priority_gaps, "plan": plan}
+            plan = await generate_sequenced_plan(priority_gaps, llm=claude_llm)
+            return {"priority_gaps": [_without_excerpts(r) for r in priority_gaps], "plan": plan}
 
         return {"error": f"알 수 없는 도구: {name}"}
 
     return execute
+
+
+def _log_agent_call(
+    question: str, history_len: int, tool_calls: list[dict], answer: str, provider: str, request_id: str
+) -> None:
+    """도구 호출 트레이스를 data/rag_agent_log.jsonl에 한 줄 append한다.
+
+    usage_log.jsonl과 같은 이유로 .tmp/os.replace 없이 단순 append — 매번 파일 전체를 재작성하는
+    게 아니라 한 줄만 끝에 추가하므로 그 패턴이 필요 없다(config.py/storage.py는 반대로 파일 전체를
+    재작성하는 경우라 그 패턴을 쓴다).
+
+    `request_id`는 이 요청 동안 발생한 usage_log.jsonl의 LLM 호출들과 나중에 조인해서 비용을
+    보기 위한 연결 키일 뿐이다 — 비용 자체는 여기 안 넣는다(2026-07-29, 두 로그의 목적을
+    안 섞기 위해 사용자가 이 방식으로 확정)."""
+    entry = {
+        "ts": datetime.now().isoformat(timespec="seconds"),
+        "request_id": request_id,
+        "question": question,
+        "history_len": history_len,
+        "tool_calls": [
+            {
+                "name": tc.get("tool"),
+                "args": tc.get("args"),
+                # 잘라내면 나중에 답변 충실성(도구 결과 vs 최종 답변 대조) 검증 시마다 DB를
+                # 다시 조회해야 해서, 개인용 앱 규모에서 무의미한 절약(디스크 몇 KB)보다 손해가
+                # 컸음(2026-07-29 실측) — 자르지 않고 전체를 남긴다.
+                "result_summary": str(tc.get("result")),
+            }
+            for tc in tool_calls
+        ],
+        "answer_preview": answer,
+        "provider": provider,
+    }
+    try:
+        path = settings.data_dir / "rag_agent_log.jsonl"
+        settings.data_dir.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception as e:
+        logger.warning("에이전트 도구 호출 로그 기록 실패: %s", e)
 
 
 async def answer_query_agent(
@@ -160,15 +242,29 @@ async def answer_query_agent(
     embed_provider: EmbeddingProvider,
     history: list[dict] | None = None,
 ) -> dict:
-    provider = AnthropicProvider()
-    tool_executor = _make_tool_executor(conn, embed_provider)
-    result = await provider.run_agent(
-        system=AGENT_SYSTEM,
+    request_id = uuid.uuid4().hex[:12]
+    token = current_request_id.set(request_id)
+    try:
+        provider = AnthropicProvider()
+        model = settings.claude_high_model
+        tool_executor = _make_tool_executor(conn, embed_provider, llm=(provider, model, None))
+        result = await provider.run_agent(
+            system=AGENT_SYSTEM,
+            question=question,
+            tools=TOOL_DEFS,
+            tool_executor=tool_executor,
+            model=model,
+            operation="RAG 에이전트 응답",
+            history=history,
+        )
+    finally:
+        current_request_id.reset(token)
+    _log_agent_call(
         question=question,
-        tools=TOOL_DEFS,
-        tool_executor=tool_executor,
-        model=settings.claude_high_model,
-        operation="RAG 에이전트 응답",
-        history=history,
+        history_len=len(history or []),
+        tool_calls=result["tool_calls"],
+        answer=result["text"],
+        provider="claude",
+        request_id=request_id,
     )
     return {"answer": result["text"], "tool_calls": result["tool_calls"]}

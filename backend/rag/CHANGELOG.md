@@ -8,6 +8,93 @@
 상세 이력·설계 논의는 `docs/rag-project-plans/00_meta/HISTORY.md`(git 미추적)에 exhaustively
 기록돼 있음 — 이 파일은 그걸 압축한 요약.
 
+## rag-v0.19.1 — `rag-test.html` 채팅 전환 버그 수정 (2026-07-29)
+
+질문을 전송한 뒤 응답이 오기 전에 다른 채팅으로 이동했다 돌아오면 그 질문 자체가 안 보이던 버그.
+전송 즉시 `localStorage`에 저장하지 않고 DOM에만 임시로 붙여뒀던 게 원인 — `switchChat()`이 저장된
+내용으로 화면을 통째로 갈아치우며 사라졌음. 응답 도착 시에도 지금 보고 있는 채팅과 무관하게 항상
+화면을 덮어쓰던 부수 버그도 같이 발견.
+
+- 질문을 전송 즉시 `pending: true`로 저장 → 채팅을 옮겨 다녀도 질문+로딩 표시가 유지됨
+- 응답 도착 시 그 질문이 속한 채팅을 지금 보고 있을 때만 화면 갱신(다른 채팅 보는 중이면 데이터만
+  저장하고 화면은 그대로)
+- 요청 실패 시 pending 항목 제거(재시도 가능하게), 새로고침으로 응답을 못 받는 pending 항목은
+  페이지 로드 시 정리(`cleanupPendingMessages()`)
+- Playwright로 두 시나리오(전송 후 이동·복귀, 다른 채팅 보는 중 응답 도착) 검증
+
+## rag-v0.19.0 — 재색인 웹 트리거 (2026-07-29)
+
+`reindex.py`가 완전히 CLI 전용이라 실제 사용자는 재색인을 트리거할 방법이 없던 문제 해결. 자동
+트리거(공고 변경 API 훅)는 하지 않기로 확정 — 수동 버튼 하나로 충분하다는 원래 설계 원칙 유지.
+
+- `POST /api/rag/reindex`(`routers/rag.py`) 신규: google+local 둘 다 프로필 포함해서 대칭 실행.
+  `reindex.run()`이 동기 함수라 `asyncio.to_thread`로 감싸 이벤트 루프 블로킹 방지. stdout은
+  캡처하지 않고 컨테이너 stdout으로 그대로 흘려보내 기존 `docker compose logs -f api` 디버깅 흐름
+  유지.
+- `ReindexRequest.include_profile_google` 필드 제거 — Google이 이미 유료 티어로 확정돼 있어
+  프로필 제외 안전장치가 불필요해짐.
+- `rag-test.html`에 `🔄 재색인` 버튼 연결 — 클릭 시 API 비용 발생 가능성 confirm 확인 후 호출.
+- curl(로그인 토큰)·Playwright 클릭 테스트로 실제 동작 확인, `docker logs`로 google→local 순서
+  실행까지 확인.
+
+## rag-v0.18.2 — Agent 코드 리뷰 수정 + 병렬화 + 전수 검증 완료 (2026-07-29)
+
+`rag-v0.18.1` 수정 뒤 직접 코드 리뷰(사용자 요청)로 3건 발견·전부 수정:
+
+- [높음] 프론트 "provider: google" 표시가 임베딩 provider 선택값인데 마치 어떤 LLM이 답했는지처럼
+  보이던 문제 → "임베딩 provider: google · 판정/답변: Claude 고정"으로 수정.
+- [중간] `run_agent()`의 도구 실행이 try/except 없이 호출돼, 도구 하나가 실패하면 전체 요청이 죽던
+  문제 → try/except로 격리, `is_error: true` tool_result로 Claude에게 전달.
+- [중간] `assess_all_gaps_summary`+`generate_sequenced_plan_for_priority_gaps`가 한 턴에 같이
+  호출되면 같은 13개 기술이 두 번 판정되던 문제 → 요청 단위 캐시(`get_all_gaps()`) 추가.
+
+**병렬화**: `assess_all_gaps()`를 `asyncio.gather()`로 병렬화(13개 기술 동시 판정, 순차 대비 체감
+3~4배). Anthropic API 응답 헤더로 이 계정의 실제 분당 한도(요청 10,000/토큰 1,200만)를 확인하고,
+공유 DB 커넥션 동시 접근도 순차/동시 결과 비교 스크립트로 안전성을 실측 확인한 뒤 세마포어 없이 적용
+(중간에 세마포어+재시도 로직을 사용자 승인 없이 임의로 얹었다가 지적받고 재시도 로직만 되돌림).
+
+**전수 검증**: 5개 카테고리(단일 도구/복합 도구/멀티턴/답변 불가/함정형) 15문항 — 14/15 명확 통과,
+1건("나 이직해도 될까?")은 Agent 결함이 아니라 테스트 질문 선정 문제(스킬/시장 데이터로 부분 답변
+가능한 애매한 질문을 "완전히 답 불가" 예시로 잘못 고름). Agent의 사실 왜곡·근거 없는 확답 사례 없음.
+
+## rag-v0.18.1 — Agent 도구 provider 일관성 수정 + 토큰 낭비 제거 (2026-07-29)
+
+전수 검증 중 `assess_all_gaps_summary`(13개 기술 순차 판정) 반복 호출로 Gemini 무료 티어 일일 한도를
+넘겨 발견. `assess_gap`/`market_demand_hybrid`/`judge_topic_postings`/`generate_action_plan`/
+`generate_sequenced_plan`의 판정 LLM 호출이 "Claude 먼저" 결정과 달리 메인 앱 provider 설정(dev는
+Gemini)을 그대로 따라가고 있었음 — Agent 전환 시 오케스트레이션 루프만 Claude로 고정하고 재사용한
+함수들 내부까지는 확인 안 한 게 원인.
+
+- 위 함수들에 `llm: tuple[LLMProvider, str] | None = None` 파라미터 추가. `None`이면 기존처럼 메인 앱
+  설정을 따르고(`/api/rag/gap-check` 등 기존 호출부 회귀 없음), Agent 도구 실행부만
+  `(AnthropicProvider(), settings.claude_high_model)`을 명시적으로 넘겨 임베딩 외 모든 판정을 Claude로
+  고정.
+- 별도로 함께 발견: `assess_all_gaps_summary`가 기술마다 이력서 원문 발췌(`excerpts`)를 그대로 포함해
+  반환, 13개 기술 분량이 쌓이면 Claude 호출 입력 토큰이 4~9만까지 치솟음(실측 42,798/39,297/88,306
+  토큰) — provider와 무관한 별개 낭비라 `_without_excerpts()`로 같이 제거.
+- 실측: 수정 후 동일 질문("내 gap 중에 우선순위 높은 거 알려줘") 재실행 시 13회 판정 전부
+  `claude-sonnet-4-6`(Gemini 0건), 최종 종합 호출 입력 토큰 42,798→6,951로 감소.
+
+## rag-v0.18.0 — 아키텍처 전환: 질문 분류→고정 함수 → Agent(tool-use) (2026-07-28)
+
+Phase 1의 "질문을 7종 중 하나로 강제 분류 → 그 유형에 고정된 함수 하나만 실행" 구조가, 실사용 중
+"내가 RAG를 안하면 많이 불리할까?" 질문에 완전히 무관한 답(`action_plan` 리포트 그대로 나열)을 내놓는
+게 발견돼 구조 자체를 재검토. 기존 함수 7개를 Claude tool-use 도구로 노출하고 Claude가 질문마다
+스스로 판단해 조합하는 **Agentic RAG** 구조로 전환.
+
+- `rag/postgres/agent.py`(신규): `AGENT_SYSTEM`+`TOOL_DEFS`(7개)+`_make_tool_executor()`+
+  `answer_query_agent()`. 새 비즈니스 로직 없이 기존 함수(`market_demand_hybrid`/`assess_gap`/
+  `assess_all_gaps`/`list_postings`/`judge_topic_postings`/`compare_postings`/`generate_action_plan`/
+  `generate_sequenced_plan`)를 도구로 재배선.
+- `llm/base.py`/`llm/anthropic.py`: `run_agent()` 추가(Anthropic만 실제 구현, 최대 6회 도구 호출 루프,
+  `tool_choice` 미지정으로 도구 선택을 Claude 자신에게 위임).
+- `routers/rag.py`: `/api/rag/ask`가 `answer_query_agent()` 호출, `AskRequest`가 `method`/
+  `session_state` 대신 `history: list[dict]`로 교체.
+- `rag-test.html`: 새 응답 형태(`{answer, tool_calls}`)에 맞춰 렌더링 전면 수정, 도구 호출 트레이스를
+  `<details>`로 노출, `history` 기반 멀티턴 전송.
+- 실측: 실패 사례 재현 후 `get_market_demand`+`assess_skill_gap` 자동 호출로 "결론: 크게 불리하지
+  않습니다"로 시작하는 종합 답변 확인(이전엔 무관한 리포트만 나왔음).
+
 ## rag-v0.17.0 — Phase 4: 멀티턴 대화 + 채팅 세션 UI (2026-07-28)
 
 메인 앱 Q&A(`routers/qa.py`)는 raw 대화 히스토리 배열(최대 40개)을 매번 통째로 재해석하는 방식인데,

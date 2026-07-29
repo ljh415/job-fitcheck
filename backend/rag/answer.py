@@ -23,6 +23,7 @@ import argparse
 import asyncio
 import sqlite3
 
+from llm.base import LLMProvider
 from llm.router import capture_snapshot, high_from_snapshot
 from rag.embed.local import LocalEmbeddingProvider
 from rag.gap import assess_all_gaps, assess_gap
@@ -62,9 +63,13 @@ ACTION_PLAN_TOOL_SCHEMA = {
 }
 
 
-async def generate_action_plan(gap_result: dict) -> dict:
-    snap = capture_snapshot()
-    high, high_model = high_from_snapshot(snap)
+async def generate_action_plan(gap_result: dict, llm: tuple[LLMProvider, str, str | None] | None = None) -> dict:
+    if llm is not None:
+        high, high_model, reasoning_effort = llm
+    else:
+        snap = capture_snapshot()
+        high, high_model = high_from_snapshot(snap)
+        reasoning_effort = snap.reasoning_effort
 
     user = (
         f"기술/개념: {gap_result['skill']}\n"
@@ -83,7 +88,7 @@ async def generate_action_plan(gap_result: dict) -> dict:
         tool_schema=ACTION_PLAN_TOOL_SCHEMA,
         model=high_model,
         operation="행동 계획 생성",
-        reasoning_effort=snap.reasoning_effort,
+        reasoning_effort=reasoning_effort,
     )
 
 
@@ -196,10 +201,16 @@ SEQUENCE_PLAN_TOOL_SCHEMA = {
 }
 
 
-async def generate_sequenced_plan(prioritized_gaps: list[dict]) -> dict:
+async def generate_sequenced_plan(
+    prioritized_gaps: list[dict], llm: tuple[LLMProvider, str, str | None] | None = None
+) -> dict:
     """01b AC-06 스타일 — 여러 gap을 어떤 순서·조합으로 보완할지 하나의 계획으로 만든다."""
-    snap = capture_snapshot()
-    high, high_model = high_from_snapshot(snap)
+    if llm is not None:
+        high, high_model, reasoning_effort = llm
+    else:
+        snap = capture_snapshot()
+        high, high_model = high_from_snapshot(snap)
+        reasoning_effort = snap.reasoning_effort
 
     gap_block = "\n\n".join(
         f"- {g['skill']} (근거 판정: {g['evidence_level']}, 시장 수요:"
@@ -217,7 +228,7 @@ async def generate_sequenced_plan(prioritized_gaps: list[dict]) -> dict:
         tool_schema=SEQUENCE_PLAN_TOOL_SCHEMA,
         model=high_model,
         operation="Gap 순서 계획 생성",
-        reasoning_effort=snap.reasoning_effort,
+        reasoning_effort=reasoning_effort,
     )
 
 

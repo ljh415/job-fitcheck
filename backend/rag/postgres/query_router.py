@@ -11,6 +11,7 @@ import json
 
 import psycopg
 
+from llm.base import LLMProvider
 from llm.router import capture_snapshot, high_from_snapshot, light_from_snapshot
 from rag.answer import (
     generate_action_plan,
@@ -31,6 +32,11 @@ from rag.skills import TRACKED_SKILLS
 
 TOPIC_LOCAL_TOP_K = 15  # method="local"일 때 벡터 검색 반환 개수(비교/실험용)
 
+# 아래 QUERY_TYPES ~ classify_query()는 미사용 코드다(파일 끝의 answer_query()도 마찬가지 —
+# 그 앞에 있는 list_postings/compare_postings/judge_topic_postings는 agent.py가 실제로 씀).
+# Phase 1~4의 "질문을 7종으로 분류 → 고정 함수 실행" 라우팅 방식이며, 2026-07-28 Agent(tool-use)
+# 전환 이후 `/api/rag/ask`가 더 이상 호출하지 않는다. 다른 곳에서도 참조 없음을 grep으로 확인
+# 완료(2026-07-29, Codex 리뷰로 독립 재확인). 삭제하지 않고 주석으로만 표시 — 사용자 지침.
 QUERY_TYPES = [
     "single_skill_gap",
     "all_gaps",
@@ -180,7 +186,9 @@ def compare_postings(conn: psycopg.Connection, company_names: list[str]) -> list
     return results
 
 
-async def _judge_topic_postings_llm(conn: psycopg.Connection, topic: str) -> list[dict]:
+async def _judge_topic_postings_llm(
+    conn: psycopg.Connection, topic: str, llm: tuple[LLMProvider, str, str | None] | None = None
+) -> list[dict]:
     """자유 텍스트 주제(TRACKED_SKILLS 밖)를 corpus 전체 원문으로 LLM이 직접 판정한다.
 
     벡터 코사인 유사도로 후보를 미리 추려서 넘기면(_candidate_postings 패턴) 이 corpus에서는
@@ -206,8 +214,12 @@ async def _judge_topic_postings_llm(conn: psycopg.Connection, topic: str) -> lis
     listing = "\n".join(
         f"{i + 1}. {p['company_name']} / {p['job_title']} — {p['text']}" for i, p in enumerate(plist)
     )
-    snap = capture_snapshot()
-    high, high_model = high_from_snapshot(snap)
+    if llm is not None:
+        high, high_model, reasoning_effort = llm
+    else:
+        snap = capture_snapshot()
+        high, high_model = high_from_snapshot(snap)
+        reasoning_effort = snap.reasoning_effort
     result = await high.extract_structured(
         system=JUDGE_CANDIDATES_SYSTEM,
         user=f"기술/개념: {topic}\n\n후보 공고 목록:\n{listing}",
@@ -216,7 +228,7 @@ async def _judge_topic_postings_llm(conn: psycopg.Connection, topic: str) -> lis
         tool_schema=JUDGE_CANDIDATES_TOOL_SCHEMA,
         model=high_model,
         operation="주제 공고 판정(전체원문)",
-        reasoning_effort=snap.reasoning_effort,
+        reasoning_effort=reasoning_effort,
     )
     valid = {r["number"]: r["reason"] for r in result["relevant"] if 1 <= r["number"] <= len(plist)}
     return [
@@ -249,13 +261,18 @@ def _judge_topic_postings_local(conn: psycopg.Connection, topic: str, embed_prov
 
 
 async def judge_topic_postings(
-    conn: psycopg.Connection, topic: str, embed_provider: EmbeddingProvider, method: str = "llm"
+    conn: psycopg.Connection,
+    topic: str,
+    embed_provider: EmbeddingProvider,
+    method: str = "llm",
+    llm: tuple[LLMProvider, str, str | None] | None = None,
 ) -> list[dict]:
     if method == "local":
         return _judge_topic_postings_local(conn, topic, embed_provider)
-    return await _judge_topic_postings_llm(conn, topic)
+    return await _judge_topic_postings_llm(conn, topic, llm=llm)
 
 
+# 미사용 코드(위 QUERY_TYPES/classify_query()와 같은 이유) — 삭제 안 하고 주석 표시만.
 async def answer_query(
     conn: psycopg.Connection,
     question: str,

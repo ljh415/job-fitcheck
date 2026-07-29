@@ -8,6 +8,8 @@ Plan B 6단계(`rag/postgres/gap.py`, `rag/postgres/answer.py`)를 그대로 호
 
 main 브랜치엔 없는 라우터 — rag/main 전용.
 """
+import asyncio
+
 import httpx
 import psycopg
 from fastapi import APIRouter, HTTPException
@@ -15,12 +17,14 @@ from google.genai import errors as genai_errors
 from pydantic import BaseModel
 
 from llm.base import LLMAPIError
+from llm.router import capture_snapshot, high_from_snapshot
 from rag.answer import generate_action_plan
 from rag.embed.google import GoogleEmbeddingProvider
 from rag.embed.local import LocalEmbeddingProvider
 from rag.postgres.agent import answer_query_agent
 from rag.postgres.db import get_connection
 from rag.postgres.gap import assess_gap
+from rag.postgres import reindex as rag_reindex
 
 router = APIRouter(prefix="/api/rag")
 
@@ -52,10 +56,17 @@ async def gap_check(req: GapCheckRequest):
         # 미리 None으로 둬서 생성 자체가 실패해도 finally가 안전하게 아무 일도 안 하도록 한다.
         conn = get_connection()
         embed_provider = GoogleEmbeddingProvider() if req.provider == "google" else LocalEmbeddingProvider()
-        gap_result = await assess_gap(conn, req.skill, embed_provider)
+        # 판정 LLM provider/model/reasoning_effort를 요청 시작 시 한 번만 캡처해 끝까지 그대로
+        # 쓴다 — 안 그러면 assess_gap() 내부 시장수요 판정·근거 판정·행동계획 생성이 각각 따로
+        # capture_snapshot()을 불러서, 요청 처리 도중 설정 화면에서 provider를 바꾸면 한 요청
+        # 안에서 provider가 섞일 수 있다(Codex 리뷰 2026-07-29 지적, llm/router.py의
+        # LLMSnapshot 설계 의도와도 일치).
+        snap = capture_snapshot()
+        llm = (*high_from_snapshot(snap), snap.reasoning_effort)
+        gap_result = await assess_gap(conn, req.skill, embed_provider, llm=llm)
         action_plan = None
         if gap_result["evidence_level"] != "직접 근거":
-            action_plan = await generate_action_plan(gap_result)
+            action_plan = await generate_action_plan(gap_result, llm=llm)
         return {
             "skill": gap_result["skill"],
             "evidence_level": gap_result["evidence_level"],
@@ -108,6 +119,29 @@ async def gap_check(req: GapCheckRequest):
                 pass
         if conn is not None:
             conn.close()  # 명시적으로 닫아야 함 — GC(__del__)에 의존하면 idle in transaction 커넥션이 쌓일 수 있다(Codex 리뷰로 발견, 2026-07-23)
+
+
+@router.post("/reindex")
+async def reindex():
+    """재색인 웹 트리거(2026-07-29) — `rag.postgres.reindex.run()`이 지금까지 CLI 전용이라
+    실제 사용자는 트리거할 방법이 없었다. google+local 둘 다, 프로필 포함해서 대칭적으로
+    실행한다 — Google API는 이미 유료 티어로 확정돼 있어(`project_gemini_key_switching` 메모리
+    참고) "Google엔 프로필 기본 제외" 같은 안전장치가 불필요하다(자동 트리거는 안 함, 사용자가
+    누를 때만 실행). run()은 동기 함수(psycopg/httpx 동기 호출)라 `asyncio.to_thread`로 감싸
+    이벤트 루프를 막지 않는다 — 출력은 그대로 컨테이너 stdout으로 흘려보내 기존
+    `docker compose logs -f api` 디버깅 흐름을 유지한다."""
+    try:
+        for provider_name in ("google", "local"):
+            await asyncio.to_thread(rag_reindex.run, provider_name, True)
+        return {"status": "ok"}
+    except RuntimeError as e:
+        raise HTTPException(503, f"RAG 파이프라인 연결/설정 오류: {e}")
+    except httpx.HTTPError as e:
+        raise HTTPException(503, f"임베딩 서버 통신 오류: {e}")
+    except genai_errors.APIError as e:
+        raise HTTPException(503, f"Google 임베딩 API 오류: {e}")
+    except psycopg.OperationalError as e:
+        raise HTTPException(503, "DB 연결 오류 — 잠시 후 다시 시도하세요")
 
 
 @router.post("/ask")

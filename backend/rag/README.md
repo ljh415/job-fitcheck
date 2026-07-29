@@ -4,9 +4,9 @@ Job FitCheck가 이미 모아둔 채용공고 데이터와 본인 프로필을 �
 
 ## 한눈에 보기
 
-- **지금 상태**: Plan A·B 전체 완료 + "대화형 근거 기반 RAG" Phase 1~4 구현·검증 완료. **다만 Phase 1의 "질문 분류→고정 함수 실행" 방식은 구조적 결함(애매한 질문에 무관한 답)이 실사용 중 발견돼, Agentic RAG(Agent가 RAG 도구들을 스스로 선택·조합) 구조로 전환 중(진행 중, 전수 검증 전)** — 상세는 아래 6번, `conversational-rag/00_design.md`의 "아키텍처 전환" 섹션.
-- **정체성 — Agentic RAG**: `POST /api/rag/ask`는 이제 질문을 고정 분류하지 않는다. `assess_skill_gap`/`list_matching_postings`/`get_market_demand` 등 RAG 동작(검색 후 LLM 판정) 하나하나를 도구로 노출하고, Claude가 질문마다 무엇을 몇 개나 쓸지 스스로 판단해 답을 종합한다(`rag/postgres/agent.py`, `llm/anthropic.py`의 `run_agent()`). 도구 선택은 코드 분기가 아니라 Anthropic API의 `tool_choice` 기본값(`auto`)에 위임돼 있다.
-- **실제 서비스 경로**: `POST /api/rag/gap-check`(기술명 직접 지정) + `POST /api/rag/ask`(자연어 질문 → 7종 분류·라우팅) → `backend/rag/postgres/` (PostgreSQL+pgvector). SQLite 코드(`backend/rag/*.py`)는 삭제 안 하고 Plan A 검증 결과 재현용으로만 남아있음 — 지금 웹 UI는 이 코드를 안 씀.
+- **지금 상태**: Plan A·B 전체 완료 + "대화형 근거 기반 RAG" Phase 1~4 구현·검증 완료 + **Agentic RAG 아키텍처 전환·전수 검증 완료(2026-07-29)**. Phase 1의 "질문 분류→고정 함수 실행" 방식이 애매한 질문에 무관한 답을 내는 구조적 결함이 실사용 중 발견돼, Agent(Claude tool-use)가 RAG 도구들을 스스로 선택·조합하는 구조로 전환. 5개 카테고리(단일 도구/복합 도구/멀티턴/답변 불가/함정형) 15문항 전수 검증 완료(14/15 명확 통과) — 상세는 `conversational-rag/00_design.md`의 "아키텍처 전환"/"Provider 일관성 수정" 섹션.
+- **정체성 — Agentic RAG**: `POST /api/rag/ask`는 질문을 고정 분류하지 않는다. `assess_skill_gap`/`list_matching_postings`/`get_market_demand` 등 RAG 동작(검색 후 LLM 판정) 하나하나를 도구로 노출하고, Claude가 질문마다 무엇을 몇 개나 쓸지 스스로 판단해 답을 종합한다(`rag/postgres/agent.py`, `llm/anthropic.py`의 `run_agent()`). 도구 선택은 코드 분기가 아니라 Anthropic API의 `tool_choice` 기본값(`auto`)에 위임돼 있다. 도구 내부 판정 LLM도 임베딩만 빼고 항상 Claude로 고정(메인 앱 provider 설정과 무관, 2026-07-29 수정 — 그전엔 오케스트레이션만 Claude이고 도구 내부는 메인 설정을 따라가던 불일치가 있었음).
+- **실제 서비스 경로**: `POST /api/rag/gap-check`(기술명 직접 지정, provider 선택 가능) + `POST /api/rag/ask`(자연어 질문 → Agent가 도구 자유 선택) + `POST /api/rag/reindex`(공고/프로필 변경사항을 google+local 임베딩에 반영, `rag-test.html`의 `🔄 재색인` 버튼) → `backend/rag/postgres/` (PostgreSQL+pgvector). SQLite 코드(`backend/rag/*.py`)는 삭제 안 하고 Plan A 검증 결과 재현용으로만 남아있음 — 지금 웹 UI는 이 코드를 안 씀. 옛 분류 기반 `query_router.py`의 `classify_query`/`answer_query`도 `/api/rag/ask`가 더 이상 안 쓰지만 도구 실행부 일부를 재사용 중이라 아직 삭제 안 함.
 - **자유 텍스트 주제 검색(Phase 2 신규)**: `posting_list`에서 `TRACKED_SKILLS` 밖 자유 텍스트 주제는 임베딩/FTS로 후보를 미리 거르지 않고 `judge_topic_postings()`가 공고 전체 원문을 LLM에 판정시킨다(`method="llm"` 기본값) — 이 corpus 규모(공고 수십~백 건)에서는 코사인 유사도·reranker 절대점수 모두 관련/무관을 못 가른다는 게 실측으로 확인돼(`docs/rag-project-plans/00_meta/HISTORY.md` 2026-07-28 항목), 점수 필터링 자체를 없애는 쪽을 택함. `method="local"`(벡터 검색만, LLM 호출 없음)은 비교·실험용으로 병존.
 - **핵심 수치**: 검색 품질(Precision@5/Recall@10) — FTS5 0.75/0.41, Google 임베딩 0.68/0.33, 로컬 임베딩(Jina v5-text-small) 0.65/0.42. Gap 판정 정확도 10/10(정답지 기준).
 - **한번 써보려면**: (저자의 로컬 dev 환경 기준) `docker compose -f docker-compose.dev.yml up --build -d` 후 `http://localhost:8100/rag-test.html`에서 기술/개념(또는 자연어 질문)을 입력. `docker-compose.dev.yml`은 git 미추적 파일이라 새로 clone한 환경에는 없음 — `rag-postgres` 서비스 정의를 직접 추가해야 재현 가능(`schema.py`의 `SCHEMA_SQL` 참고).
@@ -52,7 +52,7 @@ data/companies/*.raw.txt (공고 원문 70건) + data/candidate_profile.md (후�
    answer.py — 단일 기술 질문 + 여러 기술 종합(우선순위·강점·순서계획) 질문 둘 다 지원
         │
         ▼  실제로 눌러보면서 확인
-   routers/rag.py + frontend/rag-test.html — POST /api/rag/gap-check
+   routers/rag.py + frontend/rag-test.html — POST /api/rag/gap-check, /ask, /reindex
 ```
 
 ### 파일별 설명
@@ -70,13 +70,17 @@ backend/rag/postgres/
 ├── retrieval.py        — pgvector `<=>` 검색
 ├── fts.py              — Postgres 전문검색(`websearch_to_tsquery`)
 ├── hybrid.py           — RRF(관계형 정확매칭+벡터 검색 결합)
+├── query_router.py     — `judge_topic_postings()`(자유 텍스트 주제 검색, 전체원문 LLM 판정) +
+│                        옛 분류 기반 `classify_query`/`answer_query`(미사용, 삭제는 보류)
+├── agent.py            — ★ Agentic RAG 핵심. `AGENT_SYSTEM`+`TOOL_DEFS`(도구 7개)+
+│                        `answer_query_agent()` — Claude가 질문마다 도구를 스스로 선택·조합
 ├── reindex.py          — ★ 전체 재색인 진입점. `python3 -m rag.postgres.reindex --provider google`
 ├── evaluate.py / evaluate_hybrid.py / hnsw_eval.py / verify.py — 검색 품질·HNSW·집계 평가
 ├── gap.py              — Gap 판정
 └── answer.py           — 답변·행동계획 생성
 
-backend/routers/rag.py     — API(POST /api/rag/gap-check, provider=google|local 선택)
-frontend/rag-test.html     — 브라우저 테스트 화면
+backend/routers/rag.py     — API(POST /api/rag/gap-check, /api/rag/ask, /api/rag/reindex)
+frontend/rag-test.html     — 브라우저 테스트 화면(기술 확인 + 자연어 채팅 + 재색인 버튼)
 ```
 
 **Plan A 기준선 재현용(동결 스크립트) — `backend/rag/*.py`(SQLite)**
@@ -95,6 +99,9 @@ python3 -m rag.postgres.answer --aggregate   # 우선순위·강점·순서계�
 ```
 
 `reindex.py`는 **내용이 안 바뀐 공고는 건드리지 않습니다**(문서 해시 비교). 스키마 자체를 바꿨다면(`schema.py` 수정 후) `--rebuild-schema` 플래그로 테이블을 지우고 다시 만들어야 합니다(`CREATE TABLE IF NOT EXISTS`는 컬럼 추가를 안 해주기 때문). 브라우저로 확인하려면 (git 미추적 로컬 dev 설정 기준) `docker compose -f docker-compose.dev.yml up --build -d` 후 `http://localhost:8100/rag-test.html`.
+
+CLI 대신 웹에서 재색인하려면(2026-07-29 추가) `rag-test.html`의 `🔄 재색인` 버튼 또는 `POST
+/api/rag/reindex`를 직접 호출 — google+local 둘 다 프로필 포함해서 대칭 실행한다(옵션 없음).
 
 ---
 
@@ -115,11 +122,13 @@ python3 -m rag.postgres.answer --aggregate   # 우선순위·강점·순서계�
 
 ## 4. 현재 상태
 
-Plan A(1~8단계)·Plan B(1~6단계) 전체 완료 + Codex 코드 리뷰 5차 재검토 반영까지 끝났습니다. "대화형 근거 기반 RAG" Phase 1(질문 이해와 라우팅)~Phase 4(멀티턴 대화)도 전부 완료됐습니다. 상세 이력(단계별 결과, 발견·수정된 버그, 정정된 결론 등)은 전부 `CHANGELOG.md`(이 폴더)에 버전별로 정리돼 있습니다 — 특히 `rag-v0.17.0`(Phase 4, 멀티턴+채팅 UI), `rag-v0.16.x`(Phase 3, 근거·표본 범위 노출 + 프로필 provider 드리프트 방지), `rag-v0.15.0`(Phase 2, 서술형 주제 검색 전체원문 LLM 판정), `rag-v0.14.0`(대화형 RAG Phase 1), `rag-v0.13.1`~`0.13.5`(Plan B Codex 재검토 5회차, Stage 4 HNSW 결론 정정 포함)를 보면 무슨 문제가 발견되고 어떻게 고쳤는지 다 나옵니다.
+Plan A(1~8단계)·Plan B(1~6단계) 전체 완료 + Codex 코드 리뷰 5차 재검토 반영까지 끝났습니다. "대화형 근거 기반 RAG" Phase 1~4(질문 이해와 라우팅~멀티턴 대화)를 거쳐, 애매한 질문에 무관한 답을 내던 구조적 결함이 실사용 중 발견돼 **Agentic RAG(Claude tool-use)로 아키텍처 전환**했고, Phase 5(평가, 21문항)까지 포함해 대화형 근거 기반 RAG 전체가 완료됐습니다(2026-07-29). 이어서 진행한 "RAG 모듈 안정화"도 Phase 1(모듈 경계)·Phase 2(운영 검증) 완료, Phase 3(Qdrant·reranker·GraphRAG·3090Ti+Triton)는 전부 조건부라 현재 트리거 없음(착수 안 함 = 정상)입니다. 상세 이력은 전부 `CHANGELOG.md`(이 폴더)에 버전별로 정리돼 있습니다 — 특히 `rag-v0.19.x`(재색인 웹 트리거), `rag-v0.18.x`(Agentic RAG 전환+provider 일관성 수정+병렬화+전수 검증), `rag-v0.17.0`(Phase 4, 멀티턴+채팅 UI), `rag-v0.16.x`(Phase 3, 근거·표본 범위 노출), `rag-v0.15.0`(Phase 2, 서술형 주제 검색 전체원문 LLM 판정), `rag-v0.14.0`(대화형 RAG Phase 1), `rag-v0.13.1`~`0.13.5`(Plan B Codex 재검토 5회차)를 보면 무슨 문제가 발견되고 어떻게 고쳤는지 다 나옵니다.
 
-Phase 2에서는 화이트닝(naive mean-centering·완전 SVD covariance whitening)과 cross-encoder reranker(bge-reranker-v2-m3)를 자연어 평가셋(5문항)으로 실측했으나 둘 다 이 corpus 규모·균질성에서는 순위 품질을 개선하지 못해 기각했고, corpus가 작다는 점에 착안해 후보를 점수로 미리 거르지 않고 전체 원문을 LLM 판정에 넘기는 쪽을 채택했습니다(위 "자유 텍스트 주제 검색" 참고). Phase 3는 답변에 판정 근거(어떤 발췌문을 보고 포함시켰는지)와 표본 범위(정확매칭인지 LLM 추정인지)를 노출하는 작업이었는데, 조사해보니 `single_skill_gap`은 이미 근거를 반환하고 있었고 `all_gaps`/`action_plan`은 **백엔드엔 근거가 있는데 프론트 렌더링에서만 빠뜨리고 있던** 순수 버그였습니다 — 실제 신규 구현은 `posting_list`/`market_aggregate`뿐이었습니다.
+Phase 2(하이브리드 근거 검색)에서는 화이트닝(naive mean-centering·완전 SVD covariance whitening)과 cross-encoder reranker(bge-reranker-v2-m3)를 자연어 평가셋(5문항)으로 실측했으나 둘 다 이 corpus 규모·균질성에서는 순위 품질을 개선하지 못해 기각했고, corpus가 작다는 점에 착안해 후보를 점수로 미리 거르지 않고 전체 원문을 LLM 판정에 넘기는 쪽을 채택했습니다(위 "자유 텍스트 주제 검색" 참고). Phase 3(근거 기반 답변)는 답변에 판정 근거(어떤 발췌문을 보고 포함시켰는지)와 표본 범위(정확매칭인지 LLM 추정인지)를 노출하는 작업이었는데, 조사해보니 `single_skill_gap`은 이미 근거를 반환하고 있었고 `all_gaps`/`action_plan`은 **백엔드엔 근거가 있는데 프론트 렌더링에서만 빠뜨리고 있던** 순수 버그였습니다 — 실제 신규 구현은 `posting_list`/`market_aggregate`뿐이었습니다.
 
-**아직 안 된 것**: "대화형 근거 기반 RAG" Phase 5(평가), "RAG 모듈 안정화" 미착수. corpus 균질성이 검색 변별력을 떨어뜨리는 근본 문제(화이트닝·reranker로도 해결 안 됨, `posting_list`는 점수 필터링을 없애는 우회책으로 대응했지만 `market_aggregate` 등 다른 경로는 여전히 남은 문제)와 `gap-check`/`ask`(전체 Gap·행동 계획·`posting_list` LLM 경로) 지연시간 최적화는 의도적으로 뒤로 미룸(아래 6번 참고).
+**재색인 웹 트리거(2026-07-29)**: `reindex.py`가 완전히 CLI 전용이라 실제 사용자는 트리거할 방법이 없던 문제를 발견·해결 — `POST /api/rag/reindex` + `rag-test.html`의 `🔄 재색인` 버튼(위 "실행 방법" 참고). 자동 트리거(공고 변경 API 훅)는 하지 않기로 확정.
+
+**아직 안 된 것**: RAG 안정화 Phase 3(조건부 실험, 트리거 없어 정상 미착수). corpus 균질성이 검색 변별력을 떨어뜨리는 근본 문제(화이트닝·reranker로도 해결 안 됨, `posting_list`는 점수 필터링을 없애는 우회책으로 대응했지만 `market_aggregate` 등 다른 경로는 여전히 남은 문제)와 `gap-check`/`ask`(전체 Gap·행동 계획·`posting_list` LLM 경로) 지연시간 최적화는 의도적으로 뒤로 미룸(아래 6번 참고).
 
 ---
 
@@ -131,7 +140,7 @@ Phase 2에서는 화이트닝(naive mean-centering·완전 SVD covariance whiten
 | `docs/rag-project-plans/00_meta/HISTORY.md` | 로컬 전용 | 날짜별 진행 히스토리(궁금할 때만) | ❌ |
 | `docs/rag-project-plans/00_meta/concepts.md` | 로컬 전용 | RAG 개념을 이 프로젝트 맥락으로 풀어쓴 설명 | ❌ |
 | `docs/rag-project-plans/plan-a/`, `plan-b/` | 로컬 전용 | 완료된 단계별 설계·실행계획 | ❌ |
-| `docs/rag-project-plans/conversational-rag/`, `rag-stabilization/` | 로컬 전용 | 다음 개발 단계 설계(전자는 Phase 1 완료, 후자는 착수 전) | ❌ |
+| `docs/rag-project-plans/conversational-rag/`, `rag-stabilization/` | 로컬 전용 | 개발 단계 설계(둘 다 필수 범위는 완료, `rag-stabilization` Phase 3만 조건부 미착수) | ❌ |
 | **이 README** | `backend/rag/` | 코드가 뭐고 왜 이렇게 짰는지, 처음 보는 사람 기준 | ✅ |
 | `CHANGELOG.md` | `backend/rag/` | 버전별(`rag-v0.x.y`) 변경 이력 | ✅ |
 
@@ -141,7 +150,7 @@ Phase 2에서는 화이트닝(naive mean-centering·완전 SVD covariance whiten
 
 ## 6. 향후 방향 (요약, 상세는 로컬 전용 `STATUS.md`)
 
-- **대화형 근거 기반 RAG**: 자연어 질문을 지금의 단일 기술 판정 파이프라인에 그대로 넣으면 질문 의도를 못 알아듣는 문제에서 시작 — 질문 분류·라우팅(Phase 1, **완료**), 하이브리드 근거 검색(Phase 2, **완료**), 근거 기반 답변(Phase 3, **완료**), 멀티턴 대화(Phase 4, **완료**), 평가(Phase 5)는 착수 전(`conversational-rag/00_design.md`).
-- **RAG 모듈 안정화**: 위 결과를 독립 모듈로 정리 + 필요할 때만 Qdrant·GraphRAG 조건부 실험(reranker는 Phase 2에서 이미 실측 기각). 설계 확정, 착수 전(`rag-stabilization/00_design.md`).
+- **대화형 근거 기반 RAG**: 자연어 질문을 지금의 단일 기술 판정 파이프라인에 그대로 넣으면 질문 의도를 못 알아듣는 문제에서 시작 — 질문 분류·라우팅(Phase 1)부터 근거 기반 답변(Phase 3), 멀티턴 대화(Phase 4), 평가(Phase 5, 21문항)까지 **전부 완료**. Phase 1의 "고정 분류" 구조 자체가 실사용 중 한계가 드러나 Agentic RAG(tool-use)로 전환됨(`conversational-rag/00_design.md`).
+- **RAG 모듈 안정화**: 위 결과를 독립 모듈로 정리(Phase 1) + 운영 검증(Phase 2, 재색인 웹 트리거 포함) **완료**. Phase 3(필요할 때만 Qdrant·GraphRAG·3090Ti+Triton 조건부 실험, reranker는 이미 실측 기각)는 현재 트리거 조건 미충족이라 미착수(`rag-stabilization/00_design.md`).
 - **corpus 주제 균질성 문제**: 비슷한 직군 공고들로만 이뤄진 corpus라 검색 변별력에 근본적 한계 — `posting_list`는 Phase 2에서 우회책(점수 필터링 없이 전체 LLM 판정)으로 대응했지만, `market_aggregate` 등 다른 경로의 벡터 채널 신뢰도 문제는 여전히 남아있어 전체 개발 종료 후 별도 R&D 대상.
 - **`gap-check` 지연시간 최적화**, **3090Ti+Triton 멀티모델 서빙 실습**, **웹 검색 하이브리드**, **임베딩 비용 트래킹**: 전부 백로그, 아직 미착수.

@@ -11,6 +11,7 @@ import itertools
 
 import psycopg
 
+from llm.base import LLMProvider
 from llm.router import capture_snapshot, high_from_snapshot
 from rag.embed.base import EmbeddingProvider
 from rag.embed.local import LocalEmbeddingProvider
@@ -94,9 +95,18 @@ def _candidate_postings(conn: psycopg.Connection, skill: str, embed_provider: Em
     return list(candidates.values())
 
 
-async def market_demand_hybrid(conn: psycopg.Connection, skill: str, embed_provider: EmbeddingProvider) -> dict:
+async def market_demand_hybrid(
+    conn: psycopg.Connection,
+    skill: str,
+    embed_provider: EmbeddingProvider,
+    llm: tuple[LLMProvider, str, str | None] | None = None,
+) -> dict:
     """`TRACKED_SKILLS`에 있는 13개 기술은 정확 매칭을 그대로 쓰고, 그 외 자유 키워드는 후보를
-    모아 LLM이 실제로 관련 있는지 개별 판정한 결과를 센다."""
+    모아 LLM이 실제로 관련 있는지 개별 판정한 결과를 센다.
+
+    `llm`을 지정하면 그 provider/model로 판정한다(Agent 도구 실행부가 씀 — Agent는 임베딩만
+    빼고 판정 LLM도 항상 Claude로 지정한다, 메인 앱 provider 설정과 무관). 지정하지 않으면
+    기존처럼 메인 앱 설정(`capture_snapshot()`)을 따른다(`/api/rag/gap-check` 등 기존 호출부)."""
     if skill in TRACKED_SKILLS:
         return market_demand(conn, skill)
 
@@ -109,8 +119,12 @@ async def market_demand_hybrid(conn: psycopg.Connection, skill: str, embed_provi
         f"{i+1}. {c['company_name']} / {c['job_title']} — 발췌: {c['excerpt'][:200]}"
         for i, c in enumerate(candidates)
     )
-    snap = capture_snapshot()
-    high, high_model = high_from_snapshot(snap)
+    if llm is not None:
+        high, high_model, reasoning_effort = llm
+    else:
+        snap = capture_snapshot()
+        high, high_model = high_from_snapshot(snap)
+        reasoning_effort = snap.reasoning_effort
     result = await high.extract_structured(
         system=JUDGE_CANDIDATES_SYSTEM,
         user=f"기술/개념: {skill}\n\n후보 공고 목록:\n{listing}",
@@ -119,7 +133,7 @@ async def market_demand_hybrid(conn: psycopg.Connection, skill: str, embed_provi
         tool_schema=JUDGE_CANDIDATES_TOOL_SCHEMA,
         model=high_model,
         operation="시장 수요 후보 판정",
-        reasoning_effort=snap.reasoning_effort,
+        reasoning_effort=reasoning_effort,
     )
     valid_numbers = {r["number"] for r in result["relevant"] if 1 <= r["number"] <= len(candidates)}
     matched = len(valid_numbers)
@@ -143,22 +157,31 @@ def _has_profile_embeddings(conn: psycopg.Connection, embed_provider: EmbeddingP
     return count > 0
 
 
-async def assess_gap(conn: psycopg.Connection, skill: str, embed_provider: EmbeddingProvider) -> dict:
+async def assess_gap(
+    conn: psycopg.Connection,
+    skill: str,
+    embed_provider: EmbeddingProvider,
+    llm: tuple[LLMProvider, str, str | None] | None = None,
+) -> dict:
     if not _has_profile_embeddings(conn, embed_provider):
         raise RuntimeError(
             f"이 provider({embed_provider.provider_name}/{embed_provider.model})로 후보자 프로필이"
             " 아직 임베딩되지 않았습니다. `rag.postgres.reindex --include-profile`로 먼저 임베딩하세요."
         )
 
-    demand = await market_demand_hybrid(conn, skill, embed_provider)
+    demand = await market_demand_hybrid(conn, skill, embed_provider, llm=llm)
 
     evidence_chunks = search_chunks(
         conn, embed_provider, f"{skill} 관련 실무 경험", source_type="candidate_profile", top_k=PROFILE_TOP_K
     )
     excerpts = [text for _score, _chunk_id, text in evidence_chunks]
 
-    snap = capture_snapshot()
-    high, high_model = high_from_snapshot(snap)
+    if llm is not None:
+        high, high_model, reasoning_effort = llm
+    else:
+        snap = capture_snapshot()
+        high, high_model = high_from_snapshot(snap)
+        reasoning_effort = snap.reasoning_effort
 
     excerpt_block = "\n\n".join(f"[발췌 {i+1}] {t}" for i, t in enumerate(excerpts)) or "(검색된 발췌문 없음)"
     scope = _recognized_scope(skill)
@@ -184,7 +207,7 @@ async def assess_gap(conn: psycopg.Connection, skill: str, embed_provider: Embed
         tool_schema=GAP_ASSESS_TOOL_SCHEMA,
         model=high_model,
         operation="Gap 판정",
-        reasoning_effort=snap.reasoning_effort,
+        reasoning_effort=reasoning_effort,
     )
     result["skill"] = skill
     result["market_demand"] = demand
@@ -192,8 +215,35 @@ async def assess_gap(conn: psycopg.Connection, skill: str, embed_provider: Embed
     return result
 
 
-async def assess_all_gaps(conn: psycopg.Connection, embed_provider: EmbeddingProvider) -> list[dict]:
-    return [await assess_gap(conn, skill, embed_provider) for skill in TRACKED_SKILLS]
+async def assess_all_gaps(
+    conn: psycopg.Connection,
+    embed_provider: EmbeddingProvider,
+    llm: tuple[LLMProvider, str, str | None] | None = None,
+) -> list[dict]:
+    """`llm`이 명시적으로 주어졌을 때(Agent 경로)만 `TRACKED_SKILLS`(13개)를 동시에 판정한다
+    (순차 대비 체감 3~4배 빠름, 2026-07-29 실측). 개수 제한 없는 이유: 실제 Anthropic API 응답
+    헤더로 이 계정의 분당 한도(요청 10,000회/토큰 1,200만)를 확인했고, 13개 동시 호출(요청
+    13건/토큰 약 6~7만)은 그 대비 무시할 수준. 공유 커넥션(`conn`) 동시 사용도 순차 vs 동시
+    실행 결과를 직접 비교해 불일치 없음을 실측 확인함(`market_demand`/`search_chunks`가 전부
+    동기 호출이라 이벤트 루프상 실제로 안 겹침).
+
+    `llm`이 `None`이면(메인 앱 설정을 따르는 CLI/기타 호출부) 어떤 provider일지 모르므로 위
+    검증이 적용 안 됨(Gemini 무료 티어처럼 훨씬 빡빡한 한도일 수 있음) — 순차 실행 유지.
+
+    (Codex 리뷰 2026-07-29 지적) `asyncio.gather()`는 하나가 실패해도 나머지를 취소하지
+    않고 백그라운드에서 계속 돌려 재시도 시 중복 호출 위험이 있어, `return_exceptions=True`로
+    전부 끝난 뒤에 예외를 처리한다."""
+    if llm is None:
+        return [await assess_gap(conn, skill, embed_provider, llm=llm) for skill in TRACKED_SKILLS]
+
+    results = await asyncio.gather(
+        *(assess_gap(conn, skill, embed_provider, llm=llm) for skill in TRACKED_SKILLS),
+        return_exceptions=True,
+    )
+    for r in results:
+        if isinstance(r, BaseException):
+            raise r
+    return results
 
 
 async def validate() -> None:

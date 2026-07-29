@@ -5,6 +5,7 @@ Anthropic Claude provider 구현.
 스트리밍: messages.stream() 컨텍스트 매니저 사용
 """
 import json
+import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 
@@ -13,6 +14,8 @@ import anthropic
 from services import usage_tracker
 from config import settings
 from .base import LLMAPIError, LLMProvider
+
+logger = logging.getLogger(__name__)
 
 
 class AnthropicProvider(LLMProvider):
@@ -171,12 +174,30 @@ class AnthropicProvider(LLMProvider):
             messages.append({"role": "assistant", "content": response.content})
             tool_results = []
             for block in tool_use_blocks:
-                result = await tool_executor(block.name, block.input)
+                is_error = False
+                try:
+                    result = await tool_executor(block.name, block.input)
+                except (RuntimeError, LLMAPIError) as e:
+                    # 도구 하나가 실패해도(예: 선택한 임베딩 provider로 프로필이 아직 색인 안 됨)
+                    # 전체 요청을 죽이지 않는다 — 실패 사실을 Claude에게 tool_result로 알려서
+                    # AGENT_SYSTEM의 "근거 부족하면 솔직히 말하세요" 지시대로 대응하게 한다.
+                    # 이 두 예외 타입은 이미 사용자에게 보여줘도 안전한 메시지로 만들어져 있어
+                    # 그대로 전달한다(예: "이 provider로 프로필이 아직 임베딩되지 않았습니다").
+                    is_error = True
+                    result = {"error": str(e)}
+                except Exception as e:
+                    # 예상 못 한 예외(SQL 오류 등)는 원문에 테이블명·쿼리 같은 내부 정보가 담길 수
+                    # 있어 Claude/프론트 도구 트레이스에 그대로 노출하지 않는다(Codex 리뷰 2026-07-29
+                    # 지적) — 서버 로그에만 전체를 남기고 도구에는 일반화된 메시지만 준다.
+                    logger.exception("도구 실행 중 예상 못 한 오류 (%s)", block.name)
+                    is_error = True
+                    result = {"error": "내부 도구 실행 오류가 발생했습니다."}
                 tool_calls_trace.append({"tool": block.name, "args": block.input, "result": result})
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": block.id,
                     "content": json.dumps(result, ensure_ascii=False, default=str),
+                    "is_error": is_error,
                 })
             messages.append({"role": "user", "content": tool_results})
 
