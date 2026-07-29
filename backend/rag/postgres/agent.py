@@ -139,6 +139,7 @@ def _make_tool_executor(
     # 호출부는 기존처럼 메인 앱 설정을 그대로 따른다(회귀 없음).
     claude_llm = llm
     all_gaps_cache: list[dict] | None = None
+    skill_gap_cache: dict[str, dict] = {}
 
     async def get_all_gaps() -> list[dict]:
         # 한 턴 안에서 assess_all_gaps_summary와 generate_sequenced_plan_for_priority_gaps를
@@ -150,12 +151,20 @@ def _make_tool_executor(
             all_gaps_cache = await assess_all_gaps(conn, embed_provider, llm=claude_llm)
         return all_gaps_cache
 
+    async def get_skill_gap(skill: str) -> dict:
+        # get_all_gaps()와 같은 이유 — generate_action_plan_for_skill의 도구 설명이 "이미
+        # assess_skill_gap으로 확인한 뒤에 쓰세요"라고 순서를 안내해서, 한 턴 안에 같은 기술로
+        # 둘 다 부르면 assess_gap()(LLM 판정 포함)이 두 번 실행됐다(2026-07-29 발견).
+        if skill not in skill_gap_cache:
+            skill_gap_cache[skill] = await assess_gap(conn, skill, embed_provider, llm=claude_llm)
+        return skill_gap_cache[skill]
+
     async def execute(name: str, args: dict) -> dict:
         if name == "get_market_demand":
             return await market_demand_hybrid(conn, args["skill"], embed_provider, llm=claude_llm)
 
         if name == "assess_skill_gap":
-            return await assess_gap(conn, args["skill"], embed_provider, llm=claude_llm)
+            return await get_skill_gap(args["skill"])
 
         if name == "assess_all_gaps_summary":
             results = await get_all_gaps()
@@ -167,6 +176,11 @@ def _make_tool_executor(
         if name == "list_matching_postings":
             topic = args["topic"]
             job_role = args.get("job_role") or ""
+            if not topic and not job_role:
+                # topic이 스키마상 required지만 빈 문자열도 통과되는 tool-use 특성상, Claude가
+                # 필터 없이 이 도구를 부르면 judge_topic_postings(topic="")로 떨어져 빈 주제로
+                # LLM 판정을 도는 낭비 호출이 될 수 있다 — 신뢰 경계 입력 검증(2026-07-29 발견).
+                return {"error": "topic 또는 job_role 중 최소 하나는 필요합니다."}
             if topic in TRACKED_SKILLS:
                 return {"postings": list_postings(conn, skill=topic, job_title=job_role)}
             if job_role and not topic:
@@ -177,7 +191,7 @@ def _make_tool_executor(
             return {"comparison": compare_postings(conn, args["company_names"])}
 
         if name == "generate_action_plan_for_skill":
-            gap_result = await assess_gap(conn, args["skill"], embed_provider, llm=claude_llm)
+            gap_result = await get_skill_gap(args["skill"])
             if gap_result["evidence_level"] == "직접 근거":
                 return {"message": "이미 직접 근거가 있어 행동 계획이 불필요합니다.", "gap": gap_result}
             plan = await generate_action_plan(gap_result, llm=claude_llm)

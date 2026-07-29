@@ -8,6 +8,22 @@
 상세 이력·설계 논의는 `docs/rag-project-plans/00_meta/HISTORY.md`(git 미추적)에 exhaustively
 기록돼 있음 — 이 파일은 그걸 압축한 요약.
 
+## rag-v0.19.2 — Agent 도구 중복 호출 버그 수정 + 입력 검증 (2026-07-29)
+
+"Agent 개발 관련 개선점" 요청으로 코드 재검토 중 발견. 처음 제기된 2건 중 1건(`get_market_demand`+
+`assess_skill_gap` 중복)은 `assess_skill_gap`의 도구 설명이 이미 시장 수요를 함께 반환한다고
+명시해 실제 위험이 낮다고 판단해 기각, 나머지 2건은 재현·수정.
+
+- **`assess_skill_gap`→`generate_action_plan_for_skill` 중복 판정**: `generate_action_plan_for_skill`
+  도구 설명이 "이미 assess_skill_gap으로 확인한 뒤에 쓰세요"라고 순서를 안내해서, 한 턴 안에 같은
+  기술로 둘 다 부르면 `assess_gap()`(LLM 판정 포함)이 두 번 실행됐음 — `rag-v0.18.2`의
+  `get_all_gaps()` 캐시와 같은 패턴으로 `get_skill_gap()` 캐시 추가. 실제 질문("Kubernetes 경험
+  부족한데 행동 계획 짜줘")으로 재현 확인(Claude가 정확히 이 순서로 도구를 호출함), 수정 후
+  에러 없이 정상 동작 확인.
+- **`list_matching_postings` 빈 입력 가드**: `topic`이 스키마상 required지만 빈 문자열도 통과되는
+  tool-use 특성상, Claude가 topic/job_role 둘 다 비워 보내면 `judge_topic_postings(topic="")`로
+  떨어져 빈 주제로 불필요한 LLM 판정 호출이 될 수 있었음 — 신뢰 경계 입력 검증 추가.
+
 ## rag-v0.19.1 — `rag-test.html` 채팅 전환 버그 수정 (2026-07-29)
 
 질문을 전송한 뒤 응답이 오기 전에 다른 채팅으로 이동했다 돌아오면 그 질문 자체가 안 보이던 버그.
