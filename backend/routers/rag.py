@@ -179,7 +179,7 @@ def _run_reindex_sync(providers: list[str]) -> None:
     try:
         while True:
             for provider_name in providers:
-                rag_reindex.run(provider_name, True)
+                rag_reindex.run(provider_name, settings.rag_include_profile)
             if not _reindex_pending:
                 break
             # pending 상태에서 재실행 — diff 기반이라 이미 반영된 변경은 다시 스캔해도 비용이
@@ -213,13 +213,13 @@ async def reindex(req: ReindexRequest | None = None):
     """재색인 웹 트리거(2026-07-29, 2026-07-31에 provider 선택 추가) —
     `rag.postgres.reindex.run()`이 지금까지 CLI 전용이라 실제 사용자는 트리거할 방법이
     없었다. `req.provider`를 지정하면 그 provider만, 생략하면 `rag_configured_providers`
-    전부(프로필 포함)를 대칭적으로 실행한다 — Google API는 이미 유료 티어로 확정돼 있어
-    (`project_gemini_key_switching` 메모리 참고) "Google엔 프로필 기본 제외" 같은
-    안전장치가 불필요하다. run()은 동기 함수(psycopg/httpx 동기 호출)라
-    `asyncio.to_thread`로 감싸 이벤트 루프를 막지 않는다 — 출력은 그대로 컨테이너
-    stdout으로 흘려보내 기존 `docker compose logs -f api` 디버깅 흐름을 유지한다.
-    수동 트리거라 이미 진행 중이면(자동 트리거와 겹쳤을 수도 있음) 조용히 미루지 않고
-    409로 명확히 알린다 — 사용자가 버튼을 눌렀는데 응답이 없으면 안 되므로."""
+    전부를 대칭적으로 실행한다. 프로필 포함 여부는 `settings.rag_include_profile`
+    (기본 false — 이력서 내용이 임베딩 API로 전송되는 걸 사용자가 명시적으로 켜야 함)을
+    따른다. run()은 동기 함수(psycopg/httpx 동기 호출)라 `asyncio.to_thread`로 감싸
+    이벤트 루프를 막지 않는다 — 출력은 그대로 컨테이너 stdout으로 흘려보내 기존
+    `docker compose logs -f api` 디버깅 흐름을 유지한다. 수동 트리거라 이미 진행
+    중이면(자동 트리거와 겹쳤을 수도 있음) 조용히 미루지 않고 409로 명확히 알린다 —
+    사용자가 버튼을 눌렀는데 응답이 없으면 안 되므로."""
     global _reindex_in_progress
     provider = req.provider if req else None
     if provider is not None and provider not in settings.rag_configured_providers:

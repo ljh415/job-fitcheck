@@ -74,6 +74,12 @@ class Settings(BaseSettings):
     rag_postgres_user: str = "rag"
     rag_postgres_password: str = ""
 
+    # 후보자 프로필(이력서 내용)을 임베딩 API로 전송할지 여부. 기본값 false(전송 안 함) —
+    # 켜면 이력서 텍스트가 임베딩 provider(Google 등)로 나간다는 걸 사용자가 명시적으로
+    # 선택해야 한다. 꺼져 있으면 Agent의 프로필 근거 기반 기능(스킬 갭 분석 등)은 근거를
+    # 못 찾아 "근거 없음"만 반환한다 — 검색/시장수요 같은 공고 기반 기능은 영향 없음.
+    rag_include_profile: bool = False
+
     @property
     def companies_dir(self) -> Path:
         return self.data_dir / "companies"
