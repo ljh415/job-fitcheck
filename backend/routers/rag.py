@@ -6,17 +6,21 @@ Plan B 6단계(`rag/postgres/gap.py`, `rag/postgres/answer.py`)를 그대로 호
 저장소는 PostgreSQL+pgvector 전용(SQLite `rag/gap.py`는 Plan A 기준선 재현용으로만 남아있고
 이 서비스 경로에선 더 이상 안 씀 — Stage 6에서 전환).
 
-main 브랜치엔 없는 라우터 — rag/main 전용.
+RAG는 opt-in 기능이다 — `settings.rag_postgres_host`가 비어 있으면 `/status` 외 나머지
+엔드포인트는 503을 반환한다(main 이식 시 opt-in 설계, `docs/rag_integration_plan.md` 2번
+참고). 라우터 자체는 항상 등록한다 — import 시점에 DB 연결을 시도하지 않으므로 등록 자체는
+안전하고, `/status`가 항상 응답 가능해야 프론트가 신뢰성 있게 활성화 여부를 조회할 수 있다.
 """
 import asyncio
 from typing import Literal
 
 import httpx
 import psycopg
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from google.genai import errors as genai_errors
 from pydantic import BaseModel, Field
 
+from config import settings
 from llm.base import LLMAPIError
 from llm.router import capture_snapshot, high_from_snapshot
 from rag.answer import generate_action_plan
@@ -28,6 +32,18 @@ from rag.postgres.gap import assess_gap
 from rag.postgres import reindex as rag_reindex
 
 router = APIRouter(prefix="/api/rag")
+
+
+def _require_rag_enabled() -> None:
+    if not settings.rag_postgres_host:
+        raise HTTPException(503, "RAG가 설정되지 않았습니다 — RAG_POSTGRES_HOST 등 .env 설정이 필요합니다.")
+
+
+@router.get("/status")
+async def status():
+    """RAG 활성화 여부 조회 — 프론트가 이걸로 RAG 관련 UI를 조건부로 노출한다.
+    다른 엔드포인트와 달리 RAG 비활성 상태에서도 항상 응답한다."""
+    return {"enabled": bool(settings.rag_postgres_host)}
 
 _reindex_in_progress = False  # main.py가 uvicorn 단일 프로세스(workers 미지정)라 in-process
 # 플래그로 충분하다 — chunk_embedding에 UNIQUE(chunk_id, provider, model, dimensions) 제약이
@@ -54,7 +70,7 @@ class AskRequest(BaseModel):
     history: list[AskMessage] = Field(default_factory=list, max_length=40)
 
 
-@router.post("/gap-check")
+@router.post("/gap-check", dependencies=[Depends(_require_rag_enabled)])
 async def gap_check(req: GapCheckRequest):
     if req.provider not in ("google", "local"):
         raise HTTPException(400, "provider는 'google' 또는 'local'만 가능합니다")
@@ -149,7 +165,7 @@ def _run_reindex_sync() -> None:
         _reindex_in_progress = False
 
 
-@router.post("/reindex")
+@router.post("/reindex", dependencies=[Depends(_require_rag_enabled)])
 async def reindex():
     """재색인 웹 트리거(2026-07-29) — `rag.postgres.reindex.run()`이 지금까지 CLI 전용이라
     실제 사용자는 트리거할 방법이 없었다. google+local 둘 다, 프로필 포함해서 대칭적으로
@@ -175,7 +191,7 @@ async def reindex():
         raise HTTPException(503, "DB 연결 오류 — 잠시 후 다시 시도하세요")
 
 
-@router.post("/ask")
+@router.post("/ask", dependencies=[Depends(_require_rag_enabled)])
 async def ask(req: AskRequest):
     """대화형 근거 기반 RAG 진입점 — 자연어 질문을 Agent(tool-use)로 답한다(2026-07-28, Phase 1~4의
     "질문 분류→고정 함수 실행" 구조를 대체). 질문이 애매하거나 여러 능력을 조합해야 답할 수 있을 때

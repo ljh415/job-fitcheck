@@ -21,3 +21,27 @@ services:
     volumes:
       - ./data:/app/data
     restart: unless-stopped
+
+  rag-postgres:
+    # RAG(Agentic RAG) 기능용 PostgreSQL+pgvector — opt-in. 기본 `docker compose up`에는 안 뜨고,
+    # RAG를 쓰려는 사용자만 `docker compose --profile rag up`으로 함께 띄운다. `.env`에
+    # RAG_POSTGRES_HOST=rag-postgres 등을 설정해야 앱이 이 서비스를 실제로 사용한다.
+    profiles: ["rag"]
+    image: pgvector/pgvector:pg17
+    env_file:
+      - .env
+    environment:
+      - POSTGRES_DB=${RAG_POSTGRES_DB:-rag}
+      - POSTGRES_USER=${RAG_POSTGRES_USER:-rag}
+      - POSTGRES_PASSWORD=${RAG_POSTGRES_PASSWORD:-rag}
+    volumes:
+      - rag_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${RAG_POSTGRES_USER:-rag} -d ${RAG_POSTGRES_DB:-rag}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  rag_pg_data:
