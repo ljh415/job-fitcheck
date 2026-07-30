@@ -72,7 +72,10 @@ class Settings(BaseSettings):
     rag_postgres_port: int = 5432
     rag_postgres_db: str = "rag"
     rag_postgres_user: str = "rag"
-    rag_postgres_password: str = ""
+    # docker-compose.yml의 POSTGRES_PASSWORD 기본값(${RAG_POSTGRES_PASSWORD:-rag})과
+    # 반드시 일치시킨다 — 어긋나면 .env를 안 채운 상태에서 인증 실패가 난다(Codex 리뷰로
+    # 발견, 2026-07-31).
+    rag_postgres_password: str = "rag"
 
     # 후보자 프로필(이력서 내용)을 임베딩 API로 전송할지 여부. 기본값 false(전송 안 함) —
     # 켜면 이력서 텍스트가 임베딩 provider(Google 등)로 나간다는 걸 사용자가 명시적으로
