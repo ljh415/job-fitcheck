@@ -28,6 +28,7 @@ from services import scraper
 import storage
 from config import get_notify_pref, get_weekly_summary_schedule
 from export import save_backup_zip
+from routers.rag import trigger_reindex_background
 from services.jobplanet import fetch_jobplanet_score
 from llm.base import LLMAPIError
 from llm.router import LLMSnapshot, capture_snapshot, high_from_snapshot, light_from_snapshot
@@ -332,6 +333,8 @@ async def delete_company(slug: str):
     if not deleted:
         raise HTTPException(status_code=404, detail="회사를 찾을 수 없습니다.")
     logger.info("공고 삭제: %s", slug)
+    # RAG(opt-in) 자동 재색인 — 삭제된 공고의 고아 임베딩을 prune_deleted_postings()가 정리하도록.
+    trigger_reindex_background()
     return {"status": "deleted"}
 
 
@@ -645,6 +648,9 @@ async def _process_company(
         materials["employee_count"] = fm.employee_count
 
     await send_notification(materials)
+    # RAG(opt-in) 자동 재색인 — 공고 원문(.raw.txt)이 방금 바뀌었으니 백그라운드로 반영한다.
+    # RAG가 꺼져 있으면 즉시 아무 일도 안 함(4번 "데이터 동기화" 항목).
+    trigger_reindex_background()
     return record
 
 
@@ -785,7 +791,14 @@ async def add_manual(req: ManualCompanyRequest):
     )
     body = f"# {fm.display_name} — {fm.job_title}\n\n{req.notes}"
     slug = storage.make_slug(fm.company_name, fm.job_title or "")
-    return storage.write_company(slug, fm, body)
+    # RAG(rag/postgres/ingest.py)는 .raw.txt만 원문으로 스캔한다 — 수동 추가는 다른 경로
+    # (add_from_url/text/image)와 달리 write_raw_text()를 안 불러서 원래 RAG에서 안
+    # 보였다(4번 "데이터 동기화" 항목에서 발견). 수동 입력 시 사용자가 직접 쓴 notes가
+    # 가장 원문에 가까우므로 그대로 raw.txt로 저장한다.
+    storage.write_raw_text(slug, req.notes)
+    record = storage.write_company(slug, fm, body)
+    trigger_reindex_background()
+    return record
 
 
 @router.post("/api/companies/{slug}/refill")

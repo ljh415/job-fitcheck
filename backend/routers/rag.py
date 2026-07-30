@@ -164,18 +164,48 @@ class ReindexRequest(BaseModel):
     provider: str | None = None  # None이면 rag_configured_providers 전부(기존 기본 동작)
 
 
+_reindex_pending = False  # 재색인 도중 새 CRUD 이벤트가 들어오면 이 플래그만 세우고, 현재
+# 실행이 끝난 뒤 한 번 더 돈다 — 그냥 무시하면 그 이벤트가 스캔에 안 잡힌 채 다음 트리거가
+# 올 때까지 색인이 안 될 수 있다(4번 "동시 재색인 경쟁조건", Codex 제안 반영).
+
+
 def _run_reindex_sync(providers: list[str]) -> None:
     # 실제 작업+플래그 해제를 전부 워커 스레드 안에서 끝낸다 — 예전엔 reindex() coroutine의
     # finally에서 플래그를 풀었는데, 클라이언트 연결 끊김 등으로 그 coroutine이 cancel되면
     # asyncio.to_thread()로 넘어간 스레드는 안 멈추는데 플래그만 먼저 풀려서 새 요청이 겹쳐
     # 실행될 수 있었다(Codex 리뷰로 발견, 2026-07-29). 플래그 수명을 실제 동기 작업 전체와
     # 묶어야 cancel에도 안전하다.
-    global _reindex_in_progress
+    global _reindex_in_progress, _reindex_pending
     try:
-        for provider_name in providers:
-            rag_reindex.run(provider_name, True)
+        while True:
+            for provider_name in providers:
+                rag_reindex.run(provider_name, True)
+            if not _reindex_pending:
+                break
+            # pending 상태에서 재실행 — diff 기반이라 이미 반영된 변경은 다시 스캔해도 비용이
+            # 거의 없다(변경 0건 감지, 2026-07-30 실측 확인).
+            _reindex_pending = False
     finally:
         _reindex_in_progress = False
+        _reindex_pending = False
+
+
+def trigger_reindex_background(providers: list[str] | None = None) -> bool:
+    """회사 CRUD 이벤트(공고 생성·재분석·삭제)에서 호출하는 자동 재색인 트리거(4번 항목).
+    수동 트리거(`/reindex` 엔드포인트)와 달리 사용자에게 보여줄 응답이 없으므로, 이미
+    진행 중이면 에러 대신 `_reindex_pending`만 세워서 조용히 뒤로 미룬다. RAG가 꺼져 있으면
+    아무 일도 안 하고 즉시 False. 실패해도(임베딩 API 오류 등) CRUD 요청 자체는 이미 끝난
+    뒤라 사용자에게 영향 없음 — 다음 트리거(수동/자동 무관) 때 diff 기반으로 자연히 재시도됨."""
+    global _reindex_in_progress, _reindex_pending
+    if not settings.rag_postgres_host:
+        return False
+    if _reindex_in_progress:
+        _reindex_pending = True
+        return False
+    _reindex_in_progress = True
+    ps = providers or settings.rag_configured_providers
+    asyncio.create_task(asyncio.to_thread(_run_reindex_sync, ps))
+    return True
 
 
 @router.post("/reindex", dependencies=[Depends(_require_rag_enabled)])
@@ -185,10 +215,11 @@ async def reindex(req: ReindexRequest | None = None):
     없었다. `req.provider`를 지정하면 그 provider만, 생략하면 `rag_configured_providers`
     전부(프로필 포함)를 대칭적으로 실행한다 — Google API는 이미 유료 티어로 확정돼 있어
     (`project_gemini_key_switching` 메모리 참고) "Google엔 프로필 기본 제외" 같은
-    안전장치가 불필요하다(자동 트리거는 안 함, 사용자가 누를 때만 실행). run()은 동기
-    함수(psycopg/httpx 동기 호출)라 `asyncio.to_thread`로 감싸 이벤트 루프를 막지 않는다 —
-    출력은 그대로 컨테이너 stdout으로 흘려보내 기존 `docker compose logs -f api` 디버깅
-    흐름을 유지한다."""
+    안전장치가 불필요하다. run()은 동기 함수(psycopg/httpx 동기 호출)라
+    `asyncio.to_thread`로 감싸 이벤트 루프를 막지 않는다 — 출력은 그대로 컨테이너
+    stdout으로 흘려보내 기존 `docker compose logs -f api` 디버깅 흐름을 유지한다.
+    수동 트리거라 이미 진행 중이면(자동 트리거와 겹쳤을 수도 있음) 조용히 미루지 않고
+    409로 명확히 알린다 — 사용자가 버튼을 눌렀는데 응답이 없으면 안 되므로."""
     global _reindex_in_progress
     provider = req.provider if req else None
     if provider is not None and provider not in settings.rag_configured_providers:
