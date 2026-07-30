@@ -15,7 +15,7 @@ import psycopg
 from config import settings
 from rag.postgres.db import get_connection
 from rag.postgres.schema import SCHEMA_SQL
-from rag.skills import CANDIDATE_EVIDENCE, TRACKED_SKILLS
+from rag.skills import TRACKED_SKILLS
 
 
 def _raw_hash(text: str) -> str:
@@ -98,16 +98,6 @@ def ingest_skill_alias(conn: psycopg.Connection) -> None:
     conn.commit()
 
 
-def ingest_candidate_evidence(conn: psycopg.Connection) -> None:
-    conn.execute("DELETE FROM candidate_evidence")
-    for skill, info in CANDIDATE_EVIDENCE.items():
-        conn.execute(
-            "INSERT INTO candidate_evidence (skill, evidence_level, note) VALUES (%s,%s,%s)",
-            (skill, info["level"], info["note"]),
-        )
-    conn.commit()
-
-
 def skill_counts(conn: psycopg.Connection) -> dict[str, int]:
     rows = conn.execute(
         "SELECT skill, COUNT(DISTINCT posting_id) FROM posting_skill GROUP BY skill"
@@ -120,7 +110,6 @@ def run() -> psycopg.Connection:
     try:
         n = ingest_postings(conn)
         ingest_skill_alias(conn)
-        ingest_candidate_evidence(conn)
     except Exception:
         # 여기서 실패하면 호출부(reindex.py)가 conn을 아예 못 받아서 자기 finally로 못 닫는다
         # — 이 함수가 만든 연결이니 실패 시엔 직접 닫고 다시 던진다(Codex 5차 재리뷰로 발견,

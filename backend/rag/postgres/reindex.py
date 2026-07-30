@@ -37,7 +37,7 @@ def run(provider_name: str, include_profile: bool, rebuild_schema_flag: bool = F
             schema_conn.close()  # rebuild_schema() 실패해도 닫아야 함(Codex 4차 재리뷰로 발견, 2026-07-24)
         print("스키마 재생성 완료(기존 데이터 전부 삭제됨)")
 
-    conn = ingest_run()  # 스키마 생성 + posting/posting_skill/skill_alias/candidate_evidence 적재
+    conn = ingest_run()  # 스키마 생성 + posting/posting_skill/skill_alias 적재
     try:
         _run_with_conn(conn, provider_name, include_profile)
     finally:

@@ -2,11 +2,7 @@
 
 프롬프트 상수(`GAP_ASSESS_SYSTEM` 등)와 순수 함수(`_recognized_scope` — DB 안 건드림)는 새로
 만들지 않고 `rag.gap`에서 그대로 재사용한다. `conn`을 받는 함수만 Postgres 방언으로 새로 쓴다.
-
-실행: backend/ 에서 `python3 -m rag.postgres.gap` — CANDIDATE_EVIDENCE의 10개 기술 전체를
-실시간 판정해서 정답지와 비교한다(SQLite `rag/gap.py`와 같은 결과가 나와야 포팅이 맞다는 뜻).
 """
-import asyncio
 import itertools
 
 import psycopg
@@ -14,7 +10,6 @@ import psycopg
 from llm.base import LLMProvider
 from llm.router import capture_snapshot, high_from_snapshot
 from rag.embed.base import EmbeddingProvider
-from rag.embed.local import LocalEmbeddingProvider
 from rag.gap import (
     GAP_ASSESS_SYSTEM,
     GAP_ASSESS_TOOL_DESCRIPTION,
@@ -27,11 +22,10 @@ from rag.gap import (
     PROFILE_TOP_K,
     _recognized_scope,
 )
-from rag.postgres.db import get_connection
 from rag.postgres.fts import search_fts
 from rag.postgres.pipeline import _VECTOR_COLUMN
 from rag.postgres.retrieval import search_chunks
-from rag.skills import CANDIDATE_EVIDENCE, TRACKED_SKILLS, normalize_skill
+from rag.skills import TRACKED_SKILLS, normalize_skill
 
 DEMAND_CANDIDATE_MAX = 25  # LLM 판정에 넘길 후보 공고 상한(비용·프롬프트 크기 제어)
 DEMAND_EMBED_TOP_K = 40    # 임베딩 검색 청크 수(공고 단위로 접기 전)
@@ -246,29 +240,3 @@ async def assess_all_gaps(
         if isinstance(r, BaseException):
             raise r
     return results
-
-
-async def validate() -> None:
-    """CANDIDATE_EVIDENCE(정적 정답지)의 10개 기술을 실시간 파이프라인으로 재판정해 비교한다."""
-    conn = get_connection()
-    provider = LocalEmbeddingProvider()
-    try:
-        agree = 0
-        for skill, truth in CANDIDATE_EVIDENCE.items():
-            result = await assess_gap(conn, skill, provider)
-            truth_level = truth["level"]
-            predicted = result["evidence_level"]
-            if truth_level == "직접 근거":
-                ok = predicted in ("직접 근거", "부분 근거")
-            else:
-                ok = predicted in ("근거 없음", "인접 경험")
-            agree += ok
-            mark = "OK" if ok else "MISMATCH"
-            print(f"[{mark}] {skill:14} 정답={truth_level:8} 예측={predicted:8} | {result['reasoning'][:80]}")
-        print(f"\n일치: {agree}/{len(CANDIDATE_EVIDENCE)}")
-    finally:
-        provider.close()
-
-
-if __name__ == "__main__":
-    asyncio.run(validate())

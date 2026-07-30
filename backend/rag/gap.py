@@ -4,14 +4,7 @@
   - 기술 빈도·비율은 SQL/Python이 계산한다(LLM이 숫자를 만들지 않음).
   - 검색기(임베딩)가 후보자 프로필에서 근거 청크를 찾는다.
   - LLM은 검색된 근거를 해석해서 evidence_level을 판정하고, 필요하면 행동 계획을 제시한다.
-
-`skills.py`의 `CANDIDATE_EVIDENCE`는 이제 정적 정답지가 아니라, 이 실시간 파이프라인의
-판정이 맞는지 검증하는 용도로만 쓴다(design memo, 00_claude_handoff.md 2026-07-22 참고).
-
-실행: backend/ 에서 `python3 -m rag.gap` — CANDIDATE_EVIDENCE의 10개 기술 전체를
-실시간 판정해서 정답지와 비교한다.
 """
-import asyncio
 import itertools
 import re
 import sqlite3
@@ -19,9 +12,8 @@ import sqlite3
 from llm.router import capture_snapshot, high_from_snapshot
 from rag.embed.base import EmbeddingProvider
 from rag.embed.local import LocalEmbeddingProvider
-from rag.ingest import DB_PATH
 from rag.retrieval import ensure_fts5, fts5_literal, search_chunks
-from rag.skills import CANDIDATE_EVIDENCE, TRACKED_SKILLS
+from rag.skills import TRACKED_SKILLS
 
 PROFILE_TOP_K = 5
 DEMAND_CANDIDATE_MAX = 25  # LLM 판정에 넘길 후보 공고 상한(비용·프롬프트 크기 제어)
@@ -289,29 +281,3 @@ async def assess_all_gaps(conn: sqlite3.Connection, embed_provider: EmbeddingPro
     return [await assess_gap(conn, skill, embed_provider) for skill in TRACKED_SKILLS]
 
 
-async def validate() -> None:
-    """CANDIDATE_EVIDENCE(정적 정답지)의 10개 기술을 실시간 파이프라인으로 재판정해 비교한다."""
-    conn = sqlite3.connect(DB_PATH)
-    provider = LocalEmbeddingProvider()
-    try:
-        agree = 0
-        for skill, truth in CANDIDATE_EVIDENCE.items():
-            result = await assess_gap(conn, skill, provider)
-            truth_level = truth["level"]
-            predicted = result["evidence_level"]
-            # 정답지는 "직접 근거"/"증거 없음" 2단계만 쓰므로, 예측이 그 방향과 모순되지 않으면 일치로 본다
-            # (근거 없음 정답 ↔ 예측이 "근거 없음"/"인접 경험"이면 OK, "직접 근거"/"부분 근거"면 불일치).
-            if truth_level == "직접 근거":
-                ok = predicted in ("직접 근거", "부분 근거")
-            else:  # "증거 없음"
-                ok = predicted in ("근거 없음", "인접 경험")
-            agree += ok
-            mark = "OK" if ok else "MISMATCH"
-            print(f"[{mark}] {skill:14} 정답={truth_level:8} 예측={predicted:8} | {result['reasoning'][:80]}")
-        print(f"\n일치: {agree}/{len(CANDIDATE_EVIDENCE)}")
-    finally:
-        provider.close()
-
-
-if __name__ == "__main__":
-    asyncio.run(validate())

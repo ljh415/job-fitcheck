@@ -14,12 +14,9 @@ GP-06(전체 강점 요약)·AC-06(여러 gap 순서 정하기)처럼 여러 기
 아래 `rank_priority_gaps()`/`summarize_strengths()`/`generate_sequenced_plan()`이 담당한다
 (2026-07-23 추가 — 기존엔 이 집계 로직 자체가 없어서 그런 질문에 답을 낼 수 없었다).
 
-실행: backend/ 에서 `python3 -m rag.answer` — CANDIDATE_EVIDENCE 중 "직접 근거"가 아닌
-실제 gap(GCP/CI-CD/IaC)에 대해 전체 리포트를 생성한다.
-`python3 -m rag.answer --aggregate` — TRACKED_SKILLS 전체를 종합해 GP-01/GP-06/AC-06 스타일
-집계 리포트를 생성한다.
+실행: backend/ 에서 `python3 -m rag.answer --aggregate` — TRACKED_SKILLS 전체를 종합해
+GP-01/GP-06/AC-06 스타일 집계 리포트를 생성한다.
 """
-import argparse
 import asyncio
 import sqlite3
 
@@ -28,7 +25,6 @@ from llm.router import capture_snapshot, high_from_snapshot
 from rag.embed.local import LocalEmbeddingProvider
 from rag.gap import assess_all_gaps, assess_gap
 from rag.ingest import DB_PATH
-from rag.skills import CANDIDATE_EVIDENCE
 
 ACTION_PLAN_SYSTEM = """당신은 후보자의 기술 gap을 보완할 구체적인 행동 계획을 세우는 커리어 코치입니다.
 
@@ -124,22 +120,6 @@ async def full_report(conn: sqlite3.Connection, skill: str, embed_provider) -> s
     if gap_result["evidence_level"] != "직접 근거":
         action_plan = await generate_action_plan(gap_result)
     return format_report(gap_result, action_plan)
-
-
-async def run_known_gaps() -> None:
-    """CANDIDATE_EVIDENCE 중 '직접 근거'가 아닌 실제 gap에 대해 전체 리포트를 생성한다."""
-    conn = sqlite3.connect(DB_PATH)
-    provider = LocalEmbeddingProvider()
-    try:
-        gaps = [s for s, v in CANDIDATE_EVIDENCE.items() if v["level"] != "직접 근거"]
-        print(f"실제 gap으로 분류된 기술: {gaps}\n")
-        for skill in gaps:
-            report = await full_report(conn, skill, provider)
-            print(report)
-            print()
-    finally:
-        provider.close()
-
 
 
 # "부분 근거"는 gap.py의 validate()에서도 이미 "직접 근거"와 같은 방향(증거 있음)으로 취급했다
@@ -275,10 +255,4 @@ async def run_aggregate_report() -> None:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--aggregate", action="store_true", help="GP-01/GP-06/AC-06 스타일 집계 리포트 생성")
-    args = parser.parse_args()
-    if args.aggregate:
-        asyncio.run(run_aggregate_report())
-    else:
-        asyncio.run(run_known_gaps())
+    asyncio.run(run_aggregate_report())

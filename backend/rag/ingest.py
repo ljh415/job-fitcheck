@@ -13,7 +13,7 @@ import frontmatter
 
 from config import settings
 from rag.schema import SCHEMA_SQL
-from rag.skills import CANDIDATE_EVIDENCE, TRACKED_SKILLS
+from rag.skills import TRACKED_SKILLS
 
 DB_PATH = settings.data_dir / "rag.db"
 
@@ -80,16 +80,6 @@ def ingest_skill_alias(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-def ingest_candidate_evidence(conn: sqlite3.Connection) -> None:
-    conn.execute("DELETE FROM candidate_evidence")
-    for skill, info in CANDIDATE_EVIDENCE.items():
-        conn.execute(
-            "INSERT INTO candidate_evidence (skill, evidence_level, note) VALUES (?,?,?)",
-            (skill, info["level"], info["note"]),
-        )
-    conn.commit()
-
-
 def skill_counts(conn: sqlite3.Connection) -> dict[str, int]:
     rows = conn.execute(
         "SELECT skill, COUNT(DISTINCT posting_id) FROM posting_skill GROUP BY skill"
@@ -101,7 +91,6 @@ def run() -> sqlite3.Connection:
     conn = build_db()
     n = ingest_postings(conn)
     ingest_skill_alias(conn)
-    ingest_candidate_evidence(conn)
     print(f"적재 완료: 공고 {n}건, DB={DB_PATH}")
     return conn
 
