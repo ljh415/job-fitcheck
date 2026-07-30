@@ -8,6 +8,54 @@
 상세 이력·설계 논의는 `docs/rag-project-plans/00_meta/HISTORY.md`(git 미추적)에 exhaustively
 기록돼 있음 — 이 파일은 그걸 압축한 요약.
 
+## rag-v0.19.6 — `query_router.py` 옛 라우팅 레거시 삭제 (2026-07-30)
+
+`QUERY_TYPES`/`CLASSIFY_SYSTEM`/`CLASSIFY_TOOL_*`/`UNANSWERABLE_MESSAGE`/`classify_query()`/
+`answer_query()` — Phase 1~4의 "질문을 7종으로 분류 → 고정 함수 실행" 라우팅 시스템 전체를
+실제로 삭제(그동안은 주석으로만 미사용 표시, 2026-07-29 사용자 지침으로 보류돼 있었음).
+2026-07-28 Agent(tool-use) 전환 이후 `/api/rag/ask`가 더 이상 호출 안 하고, 이 파일 밖에서도
+아무 참조가 없음을 grep으로 재확인 후 삭제 — `import json`/`light_from_snapshot`/
+`rag.answer`의 4개 함수/`rag.postgres.gap`의 3개 함수/`TRACKED_SKILLS` import도 이 삭제로
+전부 불필요해져 같이 제거. `_judge_topic_postings_local()`(`method="local"`)과는 다르게 미래
+용도가 없어 지움 — 그건 공고 데이터가 늘어나면 재테스트용으로 계속 유지(`STATUS.md` "향후
+탐색 아이디어" 참고). 컴파일 확인 + 재빌드 후 `POST /api/rag/ask` 실제 호출로 회귀 없음 확인.
+
+## rag-v0.19.5 — `search_chunks()` top_k=None 지원(전체 순위) (2026-07-30)
+
+Codex 3차 리뷰(`rag-v0.19.4` 재검증)에서 발견된 Low 1건 — `judge_topic_postings(method="local")`의
+직무 필터가 벡터 top-60 컷오프 뒤에 적용돼, 관련 공고가 61위 밖에 있으면 통째로 후보에서
+빠질 수 있었음. 사용자가 "60이 하드코딩 아니냐"고 지적, 이 corpus는 청크가 183개뿐이라 굳이
+상한을 둘 이유가 없다는 데 동의해 `search_chunks()`(`retrieval.py`)에 `top_k=None`(LIMIT
+없이 전체 반환) 지원을 추가하고 `_judge_topic_postings_local()`이 이를 쓰도록 변경. 다른
+호출부(`gap.py`/`hybrid.py`/`evaluate.py`)는 전부 명시적 숫자를 넘기므로 회귀 없음(컴파일+실제
+`judge_topic_postings(method="local", job_role="백엔드")` 호출로 확인).
+
+## rag-v0.19.4 — Codex 2차 리뷰 반영: 5건 수정 (2026-07-29)
+
+`rag-v0.19.3` 수정사항을 다시 Codex에 리뷰 요청 → Medium 3건·Low 2건 추가 발견 → 전부 코드로
+재검증 후 수정.
+
+- **[Medium] `LocalEmbeddingProvider.close()` lock leak**: `wait(timeout=5)`가
+  `TimeoutExpired`를 던지면 락 해제 코드에 도달 못 해 이후 모든 local 요청이 프로세스 재시작
+  전까지 영구 실패할 수 있었음 — `finally`로 감싸고 타임아웃 시 `kill()` 폴백 추가.
+- **[Medium] `rag-test.html`이 history를 안 잘라서 20턴 넘으면 영구 422**: 백엔드 40개 제한
+  (`rag-v0.19.3`)을 추가했는데 프론트가 여전히 대화 전체를 보내서, 그 이후 모든 질문이 계속
+  422가 나던 회귀. 메인 앱 QnA(`app.js`)와 동일하게 `.slice(-40)` 적용.
+- **[Medium] 재색인 취소 시 워커 스레드는 안 멈춤**: `_reindex_in_progress` 플래그가 async
+  coroutine의 `finally`에서 풀렸는데, 클라이언트 연결 끊김 등으로 coroutine이 cancel되면
+  `to_thread`로 넘어간 실제 스레드는 계속 도는 채로 플래그만 먼저 풀려 새 요청과 겹칠 수
+  있었음 — 플래그 해제를 실제 동기 작업(`_run_reindex_sync`) 안 `finally`로 옮겨 스레드 수명과
+  묶음.
+- **[Low] `judge_topic_postings(method="local")`가 여전히 `job_role` 무시**: `rag-v0.19.3`에서
+  LLM 경로만 고치고 이 비교용 경로는 안 건드렸음 — 같은 함수 시그니처를 공유하는 이상 계약
+  일관성을 위해 `_judge_topic_postings_local()`에도 `job_role` 필터 추가.
+- **[Low] `normalize_skill()`이 매칭 실패 시 공백 안 지운 원본 반환**: `" RAG "`가 그대로 남고,
+  공백만 있는 입력도 truthy라 빈 입력 가드를 우회할 수 있었음 — strip된 문자열을 fallback으로
+  반환하도록 수정.
+
+실측: `" Observability "`(공백 포함) → `Observability`로 정규화, `method=exact/matched=28`
+확인. 일반 회귀 없음(`gap-check` 정상 200).
+
 ## rag-v0.19.3 — Codex 서브프로젝트 전반 리뷰 반영: 5건 수정 (2026-07-29)
 
 RAG 전용 Codex 세션(`019f8e0c-...`)에 `backend/rag/` 전체 범위 리뷰 요청 → Medium 5건·Low 1건
@@ -53,42 +101,6 @@ RAG 전용 Codex 세션(`019f8e0c-...`)에 `backend/rag/` 전체 범위 리뷰 �
   요청이 사실상 순차 처리되고, 앞 터널이 막 닫힌 직후엔 OS가 포트를 바로 안 놓아줘서 곧바로 이어
   재시도하면 여전히 503이 날 수 있음(몇 초 뒤엔 정상) — "서버가 멈추거나 이상하게 죽는 것"은
   막았지만 "동시 접근이 항상 매끄럽게 성공"까지는 아직 보장 못 함.
-
-## rag-v0.19.5 — `search_chunks()` top_k=None 지원(전체 순위) (2026-07-30)
-
-Codex 3차 리뷰(`rag-v0.19.4` 재검증)에서 발견된 Low 1건 — `judge_topic_postings(method="local")`의
-직무 필터가 벡터 top-60 컷오프 뒤에 적용돼, 관련 공고가 61위 밖에 있으면 통째로 후보에서
-빠질 수 있었음. 사용자가 "60이 하드코딩 아니냐"고 지적, 이 corpus는 청크가 183개뿐이라 굳이
-상한을 둘 이유가 없다는 데 동의해 `search_chunks()`(`retrieval.py`)에 `top_k=None`(LIMIT
-없이 전체 반환) 지원을 추가하고 `_judge_topic_postings_local()`이 이를 쓰도록 변경. 다른
-호출부(`gap.py`/`hybrid.py`/`evaluate.py`)는 전부 명시적 숫자를 넘기므로 회귀 없음(컴파일+실제
-`judge_topic_postings(method="local", job_role="백엔드")` 호출로 확인).
-
-## rag-v0.19.4 — Codex 2차 리뷰 반영: 5건 수정 (2026-07-29)
-
-`rag-v0.19.3` 수정사항을 다시 Codex에 리뷰 요청 → Medium 3건·Low 2건 추가 발견 → 전부 코드로
-재검증 후 수정.
-
-- **[Medium] `LocalEmbeddingProvider.close()` lock leak**: `wait(timeout=5)`가
-  `TimeoutExpired`를 던지면 락 해제 코드에 도달 못 해 이후 모든 local 요청이 프로세스 재시작
-  전까지 영구 실패할 수 있었음 — `finally`로 감싸고 타임아웃 시 `kill()` 폴백 추가.
-- **[Medium] `rag-test.html`이 history를 안 잘라서 20턴 넘으면 영구 422**: 백엔드 40개 제한
-  (`rag-v0.19.3`)을 추가했는데 프론트가 여전히 대화 전체를 보내서, 그 이후 모든 질문이 계속
-  422가 나던 회귀. 메인 앱 QnA(`app.js`)와 동일하게 `.slice(-40)` 적용.
-- **[Medium] 재색인 취소 시 워커 스레드는 안 멈춤**: `_reindex_in_progress` 플래그가 async
-  coroutine의 `finally`에서 풀렸는데, 클라이언트 연결 끊김 등으로 coroutine이 cancel되면
-  `to_thread`로 넘어간 실제 스레드는 계속 도는 채로 플래그만 먼저 풀려 새 요청과 겹칠 수
-  있었음 — 플래그 해제를 실제 동기 작업(`_run_reindex_sync`) 안 `finally`로 옮겨 스레드 수명과
-  묶음.
-- **[Low] `judge_topic_postings(method="local")`가 여전히 `job_role` 무시**: `rag-v0.19.3`에서
-  LLM 경로만 고치고 이 비교용 경로는 안 건드렸음 — 같은 함수 시그니처를 공유하는 이상 계약
-  일관성을 위해 `_judge_topic_postings_local()`에도 `job_role` 필터 추가.
-- **[Low] `normalize_skill()`이 매칭 실패 시 공백 안 지운 원본 반환**: `" RAG "`가 그대로 남고,
-  공백만 있는 입력도 truthy라 빈 입력 가드를 우회할 수 있었음 — strip된 문자열을 fallback으로
-  반환하도록 수정.
-
-실측: `" Observability "`(공백 포함) → `Observability`로 정규화, `method=exact/matched=28`
-확인. 일반 회귀 없음(`gap-check` 정상 200).
 
 ## rag-v0.19.2 — Agent 도구 중복 호출 버그 수정 + 입력 검증 (2026-07-29)
 

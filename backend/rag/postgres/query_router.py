@@ -1,24 +1,16 @@
-"""대화형 근거 기반 RAG Phase 1 — 질문 이해와 라우팅.
+"""자유 텍스트 주제 검색 + 공고 목록/비교 — Agent(agent.py)가 실제로 쓰는 조회 함수들.
 
-지금 있는 함수(assess_gap 등)에 맞춰 질문을 끼워맞추는 게 아니라, "유연한 챗봇에 필요한 능력"을
-먼저 정하고(단일 기술 Gap/전체 Gap·우선순위/시장 수요 통계/행동 계획/공고 목록 조회/공고 비교) 그중
-없던 두 가지(공고 목록 조회, 공고 비교)를 이번에 새로 만들었다. `unanswerable`은 진짜 이 도메인
-데이터로 답할 수 없는 질문에만 쓴다 — 위 6개 능력 중 하나에 해당하는데 여기로 떨어지면 버그다.
+옛 Phase 1~4의 "질문을 7종으로 분류 → 고정 함수 실행" 라우팅 시스템(QUERY_TYPES/classify_query/
+answer_query)은 2026-07-28 Agent(tool-use) 전환 이후 완전히 대체돼 어디서도 안 쓰였다(2026-07-29
+Codex 리뷰로 참조 없음 재확인). 미래에 다시 쓸 계획도 없어 2026-07-30 삭제 — git 히스토리에는
+그대로 남아있다.
 
 경위·설계 결정 상세는 `docs/rag-project-plans/conversational-rag/00_design.md` Phase 1 참고.
 """
-import json
-
 import psycopg
 
 from llm.base import LLMProvider
-from llm.router import capture_snapshot, high_from_snapshot, light_from_snapshot
-from rag.answer import (
-    generate_action_plan,
-    generate_sequenced_plan,
-    rank_priority_gaps,
-    summarize_strengths,
-)
+from llm.router import capture_snapshot, high_from_snapshot
 from rag.embed.base import EmbeddingProvider
 from rag.gap import (
     JUDGE_CANDIDATES_SYSTEM,
@@ -26,106 +18,9 @@ from rag.gap import (
     JUDGE_CANDIDATES_TOOL_NAME,
     JUDGE_CANDIDATES_TOOL_SCHEMA,
 )
-from rag.postgres.gap import assess_all_gaps, assess_gap, market_demand_hybrid
 from rag.postgres.retrieval import search_chunks
-from rag.skills import TRACKED_SKILLS
 
 TOPIC_LOCAL_TOP_K = 15  # method="local"일 때 벡터 검색 반환 개수(비교/실험용)
-
-# 아래 QUERY_TYPES ~ classify_query()는 미사용 코드다(파일 끝의 answer_query()도 마찬가지 —
-# 그 앞에 있는 list_postings/compare_postings/judge_topic_postings는 agent.py가 실제로 씀).
-# Phase 1~4의 "질문을 7종으로 분류 → 고정 함수 실행" 라우팅 방식이며, 2026-07-28 Agent(tool-use)
-# 전환 이후 `/api/rag/ask`가 더 이상 호출하지 않는다. 다른 곳에서도 참조 없음을 grep으로 확인
-# 완료(2026-07-29, Codex 리뷰로 독립 재확인). 삭제하지 않고 주석으로만 표시 — 사용자 지침.
-QUERY_TYPES = [
-    "single_skill_gap",
-    "all_gaps",
-    "market_aggregate",
-    "action_plan",
-    "posting_list",
-    "posting_comparison",
-    "unanswerable",
-]
-
-CLASSIFY_SYSTEM = """당신은 채용 공고·후보자 프로필 RAG 시스템에 들어온 질문을 아래 7개 유형 중
-하나로 분류하고, 필요한 조건을 추출하는 라우터입니다.
-
-- single_skill_gap: 기술/개념 하나에 대해 후보자가 근거(경험)를 갖고 있는지 묻는 질문
-  (예: "AWS를 안 해봤으면 단점이 될까?", "저 Redis 경험 있어요?")
-- all_gaps: 여러 기술을 종합해서 강점·부족한 부분 전체를 묻는 질문 (예: "가장 부족한 스킬이 뭘까?",
-  "내 강점이 뭐야?") — 특정 기술 하나로 좁혀지지 않는 질문
-- market_aggregate: 시장에서 특정 기술을 요구하는 정도를 숫자로 묻는 질문 (예: "AWS 요구하는 공고
-  몇 개야?", "Redis 수요가 얼마나 돼?") — "몇 개/얼마나"처럼 개수·비율을 원하는 질문
-- action_plan: 부족한 부분을 어떻게 보완할지 순서·계획을 묻는 질문 (예: "뭘 준비해야 돼?", "어떤
-  순서로 공부하면 좋을까?")
-- posting_list: 특정 조건(기술·직무 등)에 맞는 공고를 목록으로 나열해달라는 질문 (예: "Redis
-  요구하는 공고 어디어디야?", "백엔드 공고 뭐 있어?") — "어디어디/뭐 있어"처럼 목록을 원하는 질문.
-  market_aggregate와 헷갈리지 말 것: 개수만 원하면 market_aggregate, 실제 목록을 원하면 posting_list.
-- posting_comparison: 특정 회사 둘 이상을 직접 비교해달라는 질문 (예: "네이버랑 카카오 공고 비교해줘")
-  — compare_targets에 언급된 회사명을 모두 추출
-- unanswerable: 위 6개 중 어디에도 해당하지 않는 질문. 채용/기술 gap과 관련 없는 완전히 다른 주제일
-  수도 있고, 이 도메인과 관련은 있지만 지금 갖고 있는 데이터(수집한 공고 원문, 후보자 프로필)로는
-  원천적으로 답할 수 없는 질문(예: "제가 이 회사에 최종 합격할 수 있을까요?" — 면접 결과나 미래
-  예측은 corpus에 없는 정보)일 수도 있다. 둘 다 unanswerable로 분류한다.
-
-skill 필드에는 질문에서 언급된 구체적 기술/개념명을 추출한다(단일 기술 gap·시장 수요·공고 목록
-질문일 때만 채움). compare_targets에는 posting_comparison일 때 언급된 회사명을 모두 배열로 담는다.
-질문에 없는 정보는 채우지 않는다 — 추측하지 않는다.
-
-이전 대화 상태가 함께 주어질 수 있다(직전 턴에서 쓰인 query_type/skill/job_role/compare_targets):
-- 질문이 "그중에서", "거기서", "그거", "왜?" 등으로 이전 답변을 참조하면, 질문 자체에 새로 언급되지
-  않은 필드는 이전 상태 값을 그대로 이어받아 채운다.
-- 질문이 새로운 기술/직무/회사명을 명확히 언급하면, 그 필드는 이전 상태를 무시하고 새로 추출한 값을
-  쓴다(주제가 바뀐 것이므로).
-- 이전 대화 상태가 없거나 질문이 이전 내용과 무관한 완전히 새로운 주제면, 이전 상태를 참고하지 않고
-  질문만으로 처음부터 분류한다."""
-
-CLASSIFY_TOOL_NAME = "classify_rag_query"
-CLASSIFY_TOOL_DESCRIPTION = "질문을 7개 유형 중 하나로 분류하고 필요한 조건을 추출해 제출합니다."
-CLASSIFY_TOOL_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "query_type": {"type": "string", "enum": QUERY_TYPES},
-        "skill": {
-            "type": "string",
-            "description": "질문에서 언급된 구체적 기술/개념명. 없으면 빈 문자열.",
-        },
-        "job_role": {
-            "type": "string",
-            "description": "질문에서 언급된 직무명(posting_list 필터용). 없으면 빈 문자열.",
-        },
-        "compare_targets": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "posting_comparison일 때 언급된 회사명 목록. 그 외엔 빈 배열.",
-        },
-    },
-    "required": ["query_type"],
-}
-
-UNANSWERABLE_MESSAGE = (
-    "이 질문은 지금 갖고 있는 데이터(수집한 채용 공고, 후보자 프로필)로는 답할 수 없습니다. 기술"
-    " gap·시장 수요·공고 조회·비교·행동 계획 관련 질문을 해주세요."
-)
-
-
-async def classify_query(question: str, session_state: dict | None = None) -> dict:
-    user = question
-    if session_state:
-        user = f"이전 대화 상태: {json.dumps(session_state, ensure_ascii=False)}\n\n질문: {question}"
-    snap = capture_snapshot()
-    light, light_model = light_from_snapshot(snap)
-    result = await light.extract_structured(
-        system=CLASSIFY_SYSTEM,
-        user=user,
-        tool_name=CLASSIFY_TOOL_NAME,
-        tool_description=CLASSIFY_TOOL_DESCRIPTION,
-        tool_schema=CLASSIFY_TOOL_SCHEMA,
-        model=light_model,
-        operation="RAG 질문 분류",
-        reasoning_effort=snap.reasoning_effort,
-    )
-    return result
 
 
 def list_postings(
@@ -266,7 +161,12 @@ def _judge_topic_postings_local(
     이번 corpus에서는 점수 격차가 razor-thin이라 신뢰도가 낮다는 게 이미 확인됐다(정확도 우선이면
     method="llm" 기본값을 쓴다). job_role 필터는 LLM 경로와 함수 계약을 맞추기 위해 추가함
     (Codex 리뷰로 발견, 2026-07-29 — 처음엔 method="llm"만 고치고 이 비교용 경로는 안 건드렸다가
-    같은 시그니처를 공유하는 두 구현이 서로 다르게 동작하는 게 지적됨)."""
+    같은 시그니처를 공유하는 두 구현이 서로 다르게 동작하는 게 지적됨).
+
+    지금 아무 진입점에서도 안 불리는 코드다(judge_topic_postings의 유일한 실제 호출부인 agent.py가
+    method="llm"을 하드코딩해서 부름) — 공고 데이터가 늘어나 벡터 방식을 다시 비교 테스트할 때
+    쓰려고 의도적으로 남겨뒀다(2026-07-30, `docs/rag-project-plans/00_meta/STATUS.md` "향후 탐색
+    아이디어" 참고). 그때는 이 함수를 evaluate_hybrid.py/hnsw_eval.py처럼 직접 호출해서 쓰면 된다."""
     # top_k=None(전체 청크) — job_role 필터가 순위 컷오프 뒤에 걸려서, 상한을 두면 그 상한
     # 밖에 있는 관련 공고를 원천적으로 놓칠 수 있었다(사용자 지적, 2026-07-30). 이 corpus는
     # 청크가 수백 개 수준이라 전체를 도는 비용이 무시할 만하다.
@@ -301,68 +201,3 @@ async def judge_topic_postings(
     if method == "local":
         return _judge_topic_postings_local(conn, topic, embed_provider, job_role=job_role)
     return await _judge_topic_postings_llm(conn, topic, job_role=job_role, llm=llm)
-
-
-# 미사용 코드(위 QUERY_TYPES/classify_query()와 같은 이유) — 삭제 안 하고 주석 표시만.
-async def answer_query(
-    conn: psycopg.Connection,
-    question: str,
-    embed_provider: EmbeddingProvider,
-    method: str = "llm",
-    session_state: dict | None = None,
-) -> dict:
-    classification = await classify_query(question, session_state)
-    query_type = classification.get("query_type", "unanswerable")
-    skill = classification.get("skill") or None
-    job_role = classification.get("job_role") or None
-    compare_targets = classification.get("compare_targets") or []
-    # 이번 턴에 실제로 쓰인 조건 — 다음 턴에 프론트가 그대로 돌려보내면 후속 질문("그중에서" 등)이
-    # 이걸 이어받는다. 배열로 계속 쌓이는 대화 로그가 아니라, 매 턴 덮어써지는 작은 상태 하나다
-    # (설계 근거: `conversational-rag/00_design.md` Phase 4 "필요한 직무·필터·공고 참조만 유지").
-    new_session_state = {
-        "query_type": query_type, "skill": skill, "job_role": job_role, "compare_targets": compare_targets,
-    }
-
-    if query_type == "single_skill_gap" and skill:
-        gap_result = await assess_gap(conn, skill, embed_provider)
-        action_plan = None
-        if gap_result["evidence_level"] != "직접 근거":
-            action_plan = await generate_action_plan(gap_result)
-        result = {"query_type": query_type, **gap_result, "action_plan": action_plan}
-
-    elif query_type == "all_gaps":
-        results = await assess_all_gaps(conn, embed_provider)
-        result = {
-            "query_type": query_type,
-            "priority_gaps": rank_priority_gaps(results),
-            "strengths": summarize_strengths(results),
-        }
-
-    elif query_type == "market_aggregate" and skill:
-        demand = await market_demand_hybrid(conn, skill, embed_provider)
-        result = {"query_type": query_type, "skill": skill, "market_demand": demand}
-
-    elif query_type == "action_plan":
-        results = await assess_all_gaps(conn, embed_provider)
-        priority_gaps = rank_priority_gaps(results)
-        plan = await generate_sequenced_plan(priority_gaps) if priority_gaps else None
-        result = {"query_type": query_type, "priority_gaps": priority_gaps, "plan": plan}
-
-    elif query_type == "posting_list":
-        job_title = job_role or ""
-        if not skill or skill in TRACKED_SKILLS:
-            postings = list_postings(conn, skill=skill or "", job_title=job_title)
-        else:
-            postings = await judge_topic_postings(conn, skill, embed_provider, method=method)
-        result = {"query_type": query_type, "postings": postings}
-
-    elif query_type == "posting_comparison":
-        result = {"query_type": query_type, "comparison": compare_postings(conn, compare_targets)}
-
-    else:
-        # unanswerable, 또는 skill이 필요한데 못 뽑은 경우 — 후자는 "미지원"이 아니라 분류 실패이므로
-        # 같은 안내 메시지로 정직하게 답하되 query_type은 그대로 남겨 프론트/로그에서 원인 구분 가능.
-        result = {"query_type": "unanswerable", "message": UNANSWERABLE_MESSAGE}
-
-    result["session_state"] = new_session_state
-    return result
