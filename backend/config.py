@@ -57,6 +57,23 @@ class Settings(BaseSettings):
     # 데이터 루트 디렉토리 (Docker에서는 볼륨 마운트 경로)
     data_dir: Path = Path(__file__).parent.parent / "data"
 
+    # RAG(Agentic RAG) — 3050Ti 로컬 임베딩 추론 서버 SSH 접속 정보. 비어 있어도 무방
+    # (LocalEmbeddingProvider 사용 시에만 필요).
+    rag_local_ssh_host: str = ""
+    rag_local_ssh_port: int = 10222
+    rag_local_ssh_user: str = ""
+    rag_local_ssh_key_path: str = ""
+    rag_local_embed_port: int = 8500
+
+    # RAG(Agentic RAG) — PostgreSQL+pgvector 접속 정보. RAG는 opt-in 기능이라 host가 비어
+    # 있으면 비활성으로 간주한다(2번 "DB 없음 원칙" 항목 참고) — rag/main의 기본값
+    # ("rag-postgres")과 달리 main에서는 빈 문자열이 기본값이다.
+    rag_postgres_host: str = ""
+    rag_postgres_port: int = 5432
+    rag_postgres_db: str = "rag"
+    rag_postgres_user: str = "rag"
+    rag_postgres_password: str = ""
+
     @property
     def companies_dir(self) -> Path:
         return self.data_dir / "companies"

@@ -1,15 +1,20 @@
 fastapi==0.115.0
 uvicorn[standard]==0.30.6
-httpx==0.27.2
+httpx==0.28.1
 beautifulsoup4==4.12.3
 lxml==5.3.0
 python-frontmatter==1.1.0
 pdfplumber==0.11.4
 anthropic==0.40.0
-openai==1.54.0
-google-genai>=1.0.0
-pydantic==2.9.2
+openai==1.109.1
+google-genai==2.15.0
+pydantic==2.13.4
 pydantic-settings==2.6.1
 python-multipart==0.0.12
 Pillow>=10.0.0
 PyJWT>=2.8.0
+
+# RAG(Agentic RAG) — PostgreSQL+pgvector 클라이언트. RAG는 opt-in 기능(DATABASE_URL 미설정 시
+# 비활성)이지만, 패키지 자체는 항상 설치한다.
+psycopg[binary]>=3.2.0
+pgvector>=0.3.0

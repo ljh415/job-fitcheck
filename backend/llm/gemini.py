@@ -6,9 +6,10 @@ Google Gemini provider 구현.
 """
 import asyncio
 import base64
+import json
 import logging
-from collections.abc import AsyncIterator
-from typing import NoReturn
+from collections.abc import AsyncIterator, Awaitable, Callable
+from typing import Any, NoReturn
 
 from google import genai
 from google.genai import types
@@ -260,6 +261,132 @@ class GeminiProvider(LLMProvider):
                 output_tokens=response.usage_metadata.candidates_token_count or 0,
             )
         return response.text or ""
+
+    async def run_agent(
+        self,
+        system: str,
+        question: str,
+        tools: list[dict],
+        tool_executor: Callable[[str, dict], Awaitable[Any]],
+        model: str,
+        operation: str = "",
+        history: list[dict] | None = None,
+        max_iterations: int = 6,
+    ) -> dict:
+        function_declarations = [
+            types.FunctionDeclaration(
+                name=t["name"],
+                description=t["description"],
+                parameters=_to_gemini_schema(t["input_schema"]),
+            )
+            for t in tools
+        ]
+        config = types.GenerateContentConfig(
+            system_instruction=system,
+            tools=[types.Tool(function_declarations=function_declarations)],
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+            max_output_tokens=4096,
+        )
+
+        contents: list[types.Content] = [self._history_msg_to_content(m) for m in (history or [])]
+        contents.append(types.Content(role="user", parts=[types.Part.from_text(text=question)]))
+        tool_calls_trace: list[dict] = []
+
+        for _ in range(max_iterations):
+            last_exc: Exception | None = None
+            response = None
+            for attempt in range(3):
+                try:
+                    response = await self._client.aio.models.generate_content(
+                        model=model, contents=contents, config=config,
+                    )
+                    break
+                except Exception as e:
+                    last_exc = e
+                    max_attempts, wait = self._retry_plan(e, attempt)
+                    if self._is_retryable(e) and attempt < max_attempts:
+                        kind = "429(요청 한도 초과)" if self._is_quota_exceeded(e) else "일시 오류"
+                        logger.warning(
+                            "Gemini %s 재시도 %d/%d (%d초 대기)", kind, attempt + 1, max_attempts, wait
+                        )
+                        await asyncio.sleep(wait)
+                    else:
+                        self._raise(e)
+            if response is None:
+                self._raise(last_exc)
+
+            if response.usage_metadata:
+                usage_tracker.append_usage(
+                    operation=operation,
+                    model=model,
+                    input_tokens=response.usage_metadata.prompt_token_count or 0,
+                    output_tokens=response.usage_metadata.candidates_token_count or 0,
+                )
+
+            candidates = response.candidates or []
+            if not candidates or candidates[0].content is None:
+                finish_reason = (
+                    getattr(candidates[0].finish_reason, "name", str(candidates[0].finish_reason))
+                    if candidates else "NO_CANDIDATES"
+                )
+                raise LLMAPIError(f"Gemini 응답이 차단되었습니다 (finish_reason={finish_reason})", 503)
+
+            content = candidates[0].content
+            function_calls = [p.function_call for p in content.parts if p.function_call]
+
+            if not function_calls:
+                text = "".join(p.text for p in content.parts if p.text)
+                return {"text": text, "tool_calls": tool_calls_trace}
+
+            contents.append(content)
+            response_parts = []
+            for fc in function_calls:
+                args = dict(fc.args) if fc.args else {}
+                is_error = False
+                try:
+                    result = await tool_executor(fc.name, args)
+                except (RuntimeError, LLMAPIError) as e:
+                    # Claude provider(llm/anthropic.py)의 run_agent()와 동일한 원칙 —
+                    # 도구 하나 실패로 전체 요청을 죽이지 않고, 이미 사용자 노출 안전한
+                    # 메시지를 tool 결과로 모델에 돌려줘서 스스로 대응하게 한다.
+                    is_error = True
+                    result = {"error": str(e)}
+                except Exception:
+                    logger.exception("도구 실행 중 예상 못 한 오류 (%s)", fc.name)
+                    is_error = True
+                    result = {"error": "내부 도구 실행 오류가 발생했습니다."}
+                tool_calls_trace.append({"tool": fc.name, "args": args, "result": result})
+                response_parts.append(
+                    types.Part.from_function_response(
+                        name=fc.name,
+                        response=self._json_safe_response(result, is_error),
+                    )
+                )
+            contents.append(types.Content(role="user", parts=response_parts))
+
+        return {
+            "text": "죄송합니다, 이 질문에 답하는 데 필요한 정보를 정리하지 못했습니다(도구 호출 반복 한도 초과).",
+            "tool_calls": tool_calls_trace,
+        }
+
+    @staticmethod
+    def _json_safe_response(result: Any, is_error: bool) -> dict:
+        # Part.from_function_response()는 dict[str, Any]를 요구한다 — Claude provider가
+        # json.dumps(..., default=str)로 직렬화 안전성을 확보하는 것과 같은 이유로, 여기서도
+        # JSON 왕복으로 non-serializable 값(datetime 등)을 문자열로 정규화한다.
+        safe = json.loads(json.dumps(result, ensure_ascii=False, default=str))
+        return {"error": safe.get("error", str(safe))} if is_error else {"result": safe}
+
+    @staticmethod
+    def _history_msg_to_content(msg: dict) -> "types.Content":
+        role = "model" if msg["role"] == "assistant" else "user"
+        raw = msg.get("content")
+        if isinstance(raw, str):
+            return types.Content(role=role, parts=[types.Part.from_text(text=raw)])
+        parts = GeminiProvider._to_parts(
+            [{k: v for k, v in b.items() if k != "cache_control"} for b in raw]
+        )
+        return types.Content(role=role, parts=parts)
 
     async def stream(
         self,
