@@ -62,6 +62,8 @@ let filterPinnedOnly = false;
 let _activeSSEReader = null;
 let _audioCtx = null;
 let _currentRecord = null;
+let ragEnabled = false;
+let ragConfiguredProviders = [];
 const qaHistory = JSON.parse(localStorage.getItem('job-fitcheck-qa') || '{}');
 function saveQAHistory() {
   try { localStorage.setItem('job-fitcheck-qa', JSON.stringify(qaHistory)); }
@@ -89,6 +91,7 @@ function viewToUrl(view, slug) {
   if (view === 'compare') return '/compare';
   if (view === 'settings') return '/settings';
   if (view === 'timeline') return '/timeline';
+  if (view === 'rag') return '/rag';
   return '/';
 }
 
@@ -100,6 +103,7 @@ function parseUrl() {
   if (path === '/compare') return { view: 'compare', slug: null };
   if (path === '/settings') return { view: 'settings', slug: null };
   if (path === '/timeline') return { view: 'timeline', slug: null };
+  if (path === '/rag') return { view: 'rag', slug: null };
   return { view: 'dashboard', slug: null };
 }
 
@@ -162,6 +166,7 @@ function render() {
   else if (currentView === 'compare') initCompare(compareTargets);
   else if (currentView === 'settings') initSettings();
   else if (currentView === 'timeline') initTimeline();
+  else if (currentView === 'rag') initRag();
 }
 
 /* ── 공통 API ─────────────────────────────────────────────────────── */
@@ -212,6 +217,28 @@ function startInProgressPolling() {
   _inProgressTimer = setInterval(pollInProgress, 7000);
 }
 
+/* ── RAG 활성화 여부(opt-in) ──────────────────────────────────────── */
+async function checkRagStatus() {
+  // RAG는 opt-in 기능이라 대부분의 배포에서 꺼져 있다 — 실패해도(네트워크 오류 등)
+  // 조용히 넘어가고 버튼은 숨김 상태 그대로 둔다(로그인 리다이렉트를 유발하면 안 되므로
+  // api() 대신 직접 fetch — /rag/status는 인증 없이도 404가 아니라 정상 응답해야 하지만,
+  // 그래도 이 체크 자체가 로그인 흐름을 방해하지 않게 방어적으로 처리).
+  try {
+    const token = localStorage.getItem(TOKEN_KEY);
+    const res = await fetch('/api/rag/status', {
+      headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    ragEnabled = !!data.enabled;
+    ragConfiguredProviders = data.configured_providers || [];
+  } catch (e) {
+    ragEnabled = false;
+    ragConfiguredProviders = [];
+  }
+  document.getElementById('rag-nav-btn')?.classList.toggle('hidden', !ragEnabled);
+}
+
 function stopInProgressPolling() {
   if (_inProgressTimer) { clearInterval(_inProgressTimer); _inProgressTimer = null; }
   document.getElementById('in-progress-banner')?.classList.add('hidden');
@@ -234,6 +261,7 @@ async function submitLogin(event) {
     localStorage.setItem(TOKEN_KEY, token);
     navigate('dashboard');
     startInProgressPolling();
+    checkRagStatus();
   } catch (e) {
     errorEl.classList.remove('hidden');
   }
@@ -1989,6 +2017,240 @@ function showToast(msg, type = 'success', duration = 5000) {
   setTimeout(() => toast.remove(), duration);
 }
 
+/* ── RAG (opt-in, 6번 항목) ───────────────────────────────────────── */
+const RAG_LEVEL_CLASS = { '직접 근거': 'score-high', '부분 근거': 'score-mid', '인접 경험': 'score-mid', '근거 없음': 'score-none' };
+const RAG_CHATS_KEY = 'job-fitcheck-rag-chats';
+const RAG_CURRENT_CHAT_KEY = 'job-fitcheck-rag-current-chat';
+
+function ragProviderOptionsHtml() {
+  // rag_configured_providers 기반 — local 미설정 배포에는 Local 선택지 자체가 안 보인다(3번 결정).
+  return ragConfiguredProviders.map(p => `<option value="${p}">${p === 'google' ? 'Google' : 'Local'}</option>`).join('');
+}
+
+function initRag() {
+  document.getElementById('rag-gap-provider-select').innerHTML = ragProviderOptionsHtml();
+  document.getElementById('rag-ask-provider-select').innerHTML = ragProviderOptionsHtml();
+  document.getElementById('rag-question-input').addEventListener('keydown', handleRagKeydown);
+  ragCleanupPendingMessages();
+  ragRenderChatDropdown();
+  ragSwitchChat(ragGetCurrentChatId());
+}
+
+function handleRagKeydown(e) {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+    e.preventDefault();
+    e.target.closest('form').requestSubmit();
+  }
+}
+
+async function runRagReindex() {
+  if (!confirm('공고/프로필 변경사항을 임베딩에 반영합니다. API 호출 비용이 발생할 수 있습니다. 계속할까요?')) return;
+  const btn = document.getElementById('rag-reindex-btn');
+  const statusEl = document.getElementById('rag-reindex-status');
+  btn.disabled = true;
+  btn.textContent = '재색인 중...';
+  statusEl.textContent = '';
+  try {
+    const data = await api('/rag/reindex', { method: 'POST' });
+    statusEl.textContent = `재색인 완료 (${(data.providers || []).join(', ')})`;
+  } catch (e) {
+    statusEl.innerHTML = `<span class="rag-error">${escHtml(e.message)}</span>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🔄 재색인';
+  }
+}
+
+async function runRagGapCheck(event) {
+  event.preventDefault();
+  const skill = document.getElementById('rag-skill-input').value.trim();
+  const provider = document.getElementById('rag-gap-provider-select').value;
+  const btn = document.getElementById('rag-gap-submit-btn');
+  const resultEl = document.getElementById('rag-gap-result');
+  if (!skill) return;
+
+  btn.disabled = true;
+  btn.textContent = '확인 중...';
+  resultEl.innerHTML = '';
+  try {
+    const data = await api('/rag/gap-check', { method: 'POST', body: JSON.stringify({ skill, provider }) });
+    resultEl.innerHTML = renderRagGapCard(data);
+  } catch (e) {
+    resultEl.innerHTML = `<div class="rag-error">${escHtml(e.message)}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '확인';
+  }
+}
+
+function renderRagGapCard(data) {
+  const badgeClass = RAG_LEVEL_CLASS[data.evidence_level] || 'score-none';
+  const demand = data.market_demand;
+  let html = `
+    <h4 style="margin-top:14px">${escHtml(data.skill)} <span class="score-badge ${badgeClass}">${escHtml(data.evidence_level)}</span></h4>
+    <div class="rag-result-section">
+      <h4>시장 수요${demand.method === 'exact' ? '' : ' <span class="score-badge score-mid">추정치</span>'}</h4>
+      <p>${demand.method === 'exact'
+        ? `전체 공고 ${demand.total}건 중 ${demand.matched}건 요구 (${(demand.ratio * 100).toFixed(1)}%)`
+        : `약 ${demand.matched}건 / 전체 ${demand.total}건 (${(demand.ratio * 100).toFixed(1)}%) — 후보 ${demand.candidate_count ?? '?'}건 중 LLM 판정 추정치`}</p>
+    </div>
+    <div class="rag-result-section">
+      <h4>판정 근거</h4>
+      <div class="markdown-body">${parseMarkdown(data.reasoning)}</div>
+    </div>
+  `;
+  if (data.excerpts && data.excerpts.length) {
+    html += `<div class="rag-result-section"><h4>검색된 프로필 발췌문 (${data.excerpts.length}건)</h4>`;
+    for (const e of data.excerpts) html += `<div class="rag-excerpt markdown-body">${parseMarkdown(e)}</div>`;
+    html += `</div>`;
+  }
+  if (data.action_plan) {
+    const ap = data.action_plan;
+    html += `
+      <div class="rag-result-section">
+        <h4>행동 계획</h4>
+        <p><strong>활동:</strong></p><div class="markdown-body">${parseMarkdown(ap.activity)}</div>
+        <p><strong>남길 증거:</strong></p><div class="markdown-body">${parseMarkdown(ap.evidence_to_produce)}</div>
+        <p><strong>완료 조건:</strong></p><div class="markdown-body">${parseMarkdown(ap.completion_criteria)}</div>
+      </div>
+    `;
+  }
+  html += `<p class="rag-note">provider: ${escHtml(data.provider)}</p>`;
+  return html;
+}
+
+/* ── RAG 채팅(멀티세션, Agent) ────────────────────────────────────── */
+function ragLoadChats() { return JSON.parse(localStorage.getItem(RAG_CHATS_KEY) || '{}'); }
+function ragSaveChats(chats) { localStorage.setItem(RAG_CHATS_KEY, JSON.stringify(chats)); }
+function ragGetCurrentChatId() { return localStorage.getItem(RAG_CURRENT_CHAT_KEY); }
+function ragSetCurrentChatId(id) { localStorage.setItem(RAG_CURRENT_CHAT_KEY, id); }
+
+function createNewRagChat() {
+  const chats = ragLoadChats();
+  const id = `chat-${Date.now()}`;
+  chats[id] = { title: null, createdAt: Date.now(), messages: [] };
+  ragSaveChats(chats);
+  ragSetCurrentChatId(id);
+  document.getElementById('rag-question-input').value = '';
+  ragRenderChatDropdown();
+  ragRenderThread([]);
+}
+
+function deleteCurrentRagChat() {
+  const chats = ragLoadChats();
+  const currentId = ragGetCurrentChatId();
+  if (!currentId || !chats[currentId]) return;
+  if (!confirm('이 채팅을 삭제하시겠습니까?')) return;
+  delete chats[currentId];
+  ragSaveChats(chats);
+  localStorage.removeItem(RAG_CURRENT_CHAT_KEY);
+  ragRenderChatDropdown();
+  ragSwitchChat(ragGetCurrentChatId());
+}
+
+function ragRenderChatDropdown() {
+  const chats = ragLoadChats();
+  const select = document.getElementById('rag-chat-select');
+  let ids = Object.keys(chats).sort((a, b) => chats[b].createdAt - chats[a].createdAt);
+  if (ids.length === 0) { createNewRagChat(); return; }
+  let current = ragGetCurrentChatId();
+  if (!current || !chats[current]) { current = ids[0]; ragSetCurrentChatId(current); }
+  select.innerHTML = ids.map(id => {
+    const title = chats[id].title || '(새 채팅)';
+    return `<option value="${id}" ${id === current ? 'selected' : ''}>${escHtml(title)}</option>`;
+  }).join('');
+}
+
+function ragSwitchChat(chatId) {
+  ragSetCurrentChatId(chatId);
+  const chats = ragLoadChats();
+  ragRenderThread((chats[chatId] && chats[chatId].messages) || []);
+}
+
+function ragRenderThread(messages) {
+  const resultEl = document.getElementById('rag-ask-result');
+  if (!resultEl) return;
+  resultEl.innerHTML = messages.map(m => `
+    <div class="qa-bubble user">${escHtml(m.question)}</div>
+    <div class="qa-bubble assistant">${m.pending ? '답변을 생성하고 있습니다. 최대 30~40초 정도 걸릴 수 있습니다...' : renderRagAskAnswer(m.data)}</div>
+  `).join('');
+  resultEl.scrollTop = resultEl.scrollHeight;
+}
+
+function ragCleanupPendingMessages() {
+  // 응답 기다리던 중 새로고침 등으로 요청이 끊기면 pending 항목이 영원히 안 끝난다 — 로드 시 정리.
+  const chats = ragLoadChats();
+  let changed = false;
+  for (const id of Object.keys(chats)) {
+    const before = chats[id].messages.length;
+    chats[id].messages = chats[id].messages.filter(m => !m.pending);
+    if (chats[id].messages.length !== before) changed = true;
+  }
+  if (changed) ragSaveChats(chats);
+}
+
+async function runRagAsk(event) {
+  event.preventDefault();
+  const question = document.getElementById('rag-question-input').value.trim();
+  const provider = document.getElementById('rag-ask-provider-select').value;
+  const btn = document.getElementById('rag-ask-submit-btn');
+  if (!question) return;
+
+  const chatId = ragGetCurrentChatId();  // 응답 도착 시 사용자가 다른 채팅으로 옮겨가 있어도
+  const chats = ragLoadChats();          // 엉뚱한 화면에 덮어쓰지 않기 위해 요청 시점에 고정
+  const chat = chats[chatId];
+  if (!chat) return;
+
+  let history = [];
+  for (const m of chat.messages) {
+    if (m.pending) continue;
+    history.push({ role: 'user', content: m.question });
+    history.push({ role: 'assistant', content: (m.data && m.data.answer) || '' });
+  }
+  history = history.slice(-40);  // 백엔드 AskRequest.history 상한(40)과 동일하게 자름
+
+  const entry = { question, data: null, pending: true };
+  chat.messages.push(entry);
+  if (!chat.title) chat.title = question.slice(0, 24) + (question.length > 24 ? '…' : '');
+  ragSaveChats(chats);
+  ragRenderChatDropdown();
+  document.getElementById('rag-question-input').value = '';
+  btn.disabled = true;
+  btn.textContent = '전송 중...';
+  if (ragGetCurrentChatId() === chatId) ragRenderThread(chat.messages);
+
+  try {
+    entry.data = await api('/rag/ask', { method: 'POST', body: JSON.stringify({ question, provider, history }) });
+    entry.pending = false;
+    ragSaveChats(chats);
+    if (ragGetCurrentChatId() === chatId) ragRenderThread(chat.messages);
+  } catch (e) {
+    const idx = chat.messages.indexOf(entry);
+    if (idx !== -1) chat.messages.splice(idx, 1);  // 실패한 pending 질문은 지워서 재시도 가능하게
+    ragSaveChats(chats);
+    if (ragGetCurrentChatId() === chatId) {
+      ragRenderThread(chat.messages);
+      document.getElementById('rag-ask-result').innerHTML += `<div class="rag-error">${escHtml(e.message)}</div>`;
+    }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '전송';
+  }
+}
+
+function renderRagAskAnswer(data) {
+  let inner = `<div class="markdown-body">${parseMarkdown(data.answer || '(응답 없음)')}</div>`;
+  if (data.tool_calls && data.tool_calls.length) {
+    inner += `<div class="rag-result-section"><h4>사용한 도구 (${data.tool_calls.length}건)</h4>`;
+    for (const tc of data.tool_calls) {
+      inner += `<details class="rag-tool-trace"><summary>${escHtml(tc.tool)}(${escHtml(JSON.stringify(tc.args))})</summary><pre class="rag-tool-result">${escHtml(JSON.stringify(tc.result, null, 2))}</pre></details>`;
+    }
+    inner += `</div>`;
+  }
+  inner += `<p class="rag-note">임베딩 provider: ${escHtml(data.provider)}</p>`;
+  return inner;
+}
+
 /* ── 초기 로드 ────────────────────────────────────────────────────── */
 window.addEventListener('DOMContentLoaded', () => {
   const token = localStorage.getItem(TOKEN_KEY);
@@ -2011,4 +2273,5 @@ window.addEventListener('DOMContentLoaded', () => {
   }
   render();
   startInProgressPolling();
+  checkRagStatus();
 });

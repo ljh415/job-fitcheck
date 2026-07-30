@@ -20,6 +20,7 @@
   </div>
   <div class="navbar-links">
     <button onclick="navigate('add')">+ 회사 추가</button>
+    <button id="rag-nav-btn" onclick="navigate('rag')" class="hidden">🤖 RAG</button>
     <button onclick="navigate('settings')">설정</button>
     <button id="theme-toggle-btn" onclick="toggleTheme()" title="다크모드 전환">🌙</button>
     <button id="logout-btn" onclick="logout()" class="hidden">로그아웃</button>
@@ -521,6 +522,46 @@
         <span>일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span>
       </div>
       <div id="cal-grid" class="cal-grid"></div>
+    </div>
+  </div>
+</template>
+
+<template id="tpl-rag">
+  <div class="view">
+    <div class="view-header">
+      <button onclick="navigate('dashboard')" class="back-btn">← 목록</button>
+      <h2>🤖 RAG</h2>
+      <button id="rag-reindex-btn" class="btn-secondary" onclick="runRagReindex()" title="공고/프로필 변경사항을 임베딩에 반영">🔄 재색인</button>
+    </div>
+    <p id="rag-reindex-status" class="rag-note"></p>
+
+    <div class="rag-section-card">
+      <h3>기술명으로 바로 확인</h3>
+      <form class="rag-form" onsubmit="runRagGapCheck(event)">
+        <input type="text" id="rag-skill-input" placeholder="기술/개념 (예: GCP, CI/CD, Kubernetes)" required />
+        <select id="rag-gap-provider-select"></select>
+        <button type="submit" id="rag-gap-submit-btn">확인</button>
+      </form>
+      <div id="rag-gap-result"></div>
+    </div>
+
+    <div class="rag-section-card">
+      <div class="qa-company-header">
+        <h3 style="margin:0">자연어로 질문하기</h3>
+        <div style="display:flex; gap:8px; align-items:center">
+          <select id="rag-chat-select" onchange="switchRagChat(this.value)"></select>
+          <button type="button" class="btn-secondary" onclick="createNewRagChat()">+ 새 채팅</button>
+          <button type="button" class="btn-secondary" onclick="deleteCurrentRagChat()">🗑 삭제</button>
+        </div>
+      </div>
+      <div class="rag-chat-panel">
+        <div id="rag-ask-result" class="qa-messages"></div>
+        <form class="qa-input-row" onsubmit="runRagAsk(event)">
+          <textarea id="rag-question-input" rows="2" placeholder="예: AWS를 안 해봤으면 단점이 될까? / Redis 요구하는 공고 어디어디야? (Shift+Enter 줄바꿈)" required></textarea>
+          <select id="rag-ask-provider-select" title="임베딩 provider(검색용) — 판정/답변 LLM은 설정의 provider를 따름"></select>
+          <button type="submit" id="rag-ask-submit-btn">전송</button>
+        </form>
+      </div>
     </div>
   </div>
 </template>
