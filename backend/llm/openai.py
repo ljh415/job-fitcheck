@@ -5,7 +5,9 @@ OpenAI ChatGPT provider 구현.
 스트리밍: stream=True + async context manager 사용
 """
 import json
-from collections.abc import AsyncIterator
+import logging
+from collections.abc import AsyncIterator, Awaitable, Callable
+from typing import Any
 
 import openai as openai_lib
 from openai import AsyncOpenAI
@@ -13,6 +15,8 @@ from openai import AsyncOpenAI
 from services import usage_tracker
 from config import get_reasoning_effort, settings
 from .base import LLMAPIError, LLMProvider
+
+logger = logging.getLogger(__name__)
 
 
 def _max_tokens_kwarg(model: str, max_tokens: int) -> dict:
@@ -165,6 +169,103 @@ class OpenAIProvider(LLMProvider):
                 operation, max_tokens, response.usage.completion_tokens if response.usage else -1,
             )
         return response.choices[0].message.content or ""
+
+    async def run_agent(
+        self,
+        system: str,
+        question: str,
+        tools: list[dict],
+        tool_executor: Callable[[str, dict], Awaitable[Any]],
+        model: str,
+        operation: str = "",
+        history: list[dict] | None = None,
+        max_iterations: int = 6,
+    ) -> dict:
+        tool_defs = [
+            {
+                "type": "function",
+                "function": {
+                    "name": t["name"],
+                    "description": t["description"],
+                    "parameters": t["input_schema"],
+                },
+            }
+            for t in tools
+        ]
+        messages: list[dict] = [{"role": "system", "content": system}, *(history or [])]
+        messages.append({"role": "user", "content": question})
+        tool_calls_trace: list[dict] = []
+
+        temperature_kwarg = {} if model in _NO_TEMPERATURE_MODELS else {"temperature": 0.5}
+        reasoning_kwarg = _reasoning_effort_kwarg(model)
+        max_tokens = 16384 if reasoning_kwarg else 4096
+
+        for _ in range(max_iterations):
+            try:
+                response = await self._client.chat.completions.create(
+                    model=model,
+                    **temperature_kwarg,
+                    **_max_tokens_kwarg(model, max_tokens),
+                    **reasoning_kwarg,
+                    messages=messages,  # type: ignore[arg-type]
+                    tools=tool_defs,
+                )
+            except openai_lib.AuthenticationError:
+                raise LLMAPIError("LLM API 인증 실패 — 설정에서 OpenAI API 키를 확인해주세요.", 401)
+            except openai_lib.RateLimitError:
+                raise LLMAPIError("LLM API 요청 한도 초과 — 잠시 후 다시 시도해주세요.", 429)
+            except openai_lib.APIStatusError as e:
+                raise LLMAPIError(f"LLM 서비스 오류 ({e.status_code}) — 잠시 후 다시 시도해주세요.", 503)
+            except openai_lib.APIConnectionError:
+                raise LLMAPIError("LLM 서비스 연결 실패 — 네트워크 상태를 확인해주세요.", 503)
+
+            if response.usage:
+                usage_tracker.append_usage(
+                    operation=operation,
+                    model=model,
+                    input_tokens=response.usage.prompt_tokens,
+                    output_tokens=response.usage.completion_tokens,
+                )
+
+            message = response.choices[0].message
+            if not message.tool_calls:
+                return {"text": message.content or "", "tool_calls": tool_calls_trace}
+
+            messages.append({
+                "role": "assistant",
+                "content": message.content,
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                    }
+                    for tc in message.tool_calls
+                ],
+            })
+            for tc in message.tool_calls:
+                args = json.loads(tc.function.arguments) if tc.function.arguments else {}
+                try:
+                    result = await tool_executor(tc.function.name, args)
+                except (RuntimeError, LLMAPIError) as e:
+                    # Claude provider(llm/anthropic.py)의 run_agent()와 동일한 원칙 —
+                    # 도구 하나 실패로 전체 요청을 죽이지 않고, 이미 사용자 노출 안전한
+                    # 메시지를 tool 결과로 모델에 돌려줘서 스스로 대응하게 한다.
+                    result = {"error": str(e)}
+                except Exception:
+                    logger.exception("도구 실행 중 예상 못 한 오류 (%s)", tc.function.name)
+                    result = {"error": "내부 도구 실행 오류가 발생했습니다."}
+                tool_calls_trace.append({"tool": tc.function.name, "args": args, "result": result})
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": json.dumps(result, ensure_ascii=False, default=str),
+                })
+
+        return {
+            "text": "죄송합니다, 이 질문에 답하는 데 필요한 정보를 정리하지 못했습니다(도구 호출 반복 한도 초과).",
+            "tool_calls": tool_calls_trace,
+        }
 
     async def stream(
         self,

@@ -8,6 +8,32 @@
 상세 이력·설계 논의는 `docs/rag-project-plans/00_meta/HISTORY.md`(git 미추적)에 exhaustively
 기록돼 있음 — 이 파일은 그걸 압축한 요약.
 
+## rag-v0.20.0 — Agent 멀티 provider(Gemini/OpenAI) 지원 + 의존성 업그레이드 (2026-07-30)
+
+main 반영 계획(`feat/rag-integration-plan` 브랜치, main 트리에는 없음) 논의 중, Agent가
+Claude 전용이면 main의 필수 키(Gemini)만 있는 사용자 대다수가 RAG 핵심 기능을 못 쓴다는 문제
+발견 — main은 Claude/OpenAI/Gemini를 위계 없이 동등하게 다루므로 Agent도 같은 원칙을 따르기로
+결정, 이 작업을 `rag/main`에서 먼저 완성한 뒤 main에 반영하기로 함.
+
+- **`llm/gemini.py`/`llm/openai.py`에 `run_agent()` 신규 구현** — 기존 `llm/anthropic.py`의
+  ReAct 스타일 tool-use 루프(멀티턴, 도구 실행 에러 격리, 반복 한도)와 동일한 동작을 각 provider의
+  네이티브 API로 구현. `rag/postgres/agent.py`의 `answer_query_agent()`가 하드코딩된
+  `AnthropicProvider()` 대신 `llm.router.high_provider()`(main의 현재 provider 설정을 그대로
+  따름)를 쓰도록 변경 — Claude/Gemini/OpenAI 전환이 설정 화면 하나로 됨.
+- **라이브 테스트로 발견한 버그 — Gemini `thought_signature` 오류**: `run_agent()`를 Gemini로
+  처음 테스트하자 `400 INVALID_ARGUMENT — Function call is missing a thought_signature`로 실패.
+  원인 추적 결과 설치된 `google-genai`가 **1.2.0**(최신은 2.15.0, 13개 메이저 버전 차이) —
+  `requirements.txt`가 `>=1.0.0`로 느슨하게 고정돼 있었고 Docker 레이어 캐시가 한 번도 갱신 안 돼
+  최초 빌드 시점 버전에 고정된 채로 있었던 것. 이 SDK 버전의 `Part` 모델엔 `thought_signature`
+  필드 자체가 없어(직접 `model_fields` 확인) API 응답을 파싱하는 순간 그 필드가 버려지고 있었음.
+- **의존성 연쇄 업그레이드**(전부 라이브 재현·검증): `google-genai` 1.2.0→2.15.0 (pydantic
+  2.9.2→2.13.4 요구 → 같이 올림) → `httpx` 0.27.2→0.28.1 요구(google-genai 하한) →
+  `openai` 1.54.0이 httpx 0.28의 `proxies` kwarg 제거로 크래시 → `openai` 1.109.1로 업그레이드
+  (메이저 2.x는 미채택, 1.x 최신으로 최소 변경). anthropic은 `httpx<1,>=0.23.0`만 요구해 안 건드림.
+- **회귀 테스트**(dev 컨테이너 재빌드 후 실제 API 호출): Claude/Gemini/OpenAI `run_agent()`(신규,
+  실제 도구 호출 포함) 전부 정상, 기존 `stream()`(Q&A)·`extract_structured()`(refit 적합도
+  재산정) 둘 다 Gemini/OpenAI에서 회귀 없음 확인.
+
 ## rag-v0.19.7 — main 반영 계획 착수 전 전수 검수 + `run_embedding.py` 삭제 (2026-07-30)
 
 Agentic RAG를 main에 반영하는 계획을 논의하다 "먼저 RAG 서브프로젝트 자체를 정리하자"는 방향으로

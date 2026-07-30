@@ -10,12 +10,13 @@ Phase 1~4의 "질문을 7종 중 하나로 분류 → 그 유형에 고정된 �
 `generate_sequenced_plan`)을 도구로 노출하고, LLM이 질문마다 어떤 도구를(몇 개든, 안 쓰든) 쓸지
 스스로 판단해 답하게 한다(ReAct 스타일 tool-use 루프, `llm.base.LLMProvider.run_agent()`).
 
-Claude만 이 루프를 지원한다(2026-07-28 확정 — "Claude 먼저 만들고 나중에 provider 확장"). 메인 앱의
-provider 설정(Gemini 등)과 무관하게, 이 에이전트는 임베딩만 빼고 항상 Claude를 직접 쓴다 — 오케스트
-레이션(`answer_query_agent()`)과 도구 내부 판정(`_make_tool_executor()`)이 **같은 provider/model
-인스턴스 하나**를 공유하도록 만들어서, 나중에 Claude 외 provider로 확장할 때 한 곳만 바꾸면 되게
-했다(2026-07-29 — 이전엔 두 곳에 각각 `AnthropicProvider()`를 따로 하드코딩해서 구조적으로 어긋날
-위험이 있었음).
+Claude/Gemini/OpenAI 셋 다 지원한다(2026-07-30 — main이 이미 셋을 위계 없이 동등하게 다루므로,
+Agent도 같은 원칙을 따라야 필수 키(Gemini)만 있는 사용자도 쓸 수 있음. 처음엔 "Claude 먼저 만들고
+나중에 확장"으로 Claude만 구현했었는데, 그 방식대로 main에 이식하면 대다수 사용자가 못 쓰게 돼
+셋 다 먼저 완성함). 임베딩(`embed_provider`)만 빼고, 오케스트레이션(`answer_query_agent()`)과
+도구 내부 판정(`_make_tool_executor()`)은 `llm.router.high_provider()`가 반환하는(=main의
+현재 설정을 따르는) **같은 provider/model 인스턴스 하나**를 공유한다 — 두 곳에 각각 provider를
+따로 하드코딩하면 구조적으로 어긋날 위험이 있어서다(2026-07-29 발견·수정 이후 유지).
 """
 import json
 import logging
@@ -24,9 +25,9 @@ from datetime import datetime
 
 import psycopg
 
-from config import settings
-from llm.anthropic import AnthropicProvider
+from config import get_active_provider, settings
 from llm.base import LLMProvider
+from llm.router import high_provider
 from services.usage_tracker import current_request_id
 from rag.answer import (
     generate_action_plan,
@@ -263,9 +264,9 @@ async def answer_query_agent(
     request_id = uuid.uuid4().hex[:12]
     token = current_request_id.set(request_id)
     result: dict | None = None
+    provider_name = get_active_provider()
     try:
-        provider = AnthropicProvider()
-        model = settings.claude_high_model
+        provider, model = high_provider()
         tool_executor = _make_tool_executor(conn, embed_provider, llm=(provider, model, None))
         result = await provider.run_agent(
             system=AGENT_SYSTEM,
@@ -287,6 +288,6 @@ async def answer_query_agent(
             history_len=len(history or []),
             tool_calls=(result or {}).get("tool_calls", []),
             answer=(result or {}).get("text") or "(요청 실패 — 로그만 남김)",
-            provider="claude",
+            provider=provider_name,
             request_id=request_id,
         )
