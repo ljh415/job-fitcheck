@@ -39,6 +39,7 @@ def run() -> None:
             rows.append(row)
     finally:
         local.close()
+        conn.close()  # hnsw_eval.py는 이미 닫는데 이 파일만 빠져있었음(2026-07-30 전수 검수로 발견)
 
     def avg(key: str) -> float:
         return sum(r[key] for r in rows) / len(rows)

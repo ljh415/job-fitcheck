@@ -8,6 +8,25 @@
 상세 이력·설계 논의는 `docs/rag-project-plans/00_meta/HISTORY.md`(git 미추적)에 exhaustively
 기록돼 있음 — 이 파일은 그걸 압축한 요약.
 
+## rag-v0.19.7 — main 반영 계획 착수 전 전수 검수 + `run_embedding.py` 삭제 (2026-07-30)
+
+Agentic RAG를 main에 반영하는 계획을 논의하다 "먼저 RAG 서브프로젝트 자체를 정리하자"는 방향으로
+전환 — `backend/rag/` 전체(~24개 파일, ~3900줄)를 파일 단위로 다시 훑음.
+
+- **`rag/run_embedding.py` 삭제**: Plan A(SQLite) 임베딩 실행 CLI. `rag/postgres/reindex.py`가
+  ingest+청킹+임베딩을 하나로 합쳐 완전히 대체했고, backend 전체에서 실제 참조가 0건임을 grep으로
+  확인(3050Ti의 `inference_server.py`와도 무관 — 그건 완전히 별도 독립 스크립트). 처음엔 관련
+  SQLite 파일 8개를 전부 "죽은 코드"로 오판했다가, `rag/postgres/*`가 `rag/chunking.py`(청킹 함수)를
+  실제로 재사용 중임을 재확인하고 정정 — 이 파일만 진짜 고아였음.
+- **[Medium] `rag/postgres/evaluate.py`/`evaluate_hybrid.py`의 `conn.close()` 누락**: 형제
+  파일 `hnsw_eval.py`는 Codex 3차 재리뷰로 이미 고쳐졌는데 이 둘만 안 고쳐져 있었음 — `finally`에
+  `conn.close()` 추가.
+- **[Low, 자체 유발] `rag/gap.py`의 `run_embedding.py` 안내 메시지 정정**: 방금 삭제한 파일을
+  여전히 안내하고 있어서, "이 SQLite 경로는 동결돼 있고 실제 서비스는 `rag.postgres.reindex`를
+  쓴다"는 정확한 안내로 교체.
+
+컴파일 확인 + 재빌드 후 `POST /api/rag/gap-check` 실제 호출로 회귀 없음 확인.
+
 ## rag-v0.19.6 — `query_router.py` 옛 라우팅 레거시 삭제 (2026-07-30)
 
 `QUERY_TYPES`/`CLASSIFY_SYSTEM`/`CLASSIFY_TOOL_*`/`UNANSWERABLE_MESSAGE`/`classify_query()`/

@@ -52,6 +52,7 @@ def run() -> None:
             results.append(row)
     finally:
         local.close()
+        conn.close()  # hnsw_eval.py는 이미 닫는데 이 파일만 빠져있었음(2026-07-30 전수 검수로 발견)
 
     header = f"{'ID':6}{'skill':14}{'정답수':>6} | {'Google P@5/R@10':>18} | {'Local P@5/R@10':>16}"
     print(header)

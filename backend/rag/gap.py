@@ -236,7 +236,8 @@ async def assess_gap(conn: sqlite3.Connection, skill: str, embed_provider: Embed
     if not _has_profile_embeddings(conn, embed_provider):
         raise RuntimeError(
             f"이 provider({embed_provider.provider_name}/{embed_provider.model})로 후보자 프로필이"
-            " 아직 임베딩되지 않았습니다. `run_embedding.py --include-profile`로 먼저 임베딩하세요."
+            " 아직 임베딩되지 않았습니다. 이 SQLite 경로는 Plan A 재현용으로 동결돼 있어 재임베딩"
+            " 스크립트가 더 이상 없습니다 — 실제 서비스는 `rag.postgres.reindex --include-profile`을 씁니다."
         )
 
     demand = await market_demand_hybrid(conn, skill, embed_provider)
