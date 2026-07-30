@@ -17,6 +17,10 @@ docs/phase*.md
 # RAG 서브 프로젝트 계획 (Codex 작업 중, 로컬 보관용)
 docs/rag-project-plans/
 
+# RAG main 반영 작업 계획 (feat/rag-integration-plan 전용, 로컬 보관용 — 최종 main
+# 반영 시 완성된 코드만 재작성하고 이 문서는 안 가져감)
+docs/rag-integration/
+
 # 데이터 (개인 정보 포함)
 data/
 

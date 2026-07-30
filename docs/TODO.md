@@ -240,9 +240,9 @@ private 저장소를 지인 대상 셀프호스팅 공개로 전환하기 위한
 
 ---
 
-## Phase 11 — RAG 서브프로젝트 main 반영 + MCP 설계 (계획 배경만 정리, 구체화 전)
+## Phase 11 — RAG 서브프로젝트 main 반영 + MCP 설계 (RAG 반영 진행중, 2026-07-31)
 
-> 상세: `docs/mcp_plan_notes.md`(MCP 부분). RAG는 `rag/main` 브랜치에서 별도 진행 중(대화형 근거 기반 RAG → RAG 모듈 안정화, 상세는 `rag/main` 브랜치의 `docs/rag-project-plans/00_meta/STATUS.md`).
+> 상세: `docs/mcp_plan_notes.md`(MCP 부분), `docs/rag-integration/STATUS.md`(RAG main 반영 부분, `feat/rag-integration-plan` 브랜치에서 진행 중 — 6개 항목 중 4개(파일 구조/opt-in 구조/provider 선택/Agent provider 지원) 완료, 2개(데이터 동기화/UI) 남음). RAG 자체 개발은 `rag/main` 브랜치에서 별도 진행 중(대화형 근거 기반 RAG → RAG 모듈 안정화, 상세는 `rag/main` 브랜치의 `docs/rag-project-plans/00_meta/STATUS.md`).
 
-- ⬜ RAG(`rag/main`) 완료 후 main 반영 — 브랜치를 통째로 merge하지 않고, 완성된 코드만 새 `feat/...` 브랜치로 재작성해 main에 반영(실험·시행착오 히스토리는 `rag/main`에만 남김)
+- 🔧 RAG(`rag/main`) 완료된 부분부터 main 반영 — 브랜치를 통째로 merge하지 않고, 완성된 코드만 새 `feat/...` 브랜치로 재작성해 main에 반영(실험·시행착오 히스토리는 `rag/main`에만 남김). 세부 진행상황은 `docs/rag-integration/STATUS.md` 참고.
 - ⬜ 그 다음 MCP 설계·구현 착수 — 세부 도구·전송 방식·인증·쓰기 승인 정책은 아직 미확정
