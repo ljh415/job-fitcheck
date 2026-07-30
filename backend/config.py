@@ -86,6 +86,14 @@ class Settings(BaseSettings):
     def candidate_profile_path(self) -> Path:
         return self.data_dir / "candidate_profile.md"
 
+    @property
+    def rag_configured_providers(self) -> list[str]:
+        """이 배포에서 실제로 사용 가능한 임베딩 provider 목록. Google은 main의 필수 키를
+        재사용하므로 항상 포함, Local은 rag_local_ssh_host가 설정된 경우에만 포함(GPU 인프라를
+        직접 구성한 사용자만 해당). 재색인 훅·웹 트리거·CLI·provider 검증이 이 property 하나를
+        공유 참조한다 — 감지 조건이 늘어나도 여기 한 곳만 고치면 된다."""
+        return ["google"] + (["local"] if self.rag_local_ssh_host else [])
+
 
 settings = Settings()
 

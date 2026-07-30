@@ -7,9 +7,13 @@ Plan B 6단계(`rag/postgres/gap.py`, `rag/postgres/answer.py`)를 그대로 호
 이 서비스 경로에선 더 이상 안 씀 — Stage 6에서 전환).
 
 RAG는 opt-in 기능이다 — `settings.rag_postgres_host`가 비어 있으면 `/status` 외 나머지
-엔드포인트는 503을 반환한다(main 이식 시 opt-in 설계, `docs/rag_integration_plan.md` 2번
+엔드포인트는 503을 반환한다(main 이식 시 opt-in 설계, `docs/rag-integration/STATUS.md` 2번
 참고). 라우터 자체는 항상 등록한다 — import 시점에 DB 연결을 시도하지 않으므로 등록 자체는
 안전하고, `/status`가 항상 응답 가능해야 프론트가 신뢰성 있게 활성화 여부를 조회할 수 있다.
+
+임베딩 provider(google/local) 선택은 어디서나 `settings.rag_configured_providers`(3번
+항목) 기준으로 검증한다 — Local은 GPU 인프라를 직접 구성한 배포에서만 켜지므로, 대부분의
+배포에서는 이 목록이 `["google"]`뿐이다.
 """
 import asyncio
 from typing import Literal
@@ -42,8 +46,13 @@ def _require_rag_enabled() -> None:
 @router.get("/status")
 async def status():
     """RAG 활성화 여부 조회 — 프론트가 이걸로 RAG 관련 UI를 조건부로 노출한다.
-    다른 엔드포인트와 달리 RAG 비활성 상태에서도 항상 응답한다."""
-    return {"enabled": bool(settings.rag_postgres_host)}
+    다른 엔드포인트와 달리 RAG 비활성 상태에서도 항상 응답한다. `configured_providers`는
+    RAG가 꺼져 있으면 빈 배열 — 켜지지도 않은 상태에서 provider 선택지를 보여줄 이유가 없다."""
+    enabled = bool(settings.rag_postgres_host)
+    return {
+        "enabled": enabled,
+        "configured_providers": settings.rag_configured_providers if enabled else [],
+    }
 
 _reindex_in_progress = False  # main.py가 uvicorn 단일 프로세스(workers 미지정)라 in-process
 # 플래그로 충분하다 — chunk_embedding에 UNIQUE(chunk_id, provider, model, dimensions) 제약이
@@ -72,8 +81,8 @@ class AskRequest(BaseModel):
 
 @router.post("/gap-check", dependencies=[Depends(_require_rag_enabled)])
 async def gap_check(req: GapCheckRequest):
-    if req.provider not in ("google", "local"):
-        raise HTTPException(400, "provider는 'google' 또는 'local'만 가능합니다")
+    if req.provider not in settings.rag_configured_providers:
+        raise HTTPException(400, f"provider는 {settings.rag_configured_providers} 중 하나여야 합니다")
 
     conn = None
     embed_provider = None
@@ -151,7 +160,11 @@ async def gap_check(req: GapCheckRequest):
             conn.close()  # 명시적으로 닫아야 함 — GC(__del__)에 의존하면 idle in transaction 커넥션이 쌓일 수 있다(Codex 리뷰로 발견, 2026-07-23)
 
 
-def _run_reindex_sync() -> None:
+class ReindexRequest(BaseModel):
+    provider: str | None = None  # None이면 rag_configured_providers 전부(기존 기본 동작)
+
+
+def _run_reindex_sync(providers: list[str]) -> None:
     # 실제 작업+플래그 해제를 전부 워커 스레드 안에서 끝낸다 — 예전엔 reindex() coroutine의
     # finally에서 플래그를 풀었는데, 클라이언트 연결 끊김 등으로 그 coroutine이 cancel되면
     # asyncio.to_thread()로 넘어간 스레드는 안 멈추는데 플래그만 먼저 풀려서 새 요청이 겹쳐
@@ -159,28 +172,34 @@ def _run_reindex_sync() -> None:
     # 묶어야 cancel에도 안전하다.
     global _reindex_in_progress
     try:
-        for provider_name in ("google", "local"):
+        for provider_name in providers:
             rag_reindex.run(provider_name, True)
     finally:
         _reindex_in_progress = False
 
 
 @router.post("/reindex", dependencies=[Depends(_require_rag_enabled)])
-async def reindex():
-    """재색인 웹 트리거(2026-07-29) — `rag.postgres.reindex.run()`이 지금까지 CLI 전용이라
-    실제 사용자는 트리거할 방법이 없었다. google+local 둘 다, 프로필 포함해서 대칭적으로
-    실행한다 — Google API는 이미 유료 티어로 확정돼 있어(`project_gemini_key_switching` 메모리
-    참고) "Google엔 프로필 기본 제외" 같은 안전장치가 불필요하다(자동 트리거는 안 함, 사용자가
-    누를 때만 실행). run()은 동기 함수(psycopg/httpx 동기 호출)라 `asyncio.to_thread`로 감싸
-    이벤트 루프를 막지 않는다 — 출력은 그대로 컨테이너 stdout으로 흘려보내 기존
-    `docker compose logs -f api` 디버깅 흐름을 유지한다."""
+async def reindex(req: ReindexRequest | None = None):
+    """재색인 웹 트리거(2026-07-29, 2026-07-31에 provider 선택 추가) —
+    `rag.postgres.reindex.run()`이 지금까지 CLI 전용이라 실제 사용자는 트리거할 방법이
+    없었다. `req.provider`를 지정하면 그 provider만, 생략하면 `rag_configured_providers`
+    전부(프로필 포함)를 대칭적으로 실행한다 — Google API는 이미 유료 티어로 확정돼 있어
+    (`project_gemini_key_switching` 메모리 참고) "Google엔 프로필 기본 제외" 같은
+    안전장치가 불필요하다(자동 트리거는 안 함, 사용자가 누를 때만 실행). run()은 동기
+    함수(psycopg/httpx 동기 호출)라 `asyncio.to_thread`로 감싸 이벤트 루프를 막지 않는다 —
+    출력은 그대로 컨테이너 stdout으로 흘려보내 기존 `docker compose logs -f api` 디버깅
+    흐름을 유지한다."""
     global _reindex_in_progress
+    provider = req.provider if req else None
+    if provider is not None and provider not in settings.rag_configured_providers:
+        raise HTTPException(400, f"provider는 {settings.rag_configured_providers} 중 하나여야 합니다")
+    providers = [provider] if provider else settings.rag_configured_providers
     if _reindex_in_progress:
         raise HTTPException(409, "재색인이 이미 진행 중입니다. 잠시 후 다시 시도하세요.")
     _reindex_in_progress = True
     try:
-        await asyncio.to_thread(_run_reindex_sync)
-        return {"status": "ok"}
+        await asyncio.to_thread(_run_reindex_sync, providers)
+        return {"status": "ok", "providers": providers}
     except RuntimeError as e:
         raise HTTPException(503, f"RAG 파이프라인 연결/설정 오류: {e}")
     except httpx.HTTPError as e:
@@ -198,8 +217,8 @@ async def ask(req: AskRequest):
     완전히 무관한 답을 내놓는 구조적 결함이 실측으로 확인돼(`docs/rag-project-plans/00_meta/HISTORY.md`
     2026-07-28 항목), LLM이 도구를 스스로 골라 쓰며 답하는 구조로 전환. conn/embed_provider 생성·정리·
     예외 처리는 gap_check()와 동일한 패턴(Codex 리뷰로 다듬어진 부분이라 그대로 유지)."""
-    if req.provider not in ("google", "local"):
-        raise HTTPException(400, "provider는 'google' 또는 'local'만 가능합니다")
+    if req.provider not in settings.rag_configured_providers:
+        raise HTTPException(400, f"provider는 {settings.rag_configured_providers} 중 하나여야 합니다")
 
     conn = None
     embed_provider = None
