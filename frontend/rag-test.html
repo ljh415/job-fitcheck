@@ -355,12 +355,16 @@ async function runAsk(event) {
 
   // Agent는 session_state가 아니라 실제 대화 history를 본다 — 이전 turn의 질문/답변을
   // Anthropic 메시지 포맷(role+content)으로 그대로 넘긴다. 아직 응답 안 온 pending 항목은 제외.
-  const history = [];
+  let history = [];
   for (const m of chat.messages) {
     if (m.pending) continue;
     history.push({ role: 'user', content: m.question });
     history.push({ role: 'assistant', content: (m.data && m.data.answer) || '' });
   }
+  // 백엔드가 history를 최근 40개로 제한하는데(rag.py의 AskRequest) 여기서 안 자르면 20턴이
+  // 넘는 순간부터 이후 모든 질문이 영구히 422가 됐다(Codex 리뷰로 발견, 2026-07-29) — 메인 앱
+  // QnA(app.js)의 .slice(-40) 패턴과 동일하게 자른다.
+  history = history.slice(-40);
 
   // 질문을 pending 상태로 즉시 저장한다 — 응답 오기 전에 다른 채팅으로 이동했다 돌아와도
   // 남아있어야 하기 때문(버그 리포트: 전송 직후 DOM에만 붙여두고 저장은 응답 도착 후에야

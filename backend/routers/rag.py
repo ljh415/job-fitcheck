@@ -9,12 +9,13 @@ Plan B 6단계(`rag/postgres/gap.py`, `rag/postgres/answer.py`)를 그대로 호
 main 브랜치엔 없는 라우터 — rag/main 전용.
 """
 import asyncio
+from typing import Literal
 
 import httpx
 import psycopg
 from fastapi import APIRouter, HTTPException
 from google.genai import errors as genai_errors
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from llm.base import LLMAPIError
 from llm.router import capture_snapshot, high_from_snapshot
@@ -28,16 +29,29 @@ from rag.postgres import reindex as rag_reindex
 
 router = APIRouter(prefix="/api/rag")
 
+_reindex_in_progress = False  # main.py가 uvicorn 단일 프로세스(workers 미지정)라 in-process
+# 플래그로 충분하다 — chunk_embedding에 UNIQUE(chunk_id, provider, model, dimensions) 제약이
+# 있어서 재색인 두 개가 겹치면 두 번째가 UniqueViolation으로 500이 났다(Codex 리뷰로 발견,
+# 2026-07-29). 여러 worker/인스턴스로 확장하면 advisory lock으로 바꿔야 한다.
+
 
 class GapCheckRequest(BaseModel):
     skill: str
     provider: str = "google"  # "google" | "local"
 
 
+class AskMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(max_length=20_000)
+
+
 class AskRequest(BaseModel):
-    question: str
+    # 메인 앱 QARequest(models.py)와 같은 방어값 — 예전엔 history가 무제한 list[dict]라 role/길이
+    # 검증이 전혀 없었다(Codex 리뷰로 발견, 2026-07-29). 긴 대화는 결국 Anthropic API의 context
+    # 한도를 넘어 영구 실패하고, 잘못된 role/content는 외부 API 400이 503으로 오인 처리됐다.
+    question: str = Field(max_length=2_000)
     provider: str = "google"  # "google" | "local" — 임베딩 provider(도구 내부 검색용)
-    history: list[dict] = []  # [{"role": "user"|"assistant", "content": str}, ...] — 이전 대화 turn
+    history: list[AskMessage] = Field(default_factory=list, max_length=40)
 
 
 @router.post("/gap-check")
@@ -121,6 +135,20 @@ async def gap_check(req: GapCheckRequest):
             conn.close()  # 명시적으로 닫아야 함 — GC(__del__)에 의존하면 idle in transaction 커넥션이 쌓일 수 있다(Codex 리뷰로 발견, 2026-07-23)
 
 
+def _run_reindex_sync() -> None:
+    # 실제 작업+플래그 해제를 전부 워커 스레드 안에서 끝낸다 — 예전엔 reindex() coroutine의
+    # finally에서 플래그를 풀었는데, 클라이언트 연결 끊김 등으로 그 coroutine이 cancel되면
+    # asyncio.to_thread()로 넘어간 스레드는 안 멈추는데 플래그만 먼저 풀려서 새 요청이 겹쳐
+    # 실행될 수 있었다(Codex 리뷰로 발견, 2026-07-29). 플래그 수명을 실제 동기 작업 전체와
+    # 묶어야 cancel에도 안전하다.
+    global _reindex_in_progress
+    try:
+        for provider_name in ("google", "local"):
+            rag_reindex.run(provider_name, True)
+    finally:
+        _reindex_in_progress = False
+
+
 @router.post("/reindex")
 async def reindex():
     """재색인 웹 트리거(2026-07-29) — `rag.postgres.reindex.run()`이 지금까지 CLI 전용이라
@@ -130,9 +158,12 @@ async def reindex():
     누를 때만 실행). run()은 동기 함수(psycopg/httpx 동기 호출)라 `asyncio.to_thread`로 감싸
     이벤트 루프를 막지 않는다 — 출력은 그대로 컨테이너 stdout으로 흘려보내 기존
     `docker compose logs -f api` 디버깅 흐름을 유지한다."""
+    global _reindex_in_progress
+    if _reindex_in_progress:
+        raise HTTPException(409, "재색인이 이미 진행 중입니다. 잠시 후 다시 시도하세요.")
+    _reindex_in_progress = True
     try:
-        for provider_name in ("google", "local"):
-            await asyncio.to_thread(rag_reindex.run, provider_name, True)
+        await asyncio.to_thread(_run_reindex_sync)
         return {"status": "ok"}
     except RuntimeError as e:
         raise HTTPException(503, f"RAG 파이프라인 연결/설정 오류: {e}")
@@ -159,7 +190,8 @@ async def ask(req: AskRequest):
     try:
         conn = get_connection()
         embed_provider = GoogleEmbeddingProvider() if req.provider == "google" else LocalEmbeddingProvider()
-        result = await answer_query_agent(conn, req.question, embed_provider, history=req.history)
+        history = [m.model_dump() for m in req.history]
+        result = await answer_query_agent(conn, req.question, embed_provider, history=history)
         result["provider"] = req.provider
         return result
     except LLMAPIError as e:

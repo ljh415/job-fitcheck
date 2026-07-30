@@ -31,7 +31,7 @@ from rag.postgres.db import get_connection
 from rag.postgres.fts import search_fts
 from rag.postgres.pipeline import _VECTOR_COLUMN
 from rag.postgres.retrieval import search_chunks
-from rag.skills import CANDIDATE_EVIDENCE, TRACKED_SKILLS
+from rag.skills import CANDIDATE_EVIDENCE, TRACKED_SKILLS, normalize_skill
 
 DEMAND_CANDIDATE_MAX = 25  # LLM 판정에 넘길 후보 공고 상한(비용·프롬프트 크기 제어)
 DEMAND_EMBED_TOP_K = 40    # 임베딩 검색 청크 수(공고 단위로 접기 전)
@@ -107,6 +107,7 @@ async def market_demand_hybrid(
     `llm`을 지정하면 그 provider/model로 판정한다(Agent 도구 실행부가 씀 — Agent는 임베딩만
     빼고 판정 LLM도 항상 Claude로 지정한다, 메인 앱 provider 설정과 무관). 지정하지 않으면
     기존처럼 메인 앱 설정(`capture_snapshot()`)을 따른다(`/api/rag/gap-check` 등 기존 호출부)."""
+    skill = normalize_skill(skill)
     if skill in TRACKED_SKILLS:
         return market_demand(conn, skill)
 
@@ -163,6 +164,7 @@ async def assess_gap(
     embed_provider: EmbeddingProvider,
     llm: tuple[LLMProvider, str, str | None] | None = None,
 ) -> dict:
+    skill = normalize_skill(skill)
     if not _has_profile_embeddings(conn, embed_provider):
         raise RuntimeError(
             f"이 provider({embed_provider.provider_name}/{embed_provider.model})로 후보자 프로필이"

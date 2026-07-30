@@ -37,7 +37,7 @@ from rag.answer import (
 from rag.embed.base import EmbeddingProvider
 from rag.postgres.gap import assess_all_gaps, assess_gap, market_demand_hybrid
 from rag.postgres.query_router import compare_postings, judge_topic_postings, list_postings
-from rag.skills import TRACKED_SKILLS
+from rag.skills import TRACKED_SKILLS, normalize_skill
 
 logger = logging.getLogger(__name__)
 
@@ -174,7 +174,7 @@ def _make_tool_executor(
             }
 
         if name == "list_matching_postings":
-            topic = args["topic"]
+            topic = normalize_skill(args["topic"])
             job_role = args.get("job_role") or ""
             if not topic and not job_role:
                 # topic이 스키마상 required지만 빈 문자열도 통과되는 tool-use 특성상, Claude가
@@ -185,7 +185,11 @@ def _make_tool_executor(
                 return {"postings": list_postings(conn, skill=topic, job_title=job_role)}
             if job_role and not topic:
                 return {"postings": list_postings(conn, job_title=job_role)}
-            return {"postings": await judge_topic_postings(conn, topic, embed_provider, method="llm", llm=claude_llm)}
+            return {
+                "postings": await judge_topic_postings(
+                    conn, topic, embed_provider, method="llm", job_role=job_role, llm=claude_llm
+                )
+            }
 
         if name == "compare_companies":
             return {"comparison": compare_postings(conn, args["company_names"])}
@@ -258,6 +262,7 @@ async def answer_query_agent(
 ) -> dict:
     request_id = uuid.uuid4().hex[:12]
     token = current_request_id.set(request_id)
+    result: dict | None = None
     try:
         provider = AnthropicProvider()
         model = settings.claude_high_model
@@ -271,14 +276,17 @@ async def answer_query_agent(
             operation="RAG 에이전트 응답",
             history=history,
         )
+        return {"answer": result["text"], "tool_calls": result["tool_calls"]}
     finally:
+        # run_agent()가 예외를 던지면(LLMAPIError 등) 기존엔 이 블록까지 못 와서 실패한
+        # 요청이 rag_agent_log.jsonl에 안 남았다 — usage_log.jsonl의 request_id와 조인할
+        # 대상이 없어짐(Codex 리뷰로 발견, 2026-07-29). 성공/실패 둘 다 finally에서 남긴다.
         current_request_id.reset(token)
-    _log_agent_call(
-        question=question,
-        history_len=len(history or []),
-        tool_calls=result["tool_calls"],
-        answer=result["text"],
-        provider="claude",
-        request_id=request_id,
-    )
-    return {"answer": result["text"], "tool_calls": result["tool_calls"]}
+        _log_agent_call(
+            question=question,
+            history_len=len(history or []),
+            tool_calls=(result or {}).get("tool_calls", []),
+            answer=(result or {}).get("text") or "(요청 실패 — 로그만 남김)",
+            provider="claude",
+            request_id=request_id,
+        )

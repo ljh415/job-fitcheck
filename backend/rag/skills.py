@@ -28,6 +28,20 @@ TRACKED_SKILLS: dict[str, list[str]] = {
     "IaC": [r"terraform", r"iac"],
 }
 
+_SKILL_LOOKUP = {k.lower(): k for k in TRACKED_SKILLS}
+
+
+def normalize_skill(skill: str) -> str:
+    """`TRACKED_SKILLS`와 대소문자만 다른 입력을 정확한 키로 정규화한다. 정규화 없이
+    `skill in TRACKED_SKILLS`로 바로 비교하면 "observability"(소문자)가 정확 집계 대신
+    `DEMAND_CANDIDATE_MAX`(25건) 상한이 걸린 추정 경로로 빠져 같은 질문인데도 결과가 구조적으로
+    달라진다(Codex 리뷰로 발견, 2026-07-29). 매치 안 되면 앞뒤 공백만 제거한 문자열을 반환한다
+    (자유 텍스트 주제로 처리) — 원본을 그대로 반환하면 " RAG " 같은 입력이 공백 포함 그대로
+    남고, 공백만 있는 입력("   ")도 truthy라 빈 입력 가드를 우회했다(Codex 재검증으로 발견,
+    2026-07-29)."""
+    stripped = skill.strip()
+    return _SKILL_LOOKUP.get(stripped.lower(), stripped)
+
 # CI/CD의 "배포 자동화" 항목은 01b SY-05 기대값(20건)과 AG-05 교집합(11건)을 동시에 만족하는
 # 유일한 후보는 아니었음 — "배포 파이프라인"도 독립적으로 20건을 만족했다. 정확한 원 용어는
 # Codex에게 확인 필요(00_claude_handoff.md 피드백란 참고).

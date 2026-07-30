@@ -131,14 +131,22 @@ async def classify_query(question: str, session_state: dict | None = None) -> di
 def list_postings(
     conn: psycopg.Connection, skill: str = "", job_title: str = "", limit: int = 50
 ) -> list[dict]:
-    """공고 목록 조회/필터 — 순수 SQL, LLM 호출 없음."""
+    """공고 목록 조회/필터 — 순수 SQL, LLM 호출 없음. skill과 job_title을 동시에 주면 둘 다
+    적용한다(2026-07-29 발견 — 예전엔 skill이 있으면 job_title을 무시해서 "백엔드 직무 중 AWS
+    공고" 같은 복합 질문이 전체 AWS 공고를 반환했음, Codex 리뷰)."""
     if skill:
-        rows = conn.execute(
+        query = (
             "SELECT p.slug, p.company_name, p.job_title FROM posting p"
             " JOIN posting_skill ps ON ps.posting_id = p.id"
-            " WHERE ps.skill = %s ORDER BY p.company_name LIMIT %s",
-            (skill, limit),
-        ).fetchall()
+            " WHERE ps.skill = %s"
+        )
+        params: list = [skill]
+        if job_title:
+            query += " AND p.job_title ILIKE %s"
+            params.append(f"%{job_title}%")
+        query += " ORDER BY p.company_name LIMIT %s"
+        params.append(limit)
+        rows = conn.execute(query, params).fetchall()
     elif job_title:
         rows = conn.execute(
             "SELECT slug, company_name, job_title FROM posting WHERE job_title ILIKE %s"
@@ -187,19 +195,32 @@ def compare_postings(conn: psycopg.Connection, company_names: list[str]) -> list
 
 
 async def _judge_topic_postings_llm(
-    conn: psycopg.Connection, topic: str, llm: tuple[LLMProvider, str, str | None] | None = None
+    conn: psycopg.Connection,
+    topic: str,
+    job_role: str = "",
+    llm: tuple[LLMProvider, str, str | None] | None = None,
 ) -> list[dict]:
     """자유 텍스트 주제(TRACKED_SKILLS 밖)를 corpus 전체 원문으로 LLM이 직접 판정한다.
 
     벡터 코사인 유사도로 후보를 미리 추려서 넘기면(_candidate_postings 패턴) 이 corpus에서는
     1차 검색 단계 자체가 진짜 정답을 통째로 놓치는 사례가 실측으로 확인됐다(2026-07-28,
     docs/rag-project-plans/00_meta/HISTORY.md 해당 항목). corpus 규모가 작아(공고 수십~백 건)
-    점수로 거르지 않고 전체를 LLM에 넘기는 쪽이 비용 대비 recall이 훨씬 낫다."""
-    rows = conn.execute(
+    점수로 거르지 않고 전체를 LLM에 넘기는 쪽이 비용 대비 recall이 훨씬 낫다.
+
+    `job_role`을 주면 LLM 판정 전에 SQL로 직무를 먼저 좁힌다(2026-07-29 발견 — 예전엔 이
+    파라미터 자체가 없어서 "백엔드 직무 중 헬스케어 경험" 같은 복합 질문에서 직무 조건이
+    통째로 무시됐음, Codex 리뷰). LLM 호출 비용도 같이 줄어드는 부수 효과가 있다."""
+    query = (
         "SELECT po.id, po.slug, po.company_name, po.job_title, dc.text"
         " FROM document_chunk dc JOIN posting po ON po.slug = dc.source_id"
-        " WHERE dc.source_type = 'posting_raw' ORDER BY po.id, dc.chunk_index"
-    ).fetchall()
+        " WHERE dc.source_type = 'posting_raw'"
+    )
+    params: list = []
+    if job_role:
+        query += " AND po.job_title ILIKE %s"
+        params.append(f"%{job_role}%")
+    query += " ORDER BY po.id, dc.chunk_index"
+    rows = conn.execute(query, params).fetchall()
     postings: dict[int, dict] = {}
     order: list[int] = []
     for pid, slug, company, job_title, text in rows:
@@ -238,11 +259,18 @@ async def _judge_topic_postings_llm(
     ]
 
 
-def _judge_topic_postings_local(conn: psycopg.Connection, topic: str, embed_provider: EmbeddingProvider) -> list[dict]:
+def _judge_topic_postings_local(
+    conn: psycopg.Connection, topic: str, embed_provider: EmbeddingProvider, job_role: str = ""
+) -> list[dict]:
     """벡터 검색만으로 top-k를 그대로 반환한다(판정 없이 순위만) — LLM 호출 없는 비교/실험용 경로.
     이번 corpus에서는 점수 격차가 razor-thin이라 신뢰도가 낮다는 게 이미 확인됐다(정확도 우선이면
-    method="llm" 기본값을 쓴다)."""
-    results = search_chunks(conn, embed_provider, topic, source_type="posting_raw", top_k=60)
+    method="llm" 기본값을 쓴다). job_role 필터는 LLM 경로와 함수 계약을 맞추기 위해 추가함
+    (Codex 리뷰로 발견, 2026-07-29 — 처음엔 method="llm"만 고치고 이 비교용 경로는 안 건드렸다가
+    같은 시그니처를 공유하는 두 구현이 서로 다르게 동작하는 게 지적됨)."""
+    # top_k=None(전체 청크) — job_role 필터가 순위 컷오프 뒤에 걸려서, 상한을 두면 그 상한
+    # 밖에 있는 관련 공고를 원천적으로 놓칠 수 있었다(사용자 지적, 2026-07-30). 이 corpus는
+    # 청크가 수백 개 수준이라 전체를 도는 비용이 무시할 만하다.
+    results = search_chunks(conn, embed_provider, topic, source_type="posting_raw", top_k=None)
     seen: set[int] = set()
     postings: list[dict] = []
     for _score, chunk_id, _text in results:
@@ -252,6 +280,8 @@ def _judge_topic_postings_local(conn: psycopg.Connection, topic: str, embed_prov
             (chunk_id,),
         ).fetchone()
         if not row or row[0] in seen:
+            continue
+        if job_role and job_role.lower() not in (row[3] or "").lower():
             continue
         seen.add(row[0])
         postings.append({"slug": row[1], "company_name": row[2], "job_title": row[3], "method": "local"})
@@ -265,11 +295,12 @@ async def judge_topic_postings(
     topic: str,
     embed_provider: EmbeddingProvider,
     method: str = "llm",
+    job_role: str = "",
     llm: tuple[LLMProvider, str, str | None] | None = None,
 ) -> list[dict]:
     if method == "local":
-        return _judge_topic_postings_local(conn, topic, embed_provider)
-    return await _judge_topic_postings_llm(conn, topic, llm=llm)
+        return _judge_topic_postings_local(conn, topic, embed_provider, job_role=job_role)
+    return await _judge_topic_postings_llm(conn, topic, job_role=job_role, llm=llm)
 
 
 # 미사용 코드(위 QUERY_TYPES/classify_query()와 같은 이유) — 삭제 안 하고 주석 표시만.

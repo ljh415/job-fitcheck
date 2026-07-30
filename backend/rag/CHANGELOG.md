@@ -8,6 +8,88 @@
 상세 이력·설계 논의는 `docs/rag-project-plans/00_meta/HISTORY.md`(git 미추적)에 exhaustively
 기록돼 있음 — 이 파일은 그걸 압축한 요약.
 
+## rag-v0.19.3 — Codex 서브프로젝트 전반 리뷰 반영: 5건 수정 (2026-07-29)
+
+RAG 전용 Codex 세션(`019f8e0c-...`)에 `backend/rag/` 전체 범위 리뷰 요청 → Medium 5건·Low 1건
+발견 → 전부 코드로 직접 재검증(허락 없이 그대로 반영 안 함) → 5건 확정 수정(1건은 기존
+`gpu_infra_plan.md`가 이미 계획한 더 큰 작업과 겹쳐 별도 논의로 보류).
+
+- **[Medium] `list_matching_postings`에서 `job_role` 무시**: `list_postings()`가 `skill`이 있으면
+  `job_title`을 아예 안 보는 `if/elif` 구조였음(query_router.py) — "백엔드 직무 중 AWS 공고"가
+  전체 AWS 공고를 반환할 수 있었음. `skill`+`job_title` 동시 필터로 수정, `judge_topic_postings()`
+  체인(자유 텍스트 주제)에도 `job_role` 파라미터 신설. 실측: AWS 전체 25건 → `job_role="백엔드"`
+  적용 후 2건으로 정상 필터링 확인.
+- **[Medium] `TRACKED_SKILLS` 대소문자 구분**: `skill in TRACKED_SKILLS`가 dict 키 조회라
+  `"observability"`(소문자)는 정확 집계 대신 `DEMAND_CANDIDATE_MAX=25` 상한이 걸린 추정 경로로
+  빠져 정답 28건을 구조적으로 못 채웠음. `rag/skills.py`에 `normalize_skill()` 추가, `gap.py`의
+  `market_demand_hybrid()`/`assess_gap()`과 `agent.py`의 `list_matching_postings` 라우팅에 적용.
+  실측: `Observability`/`observability` 둘 다 `method=exact, matched=28`로 동일하게 확인.
+- **[Medium] `/api/rag/ask`의 `history` 미검증**: `list[dict]`라 role/길이 제약이 전혀 없어 긴
+  대화가 결국 Anthropic context 한도로 영구 실패하거나, 잘못된 role/content가 503으로 오인
+  처리될 수 있었음. 메인 앱 `QARequest`/`QAMessage` 패턴처럼 `AskMessage`(role: Literal,
+  content: max_length=20000) + `history: max_length=40` 추가. 실측: 잘못된 role·41개 초과 history
+  둘 다 422로 정상 거부 확인.
+- **[Medium] `/api/rag/reindex` 동시 실행 방지 없음**: `chunk_embedding`에
+  `UNIQUE(chunk_id, provider, model, dimensions)` 제약이 있어 재색인 두 개가 겹치면
+  `UniqueViolation`으로 500이 날 수 있었음. `main.py`가 uvicorn 단일 프로세스(workers 미지정)라
+  in-process 플래그로 처리 — 이미 진행 중이면 409 반환. 실측: 동시 요청 2건 → 정확히 하나는 409,
+  나머지 하나만 실제 진행(google+local 성공) 확인(2회 재현).
+- **[Low] Agent 요청 실패 시 `request_id` 로그 누락**: `answer_query_agent()`가 `run_agent()`에서
+  예외가 나면 `_log_agent_call()`까지 못 가서 `usage_log.jsonl`엔 남는 `request_id`가
+  `rag_agent_log.jsonl`엔 없어 조인이 끊겼음. `try/finally` 구조로 바꿔 성공/실패 둘 다
+  `_log_agent_call()`이 항상 실행되도록 수정(실패 시 "(요청 실패 — 로그만 남김)" 표시).
+- **[Medium, 부분 완화] Local provider 고정 포트(8500) 동시 접근 충돌**: 실제 확인됨(재색인
+  동시성 테스트 중 우연히 재현: google 단계 성공 후 local 단계에서 SSH 터널 즉시 종료로 503).
+  새 버그가 아니라 `docs/rag-project-plans/00_meta/gpu_infra_plan.md`가 이미 "상시 SSH 터널로
+  교체"로 계획해둔 이슈(상태: 미구현) — 오늘 재색인 웹 트리거로 노출 빈도만 늘었을 뿐. 정석
+  해결(상시 공유 터널)은 인프라 작업이라 이번엔 보류하고, `rag/embed/local.py`에 프로세스 전역
+  락만 추가해 완화.
+  **1차 시도(blocking 락) 실패 사례**: `threading.Lock().acquire()`를 그대로 걸었더니, 이
+  provider가 `asyncio.to_thread` 없이 async 핸들러 안에서 직접 생성되는 구조라 락 대기가 uvicorn
+  단일 이벤트 루프 전체를 멈춰버림 — 로그인 등 완전히 무관한 요청까지 응답 불능이 되는 걸 실제로
+  재현·확인(컨테이너 재시작으로 복구). `acquire(blocking=False)`로 즉시 실패하는 방식으로
+  재설계해 이 회귀는 해소. 다만 `LocalEmbeddingProvider.__init__()` 자체가 `time.sleep()` 폴링을
+  쓰는 기존 동기 구조(이벤트 루프 블로킹 이슈, `async def gap_check()` 항목과 같은 원인)라 두
+  요청이 사실상 순차 처리되고, 앞 터널이 막 닫힌 직후엔 OS가 포트를 바로 안 놓아줘서 곧바로 이어
+  재시도하면 여전히 503이 날 수 있음(몇 초 뒤엔 정상) — "서버가 멈추거나 이상하게 죽는 것"은
+  막았지만 "동시 접근이 항상 매끄럽게 성공"까지는 아직 보장 못 함.
+
+## rag-v0.19.5 — `search_chunks()` top_k=None 지원(전체 순위) (2026-07-30)
+
+Codex 3차 리뷰(`rag-v0.19.4` 재검증)에서 발견된 Low 1건 — `judge_topic_postings(method="local")`의
+직무 필터가 벡터 top-60 컷오프 뒤에 적용돼, 관련 공고가 61위 밖에 있으면 통째로 후보에서
+빠질 수 있었음. 사용자가 "60이 하드코딩 아니냐"고 지적, 이 corpus는 청크가 183개뿐이라 굳이
+상한을 둘 이유가 없다는 데 동의해 `search_chunks()`(`retrieval.py`)에 `top_k=None`(LIMIT
+없이 전체 반환) 지원을 추가하고 `_judge_topic_postings_local()`이 이를 쓰도록 변경. 다른
+호출부(`gap.py`/`hybrid.py`/`evaluate.py`)는 전부 명시적 숫자를 넘기므로 회귀 없음(컴파일+실제
+`judge_topic_postings(method="local", job_role="백엔드")` 호출로 확인).
+
+## rag-v0.19.4 — Codex 2차 리뷰 반영: 5건 수정 (2026-07-29)
+
+`rag-v0.19.3` 수정사항을 다시 Codex에 리뷰 요청 → Medium 3건·Low 2건 추가 발견 → 전부 코드로
+재검증 후 수정.
+
+- **[Medium] `LocalEmbeddingProvider.close()` lock leak**: `wait(timeout=5)`가
+  `TimeoutExpired`를 던지면 락 해제 코드에 도달 못 해 이후 모든 local 요청이 프로세스 재시작
+  전까지 영구 실패할 수 있었음 — `finally`로 감싸고 타임아웃 시 `kill()` 폴백 추가.
+- **[Medium] `rag-test.html`이 history를 안 잘라서 20턴 넘으면 영구 422**: 백엔드 40개 제한
+  (`rag-v0.19.3`)을 추가했는데 프론트가 여전히 대화 전체를 보내서, 그 이후 모든 질문이 계속
+  422가 나던 회귀. 메인 앱 QnA(`app.js`)와 동일하게 `.slice(-40)` 적용.
+- **[Medium] 재색인 취소 시 워커 스레드는 안 멈춤**: `_reindex_in_progress` 플래그가 async
+  coroutine의 `finally`에서 풀렸는데, 클라이언트 연결 끊김 등으로 coroutine이 cancel되면
+  `to_thread`로 넘어간 실제 스레드는 계속 도는 채로 플래그만 먼저 풀려 새 요청과 겹칠 수
+  있었음 — 플래그 해제를 실제 동기 작업(`_run_reindex_sync`) 안 `finally`로 옮겨 스레드 수명과
+  묶음.
+- **[Low] `judge_topic_postings(method="local")`가 여전히 `job_role` 무시**: `rag-v0.19.3`에서
+  LLM 경로만 고치고 이 비교용 경로는 안 건드렸음 — 같은 함수 시그니처를 공유하는 이상 계약
+  일관성을 위해 `_judge_topic_postings_local()`에도 `job_role` 필터 추가.
+- **[Low] `normalize_skill()`이 매칭 실패 시 공백 안 지운 원본 반환**: `" RAG "`가 그대로 남고,
+  공백만 있는 입력도 truthy라 빈 입력 가드를 우회할 수 있었음 — strip된 문자열을 fallback으로
+  반환하도록 수정.
+
+실측: `" Observability "`(공백 포함) → `Observability`로 정규화, `method=exact/matched=28`
+확인. 일반 회귀 없음(`gap-check` 정상 200).
+
 ## rag-v0.19.2 — Agent 도구 중복 호출 버그 수정 + 입력 검증 (2026-07-29)
 
 "Agent 개발 관련 개선점" 요청으로 코드 재검토 중 발견. 처음 제기된 2건 중 1건(`get_market_demand`+

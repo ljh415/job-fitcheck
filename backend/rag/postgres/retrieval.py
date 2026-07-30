@@ -18,22 +18,31 @@ def search_chunks(
     provider: EmbeddingProvider,
     query: str,
     source_type: str | None = None,
-    top_k: int = 10,
+    top_k: int | None = 10,
 ) -> list[tuple[float, int, str]]:
     """질의를 provider로 임베딩해 청크 단위 코사인 유사도 상위 top_k를 반환한다.
-    (score, chunk_id, chunk_text) 리스트, 점수 내림차순."""
+    (score, chunk_id, chunk_text) 리스트, 점수 내림차순.
+
+    `top_k=None`이면 LIMIT 없이 전체를 반환한다 — 이 corpus는 청크가 수백 개 수준이라
+    "전체 순위"가 필요한 호출부(예: judge_topic_postings의 method="local" 비교 경로)에서
+    임의의 상한(과거 60)으로 진짜 정답을 놓치는 것보다 전체를 도는 게 낫다(사용자 지적,
+    2026-07-30)."""
     column = _VECTOR_COLUMN[provider.dimensions]
     qvec = provider.embed_query(query)
     source_filter = " AND dc.source_type = %s" if source_type else ""
     params = (qvec, provider.provider_name, provider.model, provider.dimensions)
     if source_type:
         params += (source_type,)
-    params += (qvec, top_k)
+    params += (qvec,)
+    limit_clause = ""
+    if top_k is not None:
+        limit_clause = " LIMIT %s"
+        params += (top_k,)
     rows = conn.execute(
         f"SELECT 1 - (ce.{column} <=> %s::vector) AS score, ce.chunk_id, dc.text"
         " FROM chunk_embedding ce JOIN document_chunk dc ON dc.id = ce.chunk_id"
         f" WHERE ce.provider = %s AND ce.model = %s AND ce.dimensions = %s{source_filter}"
-        f" ORDER BY ce.{column} <=> %s::vector LIMIT %s",
+        f" ORDER BY ce.{column} <=> %s::vector{limit_clause}",
         params,
     ).fetchall()
     return rows
