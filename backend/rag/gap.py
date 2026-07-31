@@ -10,6 +10,7 @@ import re
 import sqlite3
 
 from llm.router import capture_snapshot, high_from_snapshot
+from prompts import TRUST_BOUNDARY_NOTICE
 from rag.embed.base import EmbeddingProvider
 from rag.embed.local import LocalEmbeddingProvider
 from rag.retrieval import ensure_fts5, fts5_literal, search_chunks
@@ -20,7 +21,7 @@ DEMAND_CANDIDATE_MAX = 25  # LLM 판정에 넘길 후보 공고 상한(비용·�
 DEMAND_EMBED_TOP_K = 40    # 임베딩 검색 청크 수(공고 단위로 접기 전)
 DEMAND_FTS5_TOP_K = 20     # FTS5 검색 청크 수
 
-GAP_ASSESS_SYSTEM = """당신은 채용 시장 데이터를 근거로 후보자의 기술 gap을 판정하는 분석가입니다.
+GAP_ASSESS_SYSTEM = f"""당신은 채용 시장 데이터를 근거로 후보자의 기술 gap을 판정하는 분석가입니다.
 
 주어진 기술/개념에 대해 후보자 프로필에서 검색된 발췌문만 근거로 아래 4단계 중 하나로 판정하세요:
 - 직접 근거: 발췌문에서 확인되는 경험이 대상 기술/개념과 **동일한 기능적 역할**을 수행하며, 실무 맥락(프로젝트명·역할·기간 등)까지 함께 확인됨. 표현이 대상 개념의 정확한 이름이든, 그 개념을 실제로 구현하는 구체적인 방법·산출물이든 상관없다 — 핵심은 "기능이 같은가"이다.
@@ -32,7 +33,8 @@ GAP_ASSESS_SYSTEM = """당신은 채용 시장 데이터를 근거로 후보자�
 - 검색된 발췌문에 없는 내용을 추측하거나 만들어내지 마세요. 근거가 없으면 "근거 없음"으로 판정하세요.
 - **핵심 판별 기준은 "정확히 그 단어가 등장하는가"가 아니라 "발췌문의 경험이 대상 개념과 실제로 같은 기능을 수행하는가"입니다.** 같은 상위 카테고리에 속하더라도 기능적 역할이 다르면(예: 다른 벤더의 서비스, 같은 영역의 다른 단계를 담당하는 도구) "직접 근거"나 "부분 근거"를 주지 말고 "인접 경험"으로 판정하세요. 이 원칙은 모든 기술/개념 쌍에 동일하게 적용하며, 특정 기술 이름을 기준으로 한 예외를 두지 마세요.
 - "인접 경험"으로 판정할 때는 어떤 보유 경험이 왜 전이 가능하다고 보는지 근거를 명시하세요.
-- reasoning에는 판정 근거가 된 발췌문의 핵심 문구를 인용하세요."""
+- reasoning에는 판정 근거가 된 발췌문의 핵심 문구를 인용하세요.
+{TRUST_BOUNDARY_NOTICE}"""
 
 GAP_ASSESS_TOOL_NAME = "assess_evidence"
 GAP_ASSESS_TOOL_DESCRIPTION = "기술/개념에 대한 후보자 프로필 근거 판정 결과를 제출합니다."
@@ -62,7 +64,7 @@ def market_demand(conn: sqlite3.Connection, skill: str) -> dict:
     return {"matched": matched, "total": total, "ratio": ratio, "method": "exact"}
 
 
-JUDGE_CANDIDATES_SYSTEM = """당신은 채용공고가 특정 기술/개념과 실제로 관련 있는지 판정하는 분석가입니다.
+JUDGE_CANDIDATES_SYSTEM = f"""당신은 채용공고가 특정 기술/개념과 실제로 관련 있는지 판정하는 분석가입니다.
 
 주어진 후보 공고 목록(회사·직무·발췌문)을 보고, 그 발췌문에 대상 기술/개념과 관련된 내용이
 실제로 있는 공고의 번호만 골라내세요.
@@ -73,7 +75,8 @@ JUDGE_CANDIDATES_SYSTEM = """당신은 채용공고가 특정 기술/개념과 �
 - 공고 텍스트의 "주요업무"에서 실제로 수행하는 일인지를 우선 보세요. "우대사항"이나 자격요건의
   "있으면 좋음" 수준 목록에만 키워드가 등장하고 주요업무에는 없다면, 그 공고의 핵심 업무가 아니므로
   관련 있다고 판단하지 마세요(예: 이커머스 우대사항에 "주문/결제/배송"이 나열됐다고 해서 그 회사가
-  결제 시스템을 개발한다는 뜻은 아닙니다)."""
+  결제 시스템을 개발한다는 뜻은 아닙니다).
+{TRUST_BOUNDARY_NOTICE}"""
 
 JUDGE_CANDIDATES_TOOL_NAME = "judge_relevant_postings"
 JUDGE_CANDIDATES_TOOL_DESCRIPTION = "실제로 관련 있는 후보 공고 번호와 판정 근거를 제출합니다."

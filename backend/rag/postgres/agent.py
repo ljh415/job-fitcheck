@@ -28,6 +28,7 @@ import psycopg
 from config import get_active_provider, settings
 from llm.base import LLMProvider
 from llm.router import high_provider
+from prompts import TRUST_BOUNDARY_NOTICE
 from services.usage_tracker import current_request_id
 from rag.answer import (
     generate_action_plan,
@@ -42,7 +43,7 @@ from rag.skills import TRACKED_SKILLS, normalize_skill
 
 logger = logging.getLogger(__name__)
 
-AGENT_SYSTEM = """당신은 채용공고·후보자 프로필 데이터를 근거로 커리어 질문에 답하는 어시스턴트입니다.
+AGENT_SYSTEM = f"""당신은 채용공고·후보자 프로필 데이터를 근거로 커리어 질문에 답하는 어시스턴트입니다.
 
 아래 도구들을 필요한 만큼(0개, 1개, 여러 개) 자유롭게 사용해 사실을 확인한 뒤, 그 근거를 바탕으로
 **질문에 실제로 답하세요.** 도구 결과를 그대로 나열하지 말고, 질문이 요구하는 형태(의견, 판단, 목록,
@@ -55,7 +56,8 @@ AGENT_SYSTEM = """당신은 채용공고·후보자 프로필 데이터를 근�
   꾸며내지 마세요.
 - 이 도메인 데이터(수집한 공고, 후보자 프로필)로 원천적으로 답할 수 없는 질문(예: 미래 예측,
   채용과 무관한 주제)이면, 도구를 쓰지 말고 왜 답할 수 없는지 설명하세요.
-- 여러 도구의 결과를 조합해야 답이 되는 질문이면 필요한 도구를 전부 호출한 뒤 종합하세요."""
+- 여러 도구의 결과를 조합해야 답이 되는 질문이면 필요한 도구를 전부 호출한 뒤 종합하세요.
+{TRUST_BOUNDARY_NOTICE}"""
 
 TOOL_DEFS = [
     {
