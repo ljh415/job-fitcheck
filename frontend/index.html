@@ -535,7 +535,7 @@
     </div>
     <p id="rag-reindex-status" class="rag-note"></p>
 
-    <div class="rag-section-card">
+    <div class="rag-section-card" id="rag-gap-section">
       <h3>기술명으로 바로 확인</h3>
       <form class="rag-form" onsubmit="runRagGapCheck(event)">
         <input type="text" id="rag-skill-input" placeholder="기술/개념 (예: GCP, CI/CD, Kubernetes)" required />
@@ -544,6 +544,7 @@
       </form>
       <div id="rag-gap-result"></div>
     </div>
+    <p id="rag-gap-disabled-note" class="rag-note hidden">RAG_INCLUDE_PROFILE이 꺼져 있어 프로필 근거 기반 스킬 갭 확인은 사용할 수 없습니다.</p>
 
     <div class="rag-section-card">
       <div class="qa-company-header">

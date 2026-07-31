@@ -64,6 +64,7 @@ let _audioCtx = null;
 let _currentRecord = null;
 let ragEnabled = false;
 let ragConfiguredProviders = [];
+let ragIncludeProfile = false;
 const qaHistory = JSON.parse(localStorage.getItem('job-fitcheck-qa') || '{}');
 function saveQAHistory() {
   try { localStorage.setItem('job-fitcheck-qa', JSON.stringify(qaHistory)); }
@@ -232,9 +233,11 @@ async function checkRagStatus() {
     const data = await res.json();
     ragEnabled = !!data.enabled;
     ragConfiguredProviders = data.configured_providers || [];
+    ragIncludeProfile = !!data.include_profile;
   } catch (e) {
     ragEnabled = false;
     ragConfiguredProviders = [];
+    ragIncludeProfile = false;
   }
   document.getElementById('rag-nav-btn')?.classList.toggle('hidden', !ragEnabled);
 }
@@ -259,9 +262,9 @@ async function submitLogin(event) {
       body: JSON.stringify({ password }),
     });
     localStorage.setItem(TOKEN_KEY, token);
+    await checkRagStatus();
     navigate('dashboard');
     startInProgressPolling();
-    checkRagStatus();
   } catch (e) {
     errorEl.classList.remove('hidden');
   }
@@ -2028,7 +2031,11 @@ function ragProviderOptionsHtml() {
 }
 
 function initRag() {
-  document.getElementById('rag-gap-provider-select').innerHTML = ragProviderOptionsHtml();
+  document.getElementById('rag-gap-section').classList.toggle('hidden', !ragIncludeProfile);
+  document.getElementById('rag-gap-disabled-note').classList.toggle('hidden', ragIncludeProfile);
+  if (ragIncludeProfile) {
+    document.getElementById('rag-gap-provider-select').innerHTML = ragProviderOptionsHtml();
+  }
   document.getElementById('rag-ask-provider-select').innerHTML = ragProviderOptionsHtml();
   document.getElementById('rag-question-input').addEventListener('keydown', handleRagKeydown);
   ragCleanupPendingMessages();
@@ -2252,7 +2259,7 @@ function renderRagAskAnswer(data) {
 }
 
 /* ── 초기 로드 ────────────────────────────────────────────────────── */
-window.addEventListener('DOMContentLoaded', () => {
+window.addEventListener('DOMContentLoaded', async () => {
   const token = localStorage.getItem(TOKEN_KEY);
   if (!token) {
     currentView = 'login';
@@ -2271,7 +2278,11 @@ window.addEventListener('DOMContentLoaded', () => {
     currentSlug = slug;
     history.replaceState({ view, slug, compareTargets: compareTargets.slice() }, '', window.location.pathname);
   }
+  // /rag로 직접 진입(새로고침 등)했을 때 render()가 checkRagStatus() 응답보다 먼저 끝나면
+  // initRag()가 초기값(ragEnabled=false 등)으로 UI를 그리고, checkRagStatus()는 나중에
+  // 값을 받아와도 nav 버튼 외엔 다시 안 그려서 그 상태로 굳어버린다(코드리뷰 6번, 2026-07-31
+  // Playwright로 재현 확인). render() 전에 기다려서 애초에 잘못 그릴 일을 없앤다.
+  await checkRagStatus();
   render();
   startInProgressPolling();
-  checkRagStatus();
 });
