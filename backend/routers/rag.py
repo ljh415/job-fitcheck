@@ -43,6 +43,11 @@ def _require_rag_enabled() -> None:
         raise HTTPException(503, "RAG가 설정되지 않았습니다 — RAG_POSTGRES_HOST 등 .env 설정이 필요합니다.")
 
 
+def _require_profile_enabled() -> None:
+    if not settings.rag_include_profile:
+        raise HTTPException(400, "RAG_INCLUDE_PROFILE이 꺼져 있어 프로필 근거 기반 기능을 사용할 수 없습니다.")
+
+
 @router.get("/status")
 async def status():
     """RAG 활성화 여부 조회 — 프론트가 이걸로 RAG 관련 UI를 조건부로 노출한다.
@@ -52,6 +57,7 @@ async def status():
     return {
         "enabled": enabled,
         "configured_providers": settings.rag_configured_providers if enabled else [],
+        "include_profile": settings.rag_include_profile,
     }
 
 _reindex_in_progress = False  # main.py가 uvicorn 단일 프로세스(workers 미지정)라 in-process
@@ -79,7 +85,7 @@ class AskRequest(BaseModel):
     history: list[AskMessage] = Field(default_factory=list, max_length=40)
 
 
-@router.post("/gap-check", dependencies=[Depends(_require_rag_enabled)])
+@router.post("/gap-check", dependencies=[Depends(_require_rag_enabled), Depends(_require_profile_enabled)])
 async def gap_check(req: GapCheckRequest):
     if req.provider not in settings.rag_configured_providers:
         raise HTTPException(400, f"provider는 {settings.rag_configured_providers} 중 하나여야 합니다")

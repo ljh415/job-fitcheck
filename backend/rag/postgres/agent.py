@@ -120,6 +120,15 @@ TOOL_DEFS = [
     },
 ]
 
+# RAG_INCLUDE_PROFILE이 꺼져 있으면 이 도구들은 근본적으로 성립 불가(프로필 근거가 없음) —
+# LLM에게 아예 안 보여줘서 시도 자체를 안 하게 한다(호출 후 에러로 알리는 것보다 낫다).
+PROFILE_TOOL_NAMES = {
+    "assess_skill_gap",
+    "assess_all_gaps_summary",
+    "generate_action_plan_for_skill",
+    "generate_sequenced_plan_for_priority_gaps",
+}
+
 
 def _without_excerpts(gap_result: dict) -> dict:
     """Agent에게 여러 기술을 한 번에 요약해줄 때, 기술마다 딸려오는 이력서 원문 발췌(`excerpts`)를
@@ -268,10 +277,13 @@ async def answer_query_agent(
     try:
         provider, model = high_provider()
         tool_executor = _make_tool_executor(conn, embed_provider, llm=(provider, model, None))
+        tools = TOOL_DEFS if settings.rag_include_profile else [
+            t for t in TOOL_DEFS if t["name"] not in PROFILE_TOOL_NAMES
+        ]
         result = await provider.run_agent(
             system=AGENT_SYSTEM,
             question=question,
-            tools=TOOL_DEFS,
+            tools=tools,
             tool_executor=tool_executor,
             model=model,
             operation="RAG 에이전트 응답",
