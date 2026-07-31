@@ -2093,7 +2093,7 @@ async function runRagReindex() {
   statusEl.textContent = '';
   try {
     const data = await api('/rag/reindex', { method: 'POST' });
-    statusEl.textContent = `재색인 완료 (${(data.providers || []).join(', ')})`;
+    statusEl.textContent = `재색인 완료 (${data.provider})`;
   } catch (e) {
     statusEl.innerHTML = `<span class="rag-error">${escHtml(e.message)}</span>`;
   } finally {

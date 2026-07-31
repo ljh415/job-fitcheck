@@ -200,16 +200,16 @@ async def gap_check(req: GapCheckRequest):
             conn.close()  # 명시적으로 닫아야 함 — GC(__del__)에 의존하면 idle in transaction 커넥션이 쌓일 수 있다(Codex 리뷰로 발견, 2026-07-23)
 
 
-class ReindexRequest(BaseModel):
-    provider: str | None = None  # None이면 rag_configured_providers 전부(기존 기본 동작)
-
-
 _reindex_pending = False  # 재색인 도중 새 CRUD 이벤트가 들어오면 이 플래그만 세우고, 현재
 # 실행이 끝난 뒤 한 번 더 돈다 — 그냥 무시하면 그 이벤트가 스캔에 안 잡힌 채 다음 트리거가
-# 올 때까지 색인이 안 될 수 있다(4번 "동시 재색인 경쟁조건", Codex 제안 반영).
+# 올 때까지 색인이 안 될 수 있다(4번 "동시 재색인 경쟁조건", Codex 제안 반영). provider가
+# 여러 개(google+local)일 때는 이 플래그가 재실행 시 provider 범위를 잃는 버그가 있었다
+# (Codex 리뷰로 발견, 2026-07-31) — 활성 embedding provider를 하나로 통일(4번 재검토)하면서
+# 매 반복마다 resolve_rag_embedding_provider()를 새로 불러 해결. 리스트/집합을 들고 있을
+# 필요 자체가 없어짐 — provider가 하나뿐이라 "범위"라는 개념이 성립하지 않는다.
 
 
-def _run_reindex_sync(providers: list[str]) -> None:
+def _run_reindex_sync() -> None:
     # 실제 작업+플래그 해제를 전부 워커 스레드 안에서 끝낸다 — 예전엔 reindex() coroutine의
     # finally에서 플래그를 풀었는데, 클라이언트 연결 끊김 등으로 그 coroutine이 cancel되면
     # asyncio.to_thread()로 넘어간 스레드는 안 멈추는데 플래그만 먼저 풀려서 새 요청이 겹쳐
@@ -218,8 +218,9 @@ def _run_reindex_sync(providers: list[str]) -> None:
     global _reindex_in_progress, _reindex_pending
     try:
         while True:
-            for provider_name in providers:
-                rag_reindex.run(provider_name, settings.rag_include_profile)
+            # 매 반복 시작 시 새로 resolve — 재색인 도중 설정 화면에서 embedding provider를
+            # 바꾸면 pending 재실행은 바뀐 provider를 따라간다(이전 값에 고정 안 됨).
+            rag_reindex.run(resolve_rag_embedding_provider(), settings.rag_include_profile)
             if not _reindex_pending:
                 break
             # pending 상태에서 재실행 — diff 기반이라 이미 반영된 변경은 다시 스캔해도 비용이
@@ -230,7 +231,7 @@ def _run_reindex_sync(providers: list[str]) -> None:
         _reindex_pending = False
 
 
-def trigger_reindex_background(providers: list[str] | None = None) -> bool:
+def trigger_reindex_background() -> bool:
     """회사 CRUD 이벤트(공고 생성·재분석·삭제)에서 호출하는 자동 재색인 트리거(4번 항목).
     수동 트리거(`/reindex` 엔드포인트)와 달리 사용자에게 보여줄 응답이 없으므로, 이미
     진행 중이면 에러 대신 `_reindex_pending`만 세워서 조용히 뒤로 미룬다. RAG가 꺼져 있으면
@@ -243,34 +244,29 @@ def trigger_reindex_background(providers: list[str] | None = None) -> bool:
         _reindex_pending = True
         return False
     _reindex_in_progress = True
-    ps = providers or settings.rag_configured_providers
-    asyncio.create_task(asyncio.to_thread(_run_reindex_sync, ps))
+    asyncio.create_task(asyncio.to_thread(_run_reindex_sync))
     return True
 
 
 @router.post("/reindex", dependencies=[Depends(_require_rag_enabled)])
-async def reindex(req: ReindexRequest | None = None):
-    """재색인 웹 트리거(2026-07-29, 2026-07-31에 provider 선택 추가) —
-    `rag.postgres.reindex.run()`이 지금까지 CLI 전용이라 실제 사용자는 트리거할 방법이
-    없었다. `req.provider`를 지정하면 그 provider만, 생략하면 `rag_configured_providers`
-    전부를 대칭적으로 실행한다. 프로필 포함 여부는 `settings.rag_include_profile`
-    (기본 false — 이력서 내용이 임베딩 API로 전송되는 걸 사용자가 명시적으로 켜야 함)을
-    따른다. run()은 동기 함수(psycopg/httpx 동기 호출)라 `asyncio.to_thread`로 감싸
-    이벤트 루프를 막지 않는다 — 출력은 그대로 컨테이너 stdout으로 흘려보내 기존
-    `docker compose logs -f api` 디버깅 흐름을 유지한다. 수동 트리거라 이미 진행
-    중이면(자동 트리거와 겹쳤을 수도 있음) 조용히 미루지 않고 409로 명확히 알린다 —
+async def reindex():
+    """재색인 웹 트리거(2026-07-29). `rag.postgres.reindex.run()`이 지금까지 CLI 전용이라
+    실제 사용자는 트리거할 방법이 없었다. 항상 `resolve_rag_embedding_provider()`가 결정한
+    활성 provider 하나만 재색인한다(2026-07-31, provider별로 따로 고르던 구조를 없애고
+    설정값 하나로 통일 — `/api/rag/settings` 참고). 프로필 포함 여부는
+    `settings.rag_include_profile`(기본 false — 이력서 내용이 임베딩 API로 전송되는 걸
+    사용자가 명시적으로 켜야 함)을 따른다. run()은 동기 함수(psycopg/httpx 동기 호출)라
+    `asyncio.to_thread`로 감싸 이벤트 루프를 막지 않는다 — 출력은 그대로 컨테이너 stdout으로
+    흘려보내 기존 `docker compose logs -f api` 디버깅 흐름을 유지한다. 수동 트리거라 이미
+    진행 중이면(자동 트리거와 겹쳤을 수도 있음) 조용히 미루지 않고 409로 명확히 알린다 —
     사용자가 버튼을 눌렀는데 응답이 없으면 안 되므로."""
     global _reindex_in_progress
-    provider = req.provider if req else None
-    if provider is not None and provider not in settings.rag_configured_providers:
-        raise HTTPException(400, f"provider는 {settings.rag_configured_providers} 중 하나여야 합니다")
-    providers = [provider] if provider else settings.rag_configured_providers
     if _reindex_in_progress:
         raise HTTPException(409, "재색인이 이미 진행 중입니다. 잠시 후 다시 시도하세요.")
     _reindex_in_progress = True
     try:
-        await asyncio.to_thread(_run_reindex_sync, providers)
-        return {"status": "ok", "providers": providers}
+        await asyncio.to_thread(_run_reindex_sync)
+        return {"status": "ok", "provider": resolve_rag_embedding_provider()}
     except RuntimeError as e:
         raise HTTPException(503, f"RAG 파이프라인 연결/설정 오류: {e}")
     except httpx.HTTPError as e:
