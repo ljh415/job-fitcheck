@@ -2025,18 +2025,52 @@ const RAG_LEVEL_CLASS = { '직접 근거': 'score-high', '부분 근거': 'score
 const RAG_CHATS_KEY = 'job-fitcheck-rag-chats';
 const RAG_CURRENT_CHAT_KEY = 'job-fitcheck-rag-current-chat';
 
-function ragProviderOptionsHtml() {
+function ragSettingsProviderOptionsHtml(current) {
   // rag_configured_providers 기반 — local 미설정 배포에는 Local 선택지 자체가 안 보인다(3번 결정).
-  return ragConfiguredProviders.map(p => `<option value="${p}">${p === 'google' ? 'Google' : 'Local'}</option>`).join('');
+  // "자동"은 메인 LLM provider를 따라간다(config.py의 resolve_rag_embedding_provider()).
+  const auto = `<option value=""${current ? '' : ' selected'}>자동 (메인 provider 따름)</option>`;
+  const opts = ragConfiguredProviders
+    .map(p => `<option value="${p}"${p === current ? ' selected' : ''}>${p === 'google' ? 'Google' : 'Local'}</option>`)
+    .join('');
+  return auto + opts;
+}
+
+async function toggleRagSettings() {
+  const popup = document.getElementById('rag-settings-popup');
+  const willShow = popup.classList.contains('hidden');
+  popup.classList.toggle('hidden');
+  if (willShow) await loadRagSettings();
+}
+
+async function loadRagSettings() {
+  const select = document.getElementById('rag-settings-provider-select');
+  const note = document.getElementById('rag-settings-note');
+  try {
+    const data = await api('/rag/settings');
+    select.innerHTML = ragSettingsProviderOptionsHtml(data.override);
+    note.textContent = `현재 적용: ${data.resolved}`;
+  } catch (e) {
+    note.innerHTML = `<span class="rag-error">${escHtml(e.message)}</span>`;
+  }
+}
+
+async function saveRagSettings() {
+  const select = document.getElementById('rag-settings-provider-select');
+  const note = document.getElementById('rag-settings-note');
+  try {
+    const data = await api('/rag/settings', {
+      method: 'PUT',
+      body: JSON.stringify({ embedding_provider: select.value || null }),
+    });
+    note.textContent = `현재 적용: ${data.resolved}`;
+  } catch (e) {
+    note.innerHTML = `<span class="rag-error">${escHtml(e.message)}</span>`;
+  }
 }
 
 function initRag() {
   document.getElementById('rag-gap-section').classList.toggle('hidden', !ragIncludeProfile);
   document.getElementById('rag-gap-disabled-note').classList.toggle('hidden', ragIncludeProfile);
-  if (ragIncludeProfile) {
-    document.getElementById('rag-gap-provider-select').innerHTML = ragProviderOptionsHtml();
-  }
-  document.getElementById('rag-ask-provider-select').innerHTML = ragProviderOptionsHtml();
   document.getElementById('rag-question-input').addEventListener('keydown', handleRagKeydown);
   ragCleanupPendingMessages();
   ragRenderChatDropdown();
@@ -2071,7 +2105,6 @@ async function runRagReindex() {
 async function runRagGapCheck(event) {
   event.preventDefault();
   const skill = document.getElementById('rag-skill-input').value.trim();
-  const provider = document.getElementById('rag-gap-provider-select').value;
   const btn = document.getElementById('rag-gap-submit-btn');
   const resultEl = document.getElementById('rag-gap-result');
   if (!skill) return;
@@ -2080,7 +2113,7 @@ async function runRagGapCheck(event) {
   btn.textContent = '확인 중...';
   resultEl.innerHTML = '';
   try {
-    const data = await api('/rag/gap-check', { method: 'POST', body: JSON.stringify({ skill, provider }) });
+    const data = await api('/rag/gap-check', { method: 'POST', body: JSON.stringify({ skill }) });
     resultEl.innerHTML = renderRagGapCard(data);
   } catch (e) {
     resultEl.innerHTML = `<div class="rag-error">${escHtml(e.message)}</div>`;
@@ -2199,7 +2232,6 @@ function ragCleanupPendingMessages() {
 async function runRagAsk(event) {
   event.preventDefault();
   const question = document.getElementById('rag-question-input').value.trim();
-  const provider = document.getElementById('rag-ask-provider-select').value;
   const btn = document.getElementById('rag-ask-submit-btn');
   if (!question) return;
 
@@ -2227,7 +2259,7 @@ async function runRagAsk(event) {
   if (ragGetCurrentChatId() === chatId) ragRenderThread(chat.messages);
 
   try {
-    entry.data = await api('/rag/ask', { method: 'POST', body: JSON.stringify({ question, provider, history }) });
+    entry.data = await api('/rag/ask', { method: 'POST', body: JSON.stringify({ question, history }) });
     entry.pending = false;
     ragSaveChats(chats);
     if (ragGetCurrentChatId() === chatId) ragRenderThread(chat.messages);

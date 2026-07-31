@@ -24,7 +24,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from google.genai import errors as genai_errors
 from pydantic import BaseModel, Field
 
-from config import settings
+from config import (
+    get_rag_embedding_provider_override,
+    resolve_rag_embedding_provider,
+    set_rag_embedding_provider_override,
+    settings,
+)
 from llm.base import LLMAPIError
 from llm.router import capture_snapshot, high_from_snapshot
 from rag.answer import generate_action_plan
@@ -60,6 +65,39 @@ async def status():
         "include_profile": settings.rag_include_profile,
     }
 
+
+class RagSettingsUpdateRequest(BaseModel):
+    embedding_provider: str | None = None  # null=자동(메인 provider 따름), 아니면 명시적 고정
+
+
+@router.get("/settings", dependencies=[Depends(_require_rag_enabled)])
+async def get_rag_settings():
+    """RAG 전용 설정 — 메인 설정 화면과 분리된, `/rag` 페이지 안의 별도 팝업에서 쓴다(2026-07-31,
+    쿼리마다 provider를 고르던 드롭다운을 없애고 하나로 통일한 결정 참고 — 이유는
+    `docs/rag-integration/STATUS.md` 4번 참고)."""
+    # resolve_rag_embedding_provider()를 먼저 불러야 한다 — 이 함수가 유효하지 않은 override를
+    # 자동으로 정리(None)하는 부수효과가 있어서, override를 먼저 읽으면 이번 응답에서만
+    # override="local"인데 resolved="google"인 모순된 스냅샷이 나간다(라이브 테스트로 발견).
+    resolved = resolve_rag_embedding_provider()
+    return {
+        "override": get_rag_embedding_provider_override(),
+        "resolved": resolved,
+        "available": settings.rag_configured_providers,
+    }
+
+
+@router.put("/settings", dependencies=[Depends(_require_rag_enabled)])
+async def update_rag_settings(req: RagSettingsUpdateRequest):
+    try:
+        set_rag_embedding_provider_override(req.embedding_provider)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {
+        "override": get_rag_embedding_provider_override(),
+        "resolved": resolve_rag_embedding_provider(),
+    }
+
+
 _reindex_in_progress = False  # main.py가 uvicorn 단일 프로세스(workers 미지정)라 in-process
 # 플래그로 충분하다 — chunk_embedding에 UNIQUE(chunk_id, provider, model, dimensions) 제약이
 # 있어서 재색인 두 개가 겹치면 두 번째가 UniqueViolation으로 500이 났다(Codex 리뷰로 발견,
@@ -68,7 +106,6 @@ _reindex_in_progress = False  # main.py가 uvicorn 단일 프로세스(workers �
 
 class GapCheckRequest(BaseModel):
     skill: str
-    provider: str = "google"  # "google" | "local"
 
 
 class AskMessage(BaseModel):
@@ -81,15 +118,12 @@ class AskRequest(BaseModel):
     # 검증이 전혀 없었다(Codex 리뷰로 발견, 2026-07-29). 긴 대화는 결국 Anthropic API의 context
     # 한도를 넘어 영구 실패하고, 잘못된 role/content는 외부 API 400이 503으로 오인 처리됐다.
     question: str = Field(max_length=2_000)
-    provider: str = "google"  # "google" | "local" — 임베딩 provider(도구 내부 검색용)
     history: list[AskMessage] = Field(default_factory=list, max_length=40)
 
 
 @router.post("/gap-check", dependencies=[Depends(_require_rag_enabled), Depends(_require_profile_enabled)])
 async def gap_check(req: GapCheckRequest):
-    if req.provider not in settings.rag_configured_providers:
-        raise HTTPException(400, f"provider는 {settings.rag_configured_providers} 중 하나여야 합니다")
-
+    provider = resolve_rag_embedding_provider()
     conn = None
     embed_provider = None
     try:
@@ -100,7 +134,7 @@ async def gap_check(req: GapCheckRequest):
         # 이 실패가 그대로 500으로 샜다(Codex 리뷰로 발견, 2026-07-23). conn/embed_provider를
         # 미리 None으로 둬서 생성 자체가 실패해도 finally가 안전하게 아무 일도 안 하도록 한다.
         conn = get_connection()
-        embed_provider = GoogleEmbeddingProvider() if req.provider == "google" else LocalEmbeddingProvider()
+        embed_provider = GoogleEmbeddingProvider() if provider == "google" else LocalEmbeddingProvider()
         # 판정 LLM provider/model/reasoning_effort를 요청 시작 시 한 번만 캡처해 끝까지 그대로
         # 쓴다 — 안 그러면 assess_gap() 내부 시장수요 판정·근거 판정·행동계획 생성이 각각 따로
         # capture_snapshot()을 불러서, 요청 처리 도중 설정 화면에서 provider를 바꾸면 한 요청
@@ -119,7 +153,7 @@ async def gap_check(req: GapCheckRequest):
             "market_demand": gap_result["market_demand"],
             "excerpts": gap_result["excerpts"],
             "action_plan": action_plan,
-            "provider": req.provider,
+            "provider": provider,
         }
     except LLMAPIError as e:
         # assess_gap()/generate_action_plan()이 쓰는 LLM provider(Claude/OpenAI/Gemini 텍스트
@@ -254,17 +288,15 @@ async def ask(req: AskRequest):
     완전히 무관한 답을 내놓는 구조적 결함이 실측으로 확인돼(`docs/rag-project-plans/00_meta/HISTORY.md`
     2026-07-28 항목), LLM이 도구를 스스로 골라 쓰며 답하는 구조로 전환. conn/embed_provider 생성·정리·
     예외 처리는 gap_check()와 동일한 패턴(Codex 리뷰로 다듬어진 부분이라 그대로 유지)."""
-    if req.provider not in settings.rag_configured_providers:
-        raise HTTPException(400, f"provider는 {settings.rag_configured_providers} 중 하나여야 합니다")
-
+    provider = resolve_rag_embedding_provider()
     conn = None
     embed_provider = None
     try:
         conn = get_connection()
-        embed_provider = GoogleEmbeddingProvider() if req.provider == "google" else LocalEmbeddingProvider()
+        embed_provider = GoogleEmbeddingProvider() if provider == "google" else LocalEmbeddingProvider()
         history = [m.model_dump() for m in req.history]
         result = await answer_query_agent(conn, req.question, embed_provider, history=history)
-        result["provider"] = req.provider
+        result["provider"] = provider
         return result
     except LLMAPIError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e))

@@ -531,7 +531,13 @@
     <div class="view-header">
       <button onclick="navigate('dashboard')" class="back-btn">← 목록</button>
       <h2>🤖 RAG</h2>
+      <button id="rag-settings-btn" class="btn-secondary" onclick="toggleRagSettings()" title="RAG 임베딩 provider 설정">⚙️ 설정</button>
       <button id="rag-reindex-btn" class="btn-secondary" onclick="runRagReindex()" title="공고/프로필 변경사항을 임베딩에 반영">🔄 재색인</button>
+    </div>
+    <div id="rag-settings-popup" class="rag-settings-popup hidden">
+      <label for="rag-settings-provider-select">임베딩 provider</label>
+      <select id="rag-settings-provider-select" onchange="saveRagSettings()"></select>
+      <p id="rag-settings-note" class="rag-note"></p>
     </div>
     <p id="rag-reindex-status" class="rag-note"></p>
 
@@ -539,7 +545,6 @@
       <h3>기술명으로 바로 확인</h3>
       <form class="rag-form" onsubmit="runRagGapCheck(event)">
         <input type="text" id="rag-skill-input" placeholder="기술/개념 (예: GCP, CI/CD, Kubernetes)" required />
-        <select id="rag-gap-provider-select"></select>
         <button type="submit" id="rag-gap-submit-btn">확인</button>
       </form>
       <div id="rag-gap-result"></div>
@@ -559,7 +564,6 @@
         <div id="rag-ask-result" class="qa-messages"></div>
         <form class="qa-input-row" onsubmit="runRagAsk(event)">
           <textarea id="rag-question-input" rows="2" placeholder="예: AWS를 안 해봤으면 단점이 될까? / Redis 요구하는 공고 어디어디야? (Shift+Enter 줄바꿈)" required></textarea>
-          <select id="rag-ask-provider-select" title="임베딩 provider(검색용) — 판정/답변 LLM은 설정의 provider를 따름"></select>
           <button type="submit" id="rag-ask-submit-btn">전송</button>
         </form>
       </div>
