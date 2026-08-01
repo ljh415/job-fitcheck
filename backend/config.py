@@ -157,6 +157,12 @@ def set_rag_embedding_provider_override(provider: str | None) -> None:
     _save_runtime_state()
 
 
+def default_embedding_provider() -> str:
+    """override가 없을 때 메인 LLM provider로부터 자동 매핑한 임베딩 provider. 설정 변경
+    시 "바뀌는 대상이 뭔지" 미리 계산해야 하는 routers/rag.py도 이 함수를 그대로 쓴다."""
+    return _MAIN_PROVIDER_TO_EMBEDDING.get(get_active_provider(), "google")
+
+
 def resolve_rag_embedding_provider() -> str:
     global _runtime_rag_embedding_provider
     if _runtime_rag_embedding_provider:
@@ -167,7 +173,7 @@ def resolve_rag_embedding_provider() -> str:
         # 되돌린 상태를 영속화해 설정 화면에도 반영한다.
         _runtime_rag_embedding_provider = None
         _save_runtime_state()
-    return _MAIN_PROVIDER_TO_EMBEDDING.get(get_active_provider(), "google")
+    return default_embedding_provider()
 
 
 # 분석 완료 알림 메시지에 포함할 항목 토글

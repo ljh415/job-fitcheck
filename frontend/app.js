@@ -2048,6 +2048,7 @@ async function loadRagSettings() {
   try {
     const data = await api('/rag/settings');
     select.innerHTML = ragSettingsProviderOptionsHtml(data.override);
+    select.dataset.previousValue = data.override || '';
     note.textContent = `현재 적용: ${data.resolved}`;
   } catch (e) {
     note.innerHTML = `<span class="rag-error">${escHtml(e.message)}</span>`;
@@ -2057,14 +2058,26 @@ async function loadRagSettings() {
 async function saveRagSettings() {
   const select = document.getElementById('rag-settings-provider-select');
   const note = document.getElementById('rag-settings-note');
+  const previous = select.dataset.previousValue || '';
+  if (select.value === previous) return;  // 실질적 변경 없음
+  if (!confirm('이 provider로 전환하려면 먼저 재색인이 필요합니다(API 호출 비용이 발생할 수 있습니다). 지금 진행할까요?')) {
+    select.value = previous;
+    return;
+  }
+  select.disabled = true;
+  note.textContent = '재색인 중... (몇 초~몇 분 걸릴 수 있습니다)';
   try {
     const data = await api('/rag/settings', {
       method: 'PUT',
       body: JSON.stringify({ embedding_provider: select.value || null }),
     });
+    select.dataset.previousValue = select.value;
     note.textContent = `현재 적용: ${data.resolved}`;
   } catch (e) {
+    select.value = previous;  // 실패 시 이전 선택으로 되돌림 — override는 서버에서도 그대로 유지됨
     note.innerHTML = `<span class="rag-error">${escHtml(e.message)}</span>`;
+  } finally {
+    select.disabled = false;
   }
 }
 

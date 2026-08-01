@@ -25,6 +25,7 @@ from google.genai import errors as genai_errors
 from pydantic import BaseModel, Field
 
 from config import (
+    default_embedding_provider,
     get_rag_embedding_provider_override,
     resolve_rag_embedding_provider,
     set_rag_embedding_provider_override,
@@ -88,8 +89,25 @@ async def get_rag_settings():
 
 @router.put("/settings", dependencies=[Depends(_require_rag_enabled)])
 async def update_rag_settings(req: RagSettingsUpdateRequest):
+    """embedding provider가 실제로 바뀌는 요청이면, override를 먼저 커밋하지 않고 **그
+    provider로 재색인이 성공한 뒤에만** 커밋한다(Codex 재리뷰로 발견, 2026-07-31 —
+    예전엔 저장 즉시 조회에 반영돼서, 색인이 없거나 오래된 provider로 바로 전환되는
+    문제가 있었음). 재색인이 실패하면 override는 그대로 유지되고 에러만 반환 — "전환은
+    했는데 검색은 깨진" 중간 상태가 안 생긴다."""
+    target = req.embedding_provider
+    if target is not None and target not in settings.rag_configured_providers:
+        raise HTTPException(400, f"embedding_provider는 {settings.rag_configured_providers} 중 하나이거나 null이어야 합니다")
+
+    global _reindex_in_progress
+    target_resolved = target or default_embedding_provider()
+    if target_resolved != resolve_rag_embedding_provider():
+        if _reindex_in_progress:
+            raise HTTPException(409, "재색인이 이미 진행 중입니다. 잠시 후 다시 시도하세요.")
+        _reindex_in_progress = True
+        await _run_reindex_or_503(target_resolved)
+
     try:
-        set_rag_embedding_provider_override(req.embedding_provider)
+        set_rag_embedding_provider_override(target)
     except ValueError as e:
         raise HTTPException(400, str(e))
     return {
@@ -202,25 +220,28 @@ async def gap_check(req: GapCheckRequest):
 
 _reindex_pending = False  # 재색인 도중 새 CRUD 이벤트가 들어오면 이 플래그만 세우고, 현재
 # 실행이 끝난 뒤 한 번 더 돈다 — 그냥 무시하면 그 이벤트가 스캔에 안 잡힌 채 다음 트리거가
-# 올 때까지 색인이 안 될 수 있다(4번 "동시 재색인 경쟁조건", Codex 제안 반영). provider가
-# 여러 개(google+local)일 때는 이 플래그가 재실행 시 provider 범위를 잃는 버그가 있었다
-# (Codex 리뷰로 발견, 2026-07-31) — 활성 embedding provider를 하나로 통일(4번 재검토)하면서
-# 매 반복마다 resolve_rag_embedding_provider()를 새로 불러 해결. 리스트/집합을 들고 있을
-# 필요 자체가 없어짐 — provider가 하나뿐이라 "범위"라는 개념이 성립하지 않는다.
+# 올 때까지 색인이 안 될 수 있다(4번 "동시 재색인 경쟁조건", Codex 제안 반영). 지금은 항상
+# 호출부가 한 번 결정한 provider 하나로만 재실행된다(아래 참고) — provider가 여러 개일 때
+# 있었던 "범위 유실" 버그(2026-07-31 발견·해결)는 provider를 하나로 통일하면서 해소됨.
 
 
-def _run_reindex_sync() -> None:
+def _run_reindex_sync(provider: str) -> None:
     # 실제 작업+플래그 해제를 전부 워커 스레드 안에서 끝낸다 — 예전엔 reindex() coroutine의
     # finally에서 플래그를 풀었는데, 클라이언트 연결 끊김 등으로 그 coroutine이 cancel되면
     # asyncio.to_thread()로 넘어간 스레드는 안 멈추는데 플래그만 먼저 풀려서 새 요청이 겹쳐
     # 실행될 수 있었다(Codex 리뷰로 발견, 2026-07-29). 플래그 수명을 실제 동기 작업 전체와
     # 묶어야 cancel에도 안전하다.
+    #
+    # provider는 호출부가 시작 시점에 한 번 결정해서 넘긴다(재실행 때마다 다시 resolve하지
+    # 않음) — 재색인 도중 설정이 바뀌는 경우는 이제 이 함수가 신경 쓸 일이 아니다. 설정
+    # 변경(`update_rag_settings()`) 자체가 "새 provider로 먼저 재색인 → 성공해야 override
+    # 커밋"이라는 자기 완결적 흐름이라, 이 함수가 도는 도중에 활성 provider가 바뀌는 일 자체가
+    # 없다(Codex 재리뷰로 발견, 2026-07-31 — 응답 시점에 다시 resolve하면 실제로 처리 안 한
+    # provider를 성공값으로 반환할 수 있는 race가 있었음).
     global _reindex_in_progress, _reindex_pending
     try:
         while True:
-            # 매 반복 시작 시 새로 resolve — 재색인 도중 설정 화면에서 embedding provider를
-            # 바꾸면 pending 재실행은 바뀐 provider를 따라간다(이전 값에 고정 안 됨).
-            rag_reindex.run(resolve_rag_embedding_provider(), settings.rag_include_profile)
+            rag_reindex.run(provider, settings.rag_include_profile)
             if not _reindex_pending:
                 break
             # pending 상태에서 재실행 — diff 기반이라 이미 반영된 변경은 다시 스캔해도 비용이
@@ -229,6 +250,22 @@ def _run_reindex_sync() -> None:
     finally:
         _reindex_in_progress = False
         _reindex_pending = False
+
+
+async def _run_reindex_or_503(provider: str) -> None:
+    """`_run_reindex_sync`를 스레드로 돌리고, 실패를 일관된 HTTPException으로 변환한다.
+    `/reindex`와 `update_rag_settings()`(provider 전환 시 선행 재색인) 둘 다 같은 처리가
+    필요해서 공유한다."""
+    try:
+        await asyncio.to_thread(_run_reindex_sync, provider)
+    except RuntimeError as e:
+        raise HTTPException(503, f"RAG 파이프라인 연결/설정 오류: {e}")
+    except httpx.HTTPError as e:
+        raise HTTPException(503, f"임베딩 서버 통신 오류: {e}")
+    except genai_errors.APIError as e:
+        raise HTTPException(503, f"Google 임베딩 API 오류: {e}")
+    except psycopg.OperationalError as e:
+        raise HTTPException(503, "DB 연결 오류 — 잠시 후 다시 시도하세요")
 
 
 def trigger_reindex_background() -> bool:
@@ -244,7 +281,7 @@ def trigger_reindex_background() -> bool:
         _reindex_pending = True
         return False
     _reindex_in_progress = True
-    asyncio.create_task(asyncio.to_thread(_run_reindex_sync))
+    asyncio.create_task(asyncio.to_thread(_run_reindex_sync, resolve_rag_embedding_provider()))
     return True
 
 
@@ -264,17 +301,9 @@ async def reindex():
     if _reindex_in_progress:
         raise HTTPException(409, "재색인이 이미 진행 중입니다. 잠시 후 다시 시도하세요.")
     _reindex_in_progress = True
-    try:
-        await asyncio.to_thread(_run_reindex_sync)
-        return {"status": "ok", "provider": resolve_rag_embedding_provider()}
-    except RuntimeError as e:
-        raise HTTPException(503, f"RAG 파이프라인 연결/설정 오류: {e}")
-    except httpx.HTTPError as e:
-        raise HTTPException(503, f"임베딩 서버 통신 오류: {e}")
-    except genai_errors.APIError as e:
-        raise HTTPException(503, f"Google 임베딩 API 오류: {e}")
-    except psycopg.OperationalError as e:
-        raise HTTPException(503, "DB 연결 오류 — 잠시 후 다시 시도하세요")
+    provider = resolve_rag_embedding_provider()  # 시작 시점에 한 번만 확정 — 응답도 이 값을 그대로 씀
+    await _run_reindex_or_503(provider)
+    return {"status": "ok", "provider": provider}
 
 
 @router.post("/ask", dependencies=[Depends(_require_rag_enabled)])
