@@ -100,8 +100,10 @@ async def market_demand_hybrid(
     모아 LLM이 실제로 관련 있는지 개별 판정한 결과를 센다.
 
     `llm`을 지정하면 그 provider/model로 판정한다(Agent 도구 실행부가 씀 — Agent는 임베딩만
-    빼고 판정 LLM도 항상 Claude로 지정한다, 메인 앱 provider 설정과 무관). 지정하지 않으면
-    기존처럼 메인 앱 설정(`capture_snapshot()`)을 따른다(`/api/rag/gap-check` 등 기존 호출부)."""
+    빼고 오케스트레이션·도구 내부 판정 둘 다 `llm.router.high_provider()`, 즉 메인 앱의 현재
+    provider 설정을 그대로 따른다, `rag/postgres/agent.py` 모듈 docstring 참고). 지정하지
+    않으면 기존처럼 메인 앱 설정(`capture_snapshot()`)을 따른다(`/api/rag/gap-check` 등 기존
+    호출부)."""
     skill = normalize_skill(skill)
     if skill in TRACKED_SKILLS:
         return market_demand(conn, skill)

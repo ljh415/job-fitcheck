@@ -1,19 +1,23 @@
-"""RAG 서브프로젝트(rag/main 전용) 테스트 화면용 API.
+"""RAG(대화형 근거 기반 검색) — main SPA `/rag` 뷰가 쓰는 API.
 
-Plan B 6단계(`rag/postgres/gap.py`, `rag/postgres/answer.py`)를 그대로 호출한다 — 이 라우터는
-얇은 wrapper일 뿐, 로직은 전부 rag/ 안에 있다. provider(google/local)를 요청마다 선택할 수
-있게 해서, "provider 하나로 고정하지 않고 비교한다"는 Plan A 설계 원칙을 UI에서도 유지한다.
-저장소는 PostgreSQL+pgvector 전용(SQLite `rag/gap.py`는 Plan A 기준선 재현용으로만 남아있고
-이 서비스 경로에선 더 이상 안 씀 — Stage 6에서 전환).
+원래 `rag/main` 브랜치의 독립 테스트 화면(`rag-test.html`)용이었으나, main 반영
+(`feat/rag-integration-plan`) 작업으로 main SPA(`frontend/index.html`의 `tpl-rag`)에
+정식 통합됐다 — `rag-test.html`은 이제 안 씀. `rag/postgres/gap.py`·`answer.py`·`agent.py`를
+그대로 호출하는 얇은 wrapper이고, 로직은 전부 `rag/` 안에 있다. 저장소는 PostgreSQL+pgvector
+전용(SQLite `rag/gap.py`는 Plan A 기준선 재현용으로만 남아있고 이 서비스 경로에선 더 이상
+안 씀 — Stage 6에서 전환).
 
 RAG는 opt-in 기능이다 — `settings.rag_postgres_host`가 비어 있으면 `/status` 외 나머지
 엔드포인트는 503을 반환한다(main 이식 시 opt-in 설계, `docs/rag-integration/STATUS.md` 2번
 참고). 라우터 자체는 항상 등록한다 — import 시점에 DB 연결을 시도하지 않으므로 등록 자체는
 안전하고, `/status`가 항상 응답 가능해야 프론트가 신뢰성 있게 활성화 여부를 조회할 수 있다.
 
-임베딩 provider(google/local) 선택은 어디서나 `settings.rag_configured_providers`(3번
-항목) 기준으로 검증한다 — Local은 GPU 인프라를 직접 구성한 배포에서만 켜지므로, 대부분의
-배포에서는 이 목록이 `["google"]`뿐이다.
+임베딩 provider는 요청마다 고르지 않는다 — `resolve_rag_embedding_provider()`(`config.py`)가
+메인 앱의 현재 LLM provider(Claude/OpenAI/Gemini)에서 자동 매핑하고(OpenAI는 임베딩 provider
+미구현이라 google로 폴백), 필요하면 `/api/rag/settings`로 override해 `runtime_settings.json`에
+영속화한다. `settings.rag_configured_providers`는 override 값이 유효한지 검사하는 용도로만
+쓰인다 — Local은 GPU 인프라를 직접 구성한 배포에서만 켜지므로, 대부분의 배포에서는 이 목록이
+`["google"]`뿐이다.
 """
 import asyncio
 import threading
