@@ -11,6 +11,14 @@ prompt"). API가 이 파라미터를 조용히 무시해서 에러 없이 성공
 
 배치 크기 20은 429(RESOURCE_EXHAUSTED)가 실측됐다 — 10개+배치 간 딜레이,
 429 발생 시 20초 대기 후 최대 3회 재시도로 안전하게 처리한다.
+
+`_embed_with_retry()`에 문자열 리스트를 그냥 넘기면 안 된다 — `google-genai` SDK가
+`gemini-embedding-2` 모델에 한해 `contents=list[str]`을 "개별 콘텐츠 N개"가 아니라
+"파트 N개짜리 콘텐츠 1개"로 묶어버려서, 몇 개를 보내든 벡터가 항상 1개만 돌아온다(Google
+공식 문서가 이를 "Embedding aggregation"으로 명시하는 의도된 SDK 동작 — 이 프로젝트가
+`google-genai` 1.2.0→2.15.0으로 올리며 이 직렬화 규칙이 바뀐 것으로 확인됨, 사용자 질문
++ Codex 리뷰 교차검증으로 발견, 2026-08-02). 각 문자열을 `types.Content`로 명시적으로
+감싸야 입력 개수만큼 벡터가 반환된다.
 """
 import time
 
@@ -52,13 +60,19 @@ class GoogleEmbeddingProvider(EmbeddingProvider):
         return self._embed_with_retry([prefixed])[0].values
 
     def _embed_with_retry(self, texts: list[str]):
+        contents = [types.Content(parts=[types.Part.from_text(text=t)]) for t in texts]
         for attempt in range(1, self.MAX_RETRIES + 1):
             try:
                 res = self._client.models.embed_content(
                     model=self.model,
-                    contents=texts,
+                    contents=contents,
                     config=types.EmbedContentConfig(output_dimensionality=self.dimensions),
                 )
+                if len(res.embeddings) != len(texts):
+                    raise RuntimeError(
+                        f"embed_content가 입력 {len(texts)}개에 벡터 {len(res.embeddings)}개만 반환함"
+                        " — SDK의 contents 정규화 동작이 다시 바뀌었을 수 있다"
+                    )
                 return res.embeddings
             except errors.ClientError as e:
                 if getattr(e, "code", None) == 429 and attempt < self.MAX_RETRIES:
