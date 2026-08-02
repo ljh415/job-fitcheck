@@ -252,15 +252,22 @@ def _run_reindex_sync(provider: str) -> None:
         while True:
             rag_reindex.run(provider, settings.rag_include_profile)
             with _reindex_lock:
-                if not _reindex_pending:
-                    break
-                # pending 상태에서 재실행 — diff 기반이라 이미 반영된 변경은 다시 스캔해도
-                # 비용이 거의 없다(변경 0건 감지, 2026-07-30 실측 확인).
-                _reindex_pending = False
-    finally:
+                if _reindex_pending:
+                    # pending 상태에서 재실행 — diff 기반이라 이미 반영된 변경은 다시
+                    # 스캔해도 비용이 거의 없다(변경 0건 감지, 2026-07-30 실측 확인).
+                    _reindex_pending = False
+                    continue
+                # "pending 없음" 확인과 in_progress 해제를 같은 임계 구역 안에서 끝낸다 —
+                # 둘을 분리하면(예전엔 여기서 break 후 finally가 따로 락을 다시 잡았음)
+                # 그 사이 틈에 CRUD 훅이 pending=True를 세워도 곧장 덮어써 사라졌다
+                # (Codex 3차 리뷰로 발견, 2026-08-02).
+                _reindex_in_progress = False
+                return
+    except Exception:
         with _reindex_lock:
             _reindex_in_progress = False
             _reindex_pending = False
+        raise
 
 
 async def _run_reindex_or_503(provider: str) -> None:
