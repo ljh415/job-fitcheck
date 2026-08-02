@@ -151,37 +151,61 @@ class AskRequest(BaseModel):
 @router.post("/gap-check", dependencies=[Depends(_require_rag_enabled), Depends(_require_profile_enabled)])
 async def gap_check(req: GapCheckRequest):
     provider = resolve_rag_embedding_provider()
-    conn = None
-    embed_provider = None
+
+    def _run_sync() -> dict:
+        # DB 연결·임베딩 API 호출이 전부 동기라, 이 함수 전체를 asyncio.to_thread로 워커
+        # 스레드에 넘긴다 — 안 그러면 uvicorn 단일 이벤트 루프가 그동안 통째로 막혀 로그인·
+        # 회사 조회 등 무관한 요청까지 같이 멈춘다(Codex 3차 리뷰로 발견, 2026-08-02, 최악
+        # 429 재시도 시 최대 40초). 내부의 진짜 비동기 LLM 호출(assess_gap/generate_action_plan)은
+        # 이 스레드 안에서만 도는 별도 이벤트 루프(asyncio.run)로 처리한다.
+        conn = None
+        embed_provider = None
+        try:
+            # conn 생성도 try 안에서 해야 DB 연결 실패가 503으로 잡힌다(Postgres용으로 포팅하며
+            # 이 자리에 다시 놓쳤던 실수 — 원래 embed_provider에 대해 이미 한 번 고친 패턴과
+            # 똑같은 이유, Codex 리뷰로 발견, 2026-07-23). provider 생성도 try 안에서 해야
+            # SSH 터널/모델 검증 실패(RuntimeError)가 503으로 잡힌다 — 예전엔 try 밖에 있어서
+            # 이 실패가 그대로 500으로 샜다(Codex 리뷰로 발견, 2026-07-23). conn/embed_provider를
+            # 미리 None으로 둬서 생성 자체가 실패해도 finally가 안전하게 아무 일도 안 하도록 한다.
+            conn = get_connection()
+            embed_provider = GoogleEmbeddingProvider() if provider == "google" else LocalEmbeddingProvider()
+            # 판정 LLM provider/model/reasoning_effort를 요청 시작 시 한 번만 캡처해 끝까지 그대로
+            # 쓴다 — 안 그러면 assess_gap() 내부 시장수요 판정·근거 판정·행동계획 생성이 각각 따로
+            # capture_snapshot()을 불러서, 요청 처리 도중 설정 화면에서 provider를 바꾸면 한 요청
+            # 안에서 provider가 섞일 수 있다(Codex 리뷰 2026-07-29 지적, llm/router.py의
+            # LLMSnapshot 설계 의도와도 일치).
+            snap = capture_snapshot()
+            llm = (*high_from_snapshot(snap), snap.reasoning_effort)
+
+            async def _business():
+                gap_result = await assess_gap(conn, req.skill, embed_provider, llm=llm)
+                action_plan = None
+                if gap_result["evidence_level"] != "직접 근거":
+                    action_plan = await generate_action_plan(gap_result, llm=llm)
+                return gap_result, action_plan
+
+            gap_result, action_plan = asyncio.run(_business())
+            return {
+                "skill": gap_result["skill"],
+                "evidence_level": gap_result["evidence_level"],
+                "reasoning": gap_result["reasoning"],
+                "market_demand": gap_result["market_demand"],
+                "excerpts": gap_result["excerpts"],
+                "action_plan": action_plan,
+                "provider": provider,
+            }
+        finally:
+            close = getattr(embed_provider, "close", None)
+            if close:
+                try:
+                    close()
+                except Exception:
+                    pass
+            if conn is not None:
+                conn.close()
+
     try:
-        # conn 생성도 try 안에서 해야 DB 연결 실패가 503으로 잡힌다(Postgres용으로 포팅하며
-        # 이 자리에 다시 놓쳤던 실수 — 원래 embed_provider에 대해 이미 한 번 고친 패턴과
-        # 똑같은 이유, Codex 리뷰로 발견, 2026-07-23). provider 생성도 try 안에서 해야
-        # SSH 터널/모델 검증 실패(RuntimeError)가 503으로 잡힌다 — 예전엔 try 밖에 있어서
-        # 이 실패가 그대로 500으로 샜다(Codex 리뷰로 발견, 2026-07-23). conn/embed_provider를
-        # 미리 None으로 둬서 생성 자체가 실패해도 finally가 안전하게 아무 일도 안 하도록 한다.
-        conn = get_connection()
-        embed_provider = GoogleEmbeddingProvider() if provider == "google" else LocalEmbeddingProvider()
-        # 판정 LLM provider/model/reasoning_effort를 요청 시작 시 한 번만 캡처해 끝까지 그대로
-        # 쓴다 — 안 그러면 assess_gap() 내부 시장수요 판정·근거 판정·행동계획 생성이 각각 따로
-        # capture_snapshot()을 불러서, 요청 처리 도중 설정 화면에서 provider를 바꾸면 한 요청
-        # 안에서 provider가 섞일 수 있다(Codex 리뷰 2026-07-29 지적, llm/router.py의
-        # LLMSnapshot 설계 의도와도 일치).
-        snap = capture_snapshot()
-        llm = (*high_from_snapshot(snap), snap.reasoning_effort)
-        gap_result = await assess_gap(conn, req.skill, embed_provider, llm=llm)
-        action_plan = None
-        if gap_result["evidence_level"] != "직접 근거":
-            action_plan = await generate_action_plan(gap_result, llm=llm)
-        return {
-            "skill": gap_result["skill"],
-            "evidence_level": gap_result["evidence_level"],
-            "reasoning": gap_result["reasoning"],
-            "market_demand": gap_result["market_demand"],
-            "excerpts": gap_result["excerpts"],
-            "action_plan": action_plan,
-            "provider": provider,
-        }
+        return await asyncio.to_thread(_run_sync)
     except LLMAPIError as e:
         # assess_gap()/generate_action_plan()이 쓰는 LLM provider(Claude/OpenAI/Gemini 텍스트
         # 생성)의 인증 실패·rate limit·서버 오류는 LLMAPIError로 래핑되는데(routers/companies.py
@@ -213,18 +237,6 @@ async def gap_check(req: GapCheckRequest):
         # 둔갑해 500으로 표시돼야 할 게 503으로 가려질 수 있었다(Codex 3차 재리뷰로 발견,
         # 2026-07-24). 메시지도 호스트/스키마 같은 내부 정보를 그대로 노출하지 않도록 일반화한다.
         raise HTTPException(503, "DB 연결 오류 — 잠시 후 다시 시도하세요")
-    finally:
-        # 두 자원을 독립적으로 정리한다 — embed_provider.close()(SSH 터널 종료 대기라 실패할 수
-        # 있음)가 예외를 던지면 그다음 줄(conn.close())이 실행되지 않고 원래 예외까지 가려질 수
-        # 있었다(Codex 재리뷰로 발견, 2026-07-23).
-        close = getattr(embed_provider, "close", None)
-        if close:
-            try:
-                close()
-            except Exception:
-                pass
-        if conn is not None:
-            conn.close()  # 명시적으로 닫아야 함 — GC(__del__)에 의존하면 idle in transaction 커넥션이 쌓일 수 있다(Codex 리뷰로 발견, 2026-07-23)
 
 
 _reindex_pending = False  # 재색인 도중 새 CRUD 이벤트가 들어오면 이 플래그만 세우고, 현재
@@ -332,17 +344,33 @@ async def ask(req: AskRequest):
     "질문 분류→고정 함수 실행" 구조를 대체). 질문이 애매하거나 여러 능력을 조합해야 답할 수 있을 때
     완전히 무관한 답을 내놓는 구조적 결함이 실측으로 확인돼(`docs/rag-project-plans/00_meta/HISTORY.md`
     2026-07-28 항목), LLM이 도구를 스스로 골라 쓰며 답하는 구조로 전환. conn/embed_provider 생성·정리·
-    예외 처리는 gap_check()와 동일한 패턴(Codex 리뷰로 다듬어진 부분이라 그대로 유지)."""
+    예외 처리는 gap_check()와 동일한 패턴(Codex 리뷰로 다듬어진 부분이라 그대로 유지). DB
+    연결·임베딩 호출이 동기라 이벤트 루프를 막는 문제도 gap_check()와 같은 이유로 함수 전체를
+    asyncio.to_thread로 감싼다(Codex 3차 리뷰로 발견, 2026-08-02)."""
     provider = resolve_rag_embedding_provider()
-    conn = None
-    embed_provider = None
+
+    def _run_sync() -> dict:
+        conn = None
+        embed_provider = None
+        try:
+            conn = get_connection()
+            embed_provider = GoogleEmbeddingProvider() if provider == "google" else LocalEmbeddingProvider()
+            history = [m.model_dump() for m in req.history]
+            result = asyncio.run(answer_query_agent(conn, req.question, embed_provider, history=history))
+            result["provider"] = provider
+            return result
+        finally:
+            close = getattr(embed_provider, "close", None)
+            if close:
+                try:
+                    close()
+                except Exception:
+                    pass
+            if conn is not None:
+                conn.close()
+
     try:
-        conn = get_connection()
-        embed_provider = GoogleEmbeddingProvider() if provider == "google" else LocalEmbeddingProvider()
-        history = [m.model_dump() for m in req.history]
-        result = await answer_query_agent(conn, req.question, embed_provider, history=history)
-        result["provider"] = provider
-        return result
+        return await asyncio.to_thread(_run_sync)
     except LLMAPIError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e))
     except RuntimeError as e:
@@ -353,12 +381,3 @@ async def ask(req: AskRequest):
         raise HTTPException(503, f"Google 임베딩 API 오류: {e}")
     except psycopg.OperationalError as e:
         raise HTTPException(503, "DB 연결 오류 — 잠시 후 다시 시도하세요")
-    finally:
-        close = getattr(embed_provider, "close", None)
-        if close:
-            try:
-                close()
-            except Exception:
-                pass
-        if conn is not None:
-            conn.close()
