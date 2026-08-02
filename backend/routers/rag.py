@@ -16,6 +16,7 @@ RAG는 opt-in 기능이다 — `settings.rag_postgres_host`가 비어 있으면 
 배포에서는 이 목록이 `["google"]`뿐이다.
 """
 import asyncio
+import threading
 from typing import Literal
 
 import httpx
@@ -101,9 +102,10 @@ async def update_rag_settings(req: RagSettingsUpdateRequest):
     global _reindex_in_progress
     target_resolved = target or default_embedding_provider()
     if target_resolved != resolve_rag_embedding_provider():
-        if _reindex_in_progress:
-            raise HTTPException(409, "재색인이 이미 진행 중입니다. 잠시 후 다시 시도하세요.")
-        _reindex_in_progress = True
+        with _reindex_lock:
+            if _reindex_in_progress:
+                raise HTTPException(409, "재색인이 이미 진행 중입니다. 잠시 후 다시 시도하세요.")
+            _reindex_in_progress = True
         await _run_reindex_or_503(target_resolved)
 
     try:
@@ -120,6 +122,13 @@ _reindex_in_progress = False  # main.py가 uvicorn 단일 프로세스(workers �
 # 플래그로 충분하다 — chunk_embedding에 UNIQUE(chunk_id, provider, model, dimensions) 제약이
 # 있어서 재색인 두 개가 겹치면 두 번째가 UniqueViolation으로 500이 났다(Codex 리뷰로 발견,
 # 2026-07-29). 여러 worker/인스턴스로 확장하면 advisory lock으로 바꿔야 한다.
+_reindex_lock = threading.Lock()  # _reindex_in_progress/_reindex_pending은 이벤트 루프
+# 스레드(API 요청)와 워커 스레드(asyncio.to_thread로 도는 _run_reindex_sync) 양쪽에서
+# 건드린다 — "확인 후 결정"이 두 단계짜리라 잠금 없인 원자적이지 않다. 워커가 pending을
+# False로 확인하고 루프를 빠져나가는 그 순간과, CRUD 훅이 in_progress를 확인해 pending을
+# True로 세우는 순간이 겹치면 방금 세운 pending을 워커의 finally가 바로 덮어써서 CRUD의
+# "재색인 필요" 신호가 조용히 사라질 수 있었다(Codex 재리뷰로 발견, 2026-07-31/2026-08-02
+# 재검토 후 threading.Lock으로 해결 — 두 플래그를 건드리는 모든 지점을 이 잠금으로 감싼다).
 
 
 class GapCheckRequest(BaseModel):
@@ -242,14 +251,16 @@ def _run_reindex_sync(provider: str) -> None:
     try:
         while True:
             rag_reindex.run(provider, settings.rag_include_profile)
-            if not _reindex_pending:
-                break
-            # pending 상태에서 재실행 — diff 기반이라 이미 반영된 변경은 다시 스캔해도 비용이
-            # 거의 없다(변경 0건 감지, 2026-07-30 실측 확인).
-            _reindex_pending = False
+            with _reindex_lock:
+                if not _reindex_pending:
+                    break
+                # pending 상태에서 재실행 — diff 기반이라 이미 반영된 변경은 다시 스캔해도
+                # 비용이 거의 없다(변경 0건 감지, 2026-07-30 실측 확인).
+                _reindex_pending = False
     finally:
-        _reindex_in_progress = False
-        _reindex_pending = False
+        with _reindex_lock:
+            _reindex_in_progress = False
+            _reindex_pending = False
 
 
 async def _run_reindex_or_503(provider: str) -> None:
@@ -277,10 +288,11 @@ def trigger_reindex_background() -> bool:
     global _reindex_in_progress, _reindex_pending
     if not settings.rag_postgres_host:
         return False
-    if _reindex_in_progress:
-        _reindex_pending = True
-        return False
-    _reindex_in_progress = True
+    with _reindex_lock:
+        if _reindex_in_progress:
+            _reindex_pending = True
+            return False
+        _reindex_in_progress = True
     asyncio.create_task(asyncio.to_thread(_run_reindex_sync, resolve_rag_embedding_provider()))
     return True
 
@@ -298,9 +310,10 @@ async def reindex():
     진행 중이면(자동 트리거와 겹쳤을 수도 있음) 조용히 미루지 않고 409로 명확히 알린다 —
     사용자가 버튼을 눌렀는데 응답이 없으면 안 되므로."""
     global _reindex_in_progress
-    if _reindex_in_progress:
-        raise HTTPException(409, "재색인이 이미 진행 중입니다. 잠시 후 다시 시도하세요.")
-    _reindex_in_progress = True
+    with _reindex_lock:
+        if _reindex_in_progress:
+            raise HTTPException(409, "재색인이 이미 진행 중입니다. 잠시 후 다시 시도하세요.")
+        _reindex_in_progress = True
     provider = resolve_rag_embedding_provider()  # 시작 시점에 한 번만 확정 — 응답도 이 값을 그대로 씀
     await _run_reindex_or_503(provider)
     return {"status": "ok", "provider": provider}
