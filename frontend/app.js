@@ -128,6 +128,9 @@ window.addEventListener('popstate', (e) => {
   currentSlug = state.slug || null;
   if (Array.isArray(state.compareTargets)) compareTargets = state.compareTargets;
   selectedSlugs.clear();
+  // RAG가 비활성인데 히스토리에 남아있던 /rag 상태로 뒤로가기 하면 깨진 화면이 뜬다
+  // (코드리뷰 5번, 2026-08-02).
+  if (currentView === 'rag' && !ragEnabled) currentView = 'dashboard';
   render();
 });
 
@@ -2328,6 +2331,13 @@ window.addEventListener('DOMContentLoaded', async () => {
   // 값을 받아와도 nav 버튼 외엔 다시 안 그려서 그 상태로 굳어버린다(코드리뷰 6번, 2026-07-31
   // Playwright로 재현 확인). render() 전에 기다려서 애초에 잘못 그릴 일을 없앤다.
   await checkRagStatus();
+  // RAG가 비활성인 배포에서 토큰을 가진 사용자가 /rag를 직접 열면(새로고침·북마크 등) nav
+  // 버튼은 숨어도 뷰 자체는 그려져서, 뭘 눌러도 503만 나는 깨진 화면이 뜬다(코드리뷰 5번,
+  // 2026-08-02) — ragEnabled를 알고 난 뒤 대시보드로 돌려보낸다.
+  if (currentView === 'rag' && !ragEnabled) {
+    currentView = 'dashboard';
+    history.replaceState({ view: 'dashboard', slug: null, compareTargets: [] }, '', '/');
+  }
   render();
   startInProgressPolling();
 });
