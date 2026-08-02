@@ -12,7 +12,6 @@ import sqlite3
 from llm.router import capture_snapshot, high_from_snapshot
 from prompts import TRUST_BOUNDARY_NOTICE
 from rag.embed.base import EmbeddingProvider
-from rag.embed.local import LocalEmbeddingProvider
 from rag.retrieval import ensure_fts5, fts5_literal, search_chunks
 from rag.skills import TRACKED_SKILLS
 

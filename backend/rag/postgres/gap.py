@@ -3,6 +3,7 @@
 프롬프트 상수(`GAP_ASSESS_SYSTEM` 등)와 순수 함수(`_recognized_scope` — DB 안 건드림)는 새로
 만들지 않고 `rag.gap`에서 그대로 재사용한다. `conn`을 받는 함수만 Postgres 방언으로 새로 쓴다.
 """
+import asyncio
 import itertools
 
 import psycopg
