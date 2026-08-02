@@ -46,31 +46,16 @@ def run(provider_name: str, include_profile: bool, rebuild_schema_flag: bool = F
 
 
 def _run_with_conn(conn, provider_name: str, include_profile: bool) -> None:
+    # 예전엔(2026-07-23~) google/local을 동시에 유지하는 설계라 "지금 안 고른 provider도
+    # 챙겨야 한다"는 전제로 경고·자동 재임베딩 로직이 있었다. 활성 provider를 하나로 통일한
+    # 뒤(2026-07-31, 코드리뷰 4번)에도 이 로직이 안 지워져서, 사용자가 의도적으로 하나만
+    # 쓰기로 정했는데도 "다른 provider가 안 됐다"는 경고가 계속 뜨고, 프로필이 바뀌면 꺼둔
+    # provider로 API 호출까지 조용히 나가고 있었다(사용자 질문으로 발견, 2026-08-02) —
+    # 지금은 활성 provider 하나만 다루는 게 의도된 동작이라 이 로직 자체를 없앴다.
     n_pruned = prune_deleted_postings(conn)  # 원문이 삭제된 posting의 고아 청크/임베딩 정리
     if n_pruned:
         print(f"삭제된 공고 {n_pruned}건의 청크/임베딩 정리 완료")
     n_touched, n_chunks = populate_posting_chunks(conn)
-    # 청크가 바뀌면 그 청크의 모든 provider 임베딩이 삭제되는데(document_chunk가 새 id로
-    # 재생성되므로), 이 실행에서는 provider_name 하나만 다시 채운다 — 다른 provider는 이
-    # 공고들에 대해 비어있는 채로 남는다(Codex 리뷰로 발견, 2026-07-23). 처음엔 이 시점에
-    # DB에 남아있는 provider를 조회해서 경고했는데, 그 조회 자체가 이미 삭제·커밋된 뒤라
-    # "삭제된 posting이 유일한 출처였던 provider"는 조회 결과에 안 잡혀 경고가 누락될 수 있었다
-    # (Codex 재리뷰로 발견, 2026-07-23) — DB 상태를 보는 대신 PROVIDERS 레지스트리 자체와
-    # 비교하도록 고쳐서 이 조건을 없앴다.
-    other_providers = sorted(set(PROVIDERS) - {provider_name})
-
-    def _warn_other_providers_stale(n: int, what: str) -> None:
-        # "사라졌습니다"는 기존 공고가 바뀐 경우엔 맞지만, 최초 색인이나 신규 공고는 원래
-        # 없었던 것이므로 부정확한 표현이었다(Codex 3차 재리뷰로 발견, 2026-07-24) — 신규/변경
-        # 양쪽에 다 맞는 표현으로 수정.
-        if n and other_providers:
-            print(
-                f"주의: {what} {n}건의 청크에 대해 {', '.join(other_providers)} 임베딩이"
-                f" 생성되지 않았습니다 — 검색 결과에서 빠지지 않으려면 해당 provider로도"
-                f" 재색인을 실행하세요."
-            )
-
-    _warn_other_providers_stale(n_touched, "내용이 바뀐 공고")
     provider = None
     try:
         # provider 생성도 try 안에서 해야 LocalEmbeddingProvider의 SSH 터널 실패 시에도
@@ -84,34 +69,9 @@ def _run_with_conn(conn, provider_name: str, include_profile: bool) -> None:
             f" 임베딩 완료: {n_embedded}개 (model={provider.model}, dim={provider.dimensions})"
         )
         if include_profile:
-            profile_changed, n_profile_chunks = populate_candidate_profile_chunks(conn)
+            _, n_profile_chunks = populate_candidate_profile_chunks(conn)
             n_profile_embedded = run_embedding_pipeline(conn, provider, source_type="candidate_profile")
             print(f"프로필 청크 {n_profile_chunks}개, 임베딩 완료: {n_profile_embedded}개")
-            # 프로필 청크가 바뀌면(document_chunk가 새 id로 재생성) 모든 provider의 기존 임베딩이
-            # 함께 삭제되는데, 예전엔 --provider로 지정한 것 하나만 다시 채우고 나머지는 경고만
-            # 남긴 뒤 방치됐다 — 경고가 CLI stdout 한 줄이라 놓치기 쉬웠고, 실제로 이 방식으로
-            # local provider 프로필 임베딩이 통째로 빠진 채 방치된 사고가 있었다(2026-07-28 발견).
-            # 이제 감지되면 나머지 provider도 바로 재임베딩을 시도한다 — 특정 provider 인프라가
-            # 그 순간 죽어있어도(예: 3050Ti 터널) 그것만 실패로 격리하고 나머지는 계속 진행한다.
-            if profile_changed and other_providers:
-                for other_name in other_providers:
-                    other_provider = None
-                    try:
-                        other_provider = PROVIDERS[other_name]()
-                        n = run_embedding_pipeline(conn, other_provider, source_type="candidate_profile")
-                        print(f"프로필 {other_name} 임베딩도 자동 재생성 완료: {n}개")
-                    except Exception as e:
-                        print(
-                            f"주의: 프로필 {other_name} 임베딩 자동 재생성 실패({e}) — 나중에"
-                            f" `--provider {other_name} --include-profile`로 직접 재색인하세요."
-                        )
-                    finally:
-                        close = getattr(other_provider, "close", None)
-                        if close:
-                            try:
-                                close()
-                            except Exception:
-                                pass
     finally:
         # conn은 여기서 안 닫는다 — 호출부인 run()의 finally가 담당(prune_deleted_postings()/
         # populate_posting_chunks() 실패 경로까지 한곳에서 책임지기 위해, 중복 close 방지).
