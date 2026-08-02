@@ -22,11 +22,12 @@ import sqlite3
 
 from llm.base import LLMProvider
 from llm.router import capture_snapshot, high_from_snapshot
+from prompts import TRUST_BOUNDARY_NOTICE
 from rag.embed.local import LocalEmbeddingProvider
 from rag.gap import assess_all_gaps, assess_gap
 from rag.ingest import DB_PATH
 
-ACTION_PLAN_SYSTEM = """당신은 후보자의 기술 gap을 보완할 구체적인 행동 계획을 세우는 커리어 코치입니다.
+ACTION_PLAN_SYSTEM = f"""당신은 후보자의 기술 gap을 보완할 구체적인 행동 계획을 세우는 커리어 코치입니다.
 
 아래 원칙을 반드시 지키세요:
 - "새 토이 프로젝트를 만들어라" 같은 막연한 제안을 하지 마세요. gap 유형에 맞게 학습, 기존 프로젝트
@@ -35,7 +36,8 @@ ACTION_PLAN_SYSTEM = """당신은 후보자의 기술 gap을 보완할 구체적
 - 이 활동을 완료했을 때 무엇을 "증거"로 남길 수 있는지 구체적으로 제시하세요(로그, 문서, 커밋,
   대시보드, 실패·복구 기록 등 — 자격증 공부나 강의 수료만으로는 실무 근거가 되지 않습니다).
 - 완료 조건을 모호하지 않게, 확인 가능한 형태로 제시하세요.
-- 후보자가 갖지 않은 성과나 경험을 만들어내지 마세요."""
+- 후보자가 갖지 않은 성과나 경험을 만들어내지 마세요.
+{TRUST_BOUNDARY_NOTICE}"""
 
 ACTION_PLAN_TOOL_NAME = "propose_action_plan"
 ACTION_PLAN_TOOL_DESCRIPTION = "기술 gap을 보완할 구체적인 행동 계획을 제출합니다."
@@ -144,14 +146,15 @@ def summarize_strengths(results: list[dict]) -> list[dict]:
     return [r for r in results if r["evidence_level"] in _HAS_EVIDENCE]
 
 
-SEQUENCE_PLAN_SYSTEM = """당신은 여러 기술 gap을 어떤 순서로, 어떤 완료 기준으로 보완할지 설계하는 커리어 코치입니다.
+SEQUENCE_PLAN_SYSTEM = f"""당신은 여러 기술 gap을 어떤 순서로, 어떤 완료 기준으로 보완할지 설계하는 커리어 코치입니다.
 
 아래 원칙을 반드시 지키세요:
 - 시장 수요가 높은 gap을 우선순위 앞쪽에 두되, 근거 수준(부분 근거/인접 경험/근거 없음)도 함께 고려하세요.
 - 모든 gap을 각각 별도 프로젝트로 벌이지 마세요. 서로 연관된 gap은 하나의 제한된 실습/운영 실험으로
   묶어서 동시에 해결할 수 있는지 검토하세요(예: 여러 클라우드/인프라 gap을 하나의 샌드박스 실습으로 연결).
 - 각 단계에 구체적인 활동과, 그 단계를 완료로 볼 수 있는 확인 가능한 기준을 제시하세요.
-- 전체 계획을 중단하거나 재검토해야 할 조건(예: 시간·리소스 초과, 실험 결과 부정적 등)도 명시하세요."""
+- 전체 계획을 중단하거나 재검토해야 할 조건(예: 시간·리소스 초과, 실험 결과 부정적 등)도 명시하세요.
+{TRUST_BOUNDARY_NOTICE}"""
 
 SEQUENCE_PLAN_TOOL_NAME = "propose_sequenced_plan"
 SEQUENCE_PLAN_TOOL_DESCRIPTION = "여러 기술 gap을 보완할 순서와 완료 기준을 제출합니다."
