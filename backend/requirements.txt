@@ -8,6 +8,13 @@ pdfplumber==0.11.4
 anthropic==0.40.0
 openai==1.54.0
 google-genai>=1.0.0
+# google-genai(→google-auth)가 끌어오는 간접 의존성. cryptography 49부터 macOS x86_64(Intel)
+# wheel 배포를 중단해서(arm64 전용), Intel Mac에서 uv/pip로 설치 시 Rust+Xcode Command Line
+# Tools가 있어야만 소스 빌드가 되는 문제가 있었다 — 48.x는 universal2 wheel(Intel+Apple
+# Silicon 겸용)이 있어 이 핀만으로 빌드 없이 설치된다. google-auth 2.56.2는 cryptography
+# >=38.0.3만 요구해 48.x로도 충분하다(최신 google-genai로 올려도 문제 없음, 우분투 uv로
+# 교차 플랫폼 리졸브까지 실측 확인).
+cryptography<49
 pydantic==2.9.2
 pydantic-settings==2.6.1
 python-multipart==0.0.12
