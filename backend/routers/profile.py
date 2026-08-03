@@ -14,6 +14,7 @@ from config import settings
 from llm.base import LLMAPIError
 from llm.router import capture_snapshot, high_from_snapshot
 from models import CandidateProfile, ProfileUpdateRequest
+from routers.rag import trigger_reindex_background
 from services.pdf_parser import PDFExtractError
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,9 @@ async def export_profile():
 async def update_profile(req: ProfileUpdateRequest):
     record = storage.write_profile(req.frontmatter, req.body)
     logger.info("프로필 수동 업데이트 완료")
+    # RAG_INCLUDE_PROFILE=true면 프로필도 임베딩 대상 — 훅이 없으면 gap 도구가 옛 프로필
+    # 임베딩을 계속 쓴다(Codex 4차 리뷰로 발견, 2026-08-03). RAG 꺼져 있으면 no-op.
+    trigger_reindex_background()
     return record
 
 
@@ -145,4 +149,5 @@ async def upload_profile(files: list[UploadFile] = File(...), extra_note: str = 
     fm = CandidateProfile(**result, source_files=filenames)
     record = storage.write_profile(fm, body)
     logger.info("프로필 저장 완료: %s", settings.candidate_profile_path)
+    trigger_reindex_background()
     return record

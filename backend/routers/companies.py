@@ -320,6 +320,10 @@ async def update_company(slug: str, req: CompanyUpdateRequest):
     fm.created_at = existing.frontmatter.created_at
     record = storage.write_company(slug, fm, req.body)
     logger.info("공고 수동 편집: %s", slug)
+    # 원문(.raw.txt)은 안 바뀌지만 RAG의 posting 테이블이 tech_stack/stability/employee_count
+    # 등 frontmatter 필드를 그대로 복제해 비교 도구에 노출한다 — 훅이 없으면 수동 재색인 전까지
+    # 옛 값이 계속 반환된다(Codex 4차 리뷰로 발견, 2026-08-03). RAG 꺼져 있으면 no-op.
+    trigger_reindex_background()
     return record
 
 
@@ -382,6 +386,7 @@ async def sync_wanted(slug: str, req: SyncWantedRequest = SyncWantedRequest()):
     record = storage.write_company(slug, fm, existing.body)
     updated_keys = [k for k, v in facts.items() if v is not None]
     logger.info("원티드 동기화: %s → 업데이트 필드: %s", slug, updated_keys)
+    trigger_reindex_background()  # RAG가 복제하는 stability/employee_count 등 갱신, RAG 꺼져 있으면 no-op
     return {"status": "ok", "updated": {k: v for k, v in facts.items() if v is not None}}
 
 
@@ -703,7 +708,15 @@ async def add_from_text(req: FromTextRequest):
         )
         body = f"# {req.company_name} — {req.job_title}\n\n## 지원 상태 로그\n- {date.today().isoformat()}: 등록"
         slug = storage.make_slug(req.company_name, req.job_title)
-        return storage.write_company(slug, fm, body)
+        # RAG는 .raw.txt만 원문으로 스캔한다 — 프론트가 실제로 쓰는 경로인데도 이 분기는
+        # write_raw_text()/trigger_reindex_background()가 빠져 있어 RAG에서 계속 안 보이고
+        # 있었다(add_manual()만 고쳐졌는데 프론트는 그 엔드포인트를 안 씀, Codex 4차 리뷰로
+        # 발견, 2026-08-03). body를 원문으로 저장한다 — 자유 텍스트 입력 자체가 없는
+        # 최소 등록이라 body가 가장 원문에 가깝다.
+        storage.write_raw_text(slug, body)
+        record = storage.write_company(slug, fm, body)
+        trigger_reindex_background()
+        return record
     try:
         return await asyncio.wait_for(
             _process_company(
@@ -917,4 +930,5 @@ async def refit_company(slug: str):
     body = _append_status_log(body, "적합도 재평가 완료")
 
     record = storage.write_company(slug, fm, body)
+    trigger_reindex_background()  # RAG가 복제하는 fit_score/strengths/gaps 갱신, RAG 꺼져 있으면 no-op
     return record
