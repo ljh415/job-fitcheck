@@ -106,10 +106,13 @@ async def market_demand_hybrid(
     호출부)."""
     skill = normalize_skill(skill)
     if skill in TRACKED_SKILLS:
-        return market_demand(conn, skill)
+        return await asyncio.to_thread(market_demand, conn, skill)
 
-    (total,) = conn.execute("SELECT count(*) FROM posting").fetchone()
-    candidates = _candidate_postings(conn, skill, embed_provider)
+    # 아래 두 호출은 DB 쿼리+임베딩 API를 쓰는 동기 함수라 to_thread로 감싼다 — 이벤트 루프를
+    # 막지 않기 위해서다(Codex 4차 리뷰로 발견, 2026-08-03). LLM 호출(아래 extract_structured)은
+    # 원래 진짜 비동기라 그대로 둔다.
+    (total,) = await asyncio.to_thread(lambda: conn.execute("SELECT count(*) FROM posting").fetchone())
+    candidates = await asyncio.to_thread(_candidate_postings, conn, skill, embed_provider)
     if not candidates:
         return {"matched": 0, "total": total, "ratio": 0.0, "method": "estimated", "candidate_count": 0}
 
@@ -162,7 +165,7 @@ async def assess_gap(
     llm: tuple[LLMProvider, str, str | None] | None = None,
 ) -> dict:
     skill = normalize_skill(skill)
-    if not _has_profile_embeddings(conn, embed_provider):
+    if not await asyncio.to_thread(_has_profile_embeddings, conn, embed_provider):
         raise RuntimeError(
             f"이 provider({embed_provider.provider_name}/{embed_provider.model})로 후보자 프로필이"
             " 아직 임베딩되지 않았습니다. `rag.postgres.reindex --include-profile`로 먼저 임베딩하세요."
@@ -170,8 +173,11 @@ async def assess_gap(
 
     demand = await market_demand_hybrid(conn, skill, embed_provider, llm=llm)
 
-    evidence_chunks = search_chunks(
-        conn, embed_provider, f"{skill} 관련 실무 경험", source_type="candidate_profile", top_k=PROFILE_TOP_K
+    # search_chunks()는 embed_provider.embed_query()(임베딩 API 호출) + conn.execute()를 쓰는
+    # 동기 함수라 to_thread로 감싼다(Codex 4차 리뷰로 발견, 2026-08-03).
+    evidence_chunks = await asyncio.to_thread(
+        search_chunks, conn, embed_provider, f"{skill} 관련 실무 경험",
+        source_type="candidate_profile", top_k=PROFILE_TOP_K,
     )
     excerpts = [text for _score, _chunk_id, text in evidence_chunks]
 

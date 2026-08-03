@@ -7,6 +7,8 @@ Codex 리뷰로 참조 없음 재확인). 미래에 다시 쓸 계획도 없어 
 
 경위·설계 결정 상세는 `docs/rag-project-plans/conversational-rag/00_design.md` Phase 1 참고.
 """
+import asyncio
+
 import psycopg
 
 from llm.base import LLMProvider
@@ -115,7 +117,8 @@ async def _judge_topic_postings_llm(
         query += " AND po.job_title ILIKE %s"
         params.append(f"%{job_role}%")
     query += " ORDER BY po.id, dc.chunk_index"
-    rows = conn.execute(query, params).fetchall()
+    # 동기 DB 쿼리라 to_thread로 감싼다(Codex 4차 리뷰로 발견, 2026-08-03).
+    rows = await asyncio.to_thread(lambda: conn.execute(query, params).fetchall())
     postings: dict[int, dict] = {}
     order: list[int] = []
     for pid, slug, company, job_title, text in rows:

@@ -18,6 +18,7 @@ Agent도 같은 원칙을 따라야 필수 키(Gemini)만 있는 사용자도 �
 현재 설정을 따르는) **같은 provider/model 인스턴스 하나**를 공유한다 — 두 곳에 각각 provider를
 따로 하드코딩하면 구조적으로 어긋날 위험이 있어서다(2026-07-29 발견·수정 이후 유지).
 """
+import asyncio
 import json
 import logging
 import uuid
@@ -193,10 +194,14 @@ def _make_tool_executor(
                 # 필터 없이 이 도구를 부르면 judge_topic_postings(topic="")로 떨어져 빈 주제로
                 # LLM 판정을 도는 낭비 호출이 될 수 있다 — 신뢰 경계 입력 검증(2026-07-29 발견).
                 return {"error": "topic 또는 job_role 중 최소 하나는 필요합니다."}
+            # list_postings()는 동기 DB 쿼리라 to_thread로 감싼다(Codex 4차 리뷰로 발견,
+            # 2026-08-03 — 안 그러면 Agent가 이 도구를 쓸 때마다 이벤트 루프가 막힌다).
             if topic in TRACKED_SKILLS:
-                return {"postings": list_postings(conn, skill=topic, job_title=job_role)}
+                postings = await asyncio.to_thread(list_postings, conn, skill=topic, job_title=job_role)
+                return {"postings": postings}
             if job_role and not topic:
-                return {"postings": list_postings(conn, job_title=job_role)}
+                postings = await asyncio.to_thread(list_postings, conn, job_title=job_role)
+                return {"postings": postings}
             return {
                 "postings": await judge_topic_postings(
                     conn, topic, embed_provider, method="llm", job_role=job_role, llm=claude_llm
@@ -204,7 +209,8 @@ def _make_tool_executor(
             }
 
         if name == "compare_companies":
-            return {"comparison": compare_postings(conn, args["company_names"])}
+            comparison = await asyncio.to_thread(compare_postings, conn, args["company_names"])
+            return {"comparison": comparison}
 
         if name == "generate_action_plan_for_skill":
             gap_result = await get_skill_gap(args["skill"])
