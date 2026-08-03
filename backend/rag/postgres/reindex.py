@@ -55,11 +55,13 @@ def _run_with_conn(conn, provider_name: str, include_profile: bool) -> None:
     n_pruned = prune_deleted_postings(conn)  # 원문이 삭제된 posting의 고아 청크/임베딩 정리
     if n_pruned:
         print(f"삭제된 공고 {n_pruned}건의 청크/임베딩 정리 완료")
-    # populate_posting_chunks()가 여기서부터 아직 commit 안 됨 — 청크 삭제+재생성과 뒤이은
-    # provider 임베딩(run_embedding_pipeline의 내부 commit)이 성공해야만 같이 확정된다.
-    # 임베딩이 실패하면 아래 except가 이 청크 삭제까지 롤백해서, 실패한 provider 전환이
-    # 이전 provider의 살아있던 임베딩을 지워놓기만 하고 못 채우는 일이 없게 한다(Codex 3차
-    # 리뷰 발견 3번, 2026-08-02).
+    # populate_posting_chunks()도, 뒤이은 run_embedding_pipeline()도 이제 commit을 안 한다 —
+    # 청크 삭제+재생성과 공고 임베딩, (옵션인) 프로필 청크+임베딩까지 전부 성공해야만 아래에서
+    # 한 번에 commit된다. 예전엔 run_embedding_pipeline()이 공고 단계 성공 시 자체적으로
+    # commit해서, 프로필 단계가 나중에 실패하면 공고 단계만 이미 확정된 채 남았다 — provider
+    # 전환 중 이전 provider 색인이 훼손되는 문제가 이 경로에서는 여전히 성립했다(Codex 4차
+    # 리뷰로 발견, 2026-08-03 — 3차 리뷰 때 chunks.py의 조기 commit만 지우고 이 부분을
+    # 놓쳤었다). 이제 실패하면 아래 except가 청크 삭제까지 전부 롤백한다.
     n_touched, n_chunks = populate_posting_chunks(conn)
     provider = None
     try:
@@ -77,6 +79,7 @@ def _run_with_conn(conn, provider_name: str, include_profile: bool) -> None:
             _, n_profile_chunks = populate_candidate_profile_chunks(conn)
             n_profile_embedded = run_embedding_pipeline(conn, provider, source_type="candidate_profile")
             print(f"프로필 청크 {n_profile_chunks}개, 임베딩 완료: {n_profile_embedded}개")
+        conn.commit()  # 공고+(옵션)프로필 전체 성공 후 여기서 딱 한 번만 확정
     except Exception:
         conn.rollback()
         raise

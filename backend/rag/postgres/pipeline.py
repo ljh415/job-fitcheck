@@ -50,5 +50,10 @@ def run_embedding_pipeline(conn: psycopg.Connection, provider: EmbeddingProvider
             " VALUES (%s,%s,%s,%s,%s,%s)",
             (chunk_id, provider.provider_name, provider.model, provider.dimensions, vector, text_hash),
         )
-    conn.commit()
+    # commit은 여기서 하지 않는다 — 유일한 호출부인 reindex.py의 _run_with_conn()이 공고
+    # 임베딩과 (옵션인) 프로필 임베딩을 전부 성공한 뒤 한 번만 commit한다. 여기서 조기
+    # commit하면 프로필 단계가 나중에 실패했을 때 이미 확정된 공고 임베딩까지 롤백해야
+    # 하는 상황을 못 만든다 — provider 전환 중 이전 provider 색인이 훼손되는 문제가
+    # 부분적으로만 해결된 채 남아있었다(Codex 4차 리뷰로 발견, 2026-08-03 — 3차 리뷰 때
+    # chunks.py의 조기 commit만 지우고 이 함수의 commit은 놓쳤었다).
     return len(rows)
