@@ -22,11 +22,12 @@ from rag.embed.base import EmbeddingProvider
 # SSH 터널이 포트 바인딩에 실패해 즉시 죽는다(Codex 리뷰로 발견, 2026-07-29 — 재색인 웹 트리거
 # 도입으로 동시 요청 가능성이 커지며 실제로 재현됨). 상시 공유 터널(gpu_infra_plan.md)로
 # 바꾸는 게 정석이지만, GPU 서버가 없는 대다수 사용자에겐 아예 안 쓰이는 경로라 지금은
-# non-blocking 락으로만 완화한다 — **blocking 락은 쓰지 않는다**: 이 provider는
-# `asyncio.to_thread` 없이 async 핸들러 안에서 직접 생성되므로(routers/rag.py), blocking
-# `acquire()`가 락을 못 얻고 대기하면 uvicorn 단일 이벤트 루프 전체가 멈춰서 로그인 등 무관한
-# 요청까지 다 같이 멎는다 — 실제로 이 방식으로 재현해서 서버 전체가 응답 불능이 된 걸 확인하고
-# (2026-07-29) 즉시 실패 방식으로 재설계함.
+# non-blocking 락으로만 완화한다 — **blocking 락은 쓰지 않는다**: 이 provider 생성은
+# `routers/rag.py`에서 `asyncio.to_thread`로 감싸져 있어(2026-08-03) blocking `acquire()`가
+# 대기해도 uvicorn 이벤트 루프 자체는 안 막힌다. 그래도 즉시 실패를 쓰는 이유는 고정 포트
+# 하나뿐이라 동시에 최대 하나의 인스턴스만 살 수 있는데, 첫 요청은 SSH 터널 연결+헬스체크로
+# 수십 초까지 걸릴 수 있어(`HEALTH_TIMEOUT_SECONDS`) 두 번째 요청을 그동안 무기한 대기시키기보다
+# 바로 실패시켜 사용자가 잠시 후 재시도하게 하는 게 나아서다(Codex 4차 세션 검증, 2026-08-07).
 _port_lock = threading.Lock()
 
 
@@ -46,8 +47,9 @@ class LocalEmbeddingProvider(EmbeddingProvider):
     def __init__(self) -> None:
         # 이 인스턴스가 close()될 때까지(터널이 살아있는 동안) 락을 계속 쥐고 있는다 — 생성
         # 시점에만 짧게 걸면 터널이 열려있는 동안 다른 인스턴스가 여전히 같은 포트로 충돌할 수
-        # 있어서다. blocking=False로 즉시 실패시킨다 — 기다리게 하면 이벤트 루프가 멎는다(위
-        # 모듈 docstring 참고). 아래 바깥쪽 except가 실패 경로 전부(터널 생성 자체 실패 포함)에서
+        # 있어서다. blocking=False로 즉시 실패시킨다 — 이유는 위 모듈 docstring 참고(고정 포트
+        # 하나뿐이라 두 번째 요청을 무기한 대기시키기보다 즉시 실패가 낫다). 아래 바깥쪽
+        # except가 실패 경로 전부(터널 생성 자체 실패 포함)에서
         # 락 leak을 막는 안전망이고, close()도 중복 호출에 안전하게 idempotent하다
         # (_wait_for_health()가 내부에서도 close()를 부른 뒤 그 예외가 여기 except로 다시
         # 잡히는 경로가 있어서).
