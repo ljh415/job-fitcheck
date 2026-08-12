@@ -74,17 +74,7 @@ DISCORD_WEBHOOK_URL=...  # 디스코드 Incoming Webhook URL
 
 ## RAG 채팅 (선택 기능)
 
-등록된 공고 전체를 근거로 자연어 질문에 답하는 채팅 기능입니다. PostgreSQL(+pgvector)이 추가로 필요해 기본은 꺼져 있고, 원하는 사람만 켜서 씁니다 — 안 켜면 지금처럼 마크다운 파일만으로 그대로 동작합니다.
-
-```bash
-# .env에 추가
-RAG_POSTGRES_HOST=rag-postgres
-
-# Postgres 컨테이너까지 함께 실행
-docker compose --profile rag up --build
-```
-
-임베딩은 `GOOGLE_API_KEY`(위에서 이미 설정한 키)를 그대로 재사용하므로 별도 키가 필요 없습니다. 켜져 있으면 상단 네비게이션에 **🤖 RAG** 버튼이 나타납니다. Docker 없이 `uv`로 직접 실행하는 경로는 Postgres를 별도로 준비해야 해서 지원하지 않습니다.
+등록된 공고 전체를 근거로 자연어 질문에 답하는 채팅 기능입니다. PostgreSQL(+pgvector)이 추가로 필요해 기본은 꺼져 있고, 원하는 사람만 켜서 씁니다 — 안 켜면 지금처럼 마크다운 파일만으로 그대로 동작합니다. 켜는 법·프로필 연동·provider 설정 등 자세한 내용은 **[RAG_GUIDE.md](RAG_GUIDE.md)** 참고.
 
 ## LLM 모델
 

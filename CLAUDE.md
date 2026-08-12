@@ -60,6 +60,7 @@ docker compose restart api     # ❌ 이미지가 캐시되어 변경사항 미�
 ## 아키텍처 결정
 
 - **DB 없음**: 회사 정보는 `data/companies/{slug}.md` 마크다운 파일로 저장. 검색·필터는 메모리 내 처리. 데이터가 수백 개 미만인 개인 사용 기준 충분.
+- **RAG(선택 기능)는 이 원칙의 예외가 아니라 opt-in 계층**: 핵심 데이터(회사 정보)는 여전히 마크다운 그대로 두고, `RAG_POSTGRES_HOST` 설정 시에만 PostgreSQL+pgvector가 추가로 붙어 자연어 채팅 검색을 제공한다. 미설정 배포는 Postgres 관련 코드가 아예 안 쓰인다(`routers/rag.py`가 `/status` 외 전부 503 가드). 사용자 가이드는 `RAG_GUIDE.md`, 코드 구조는 `backend/rag/README.md`, 개발 이력은 `docs/rag-integration/`(git 미추적) 참고.
 - **LLM 티어**: Lightweight = 구조화 추출·요약, High = 프로필 추출·적합도 평가·Q&A. 설정 화면에서 모델 수동 변경 가능.
   - Claude 기본: Light=haiku-4-5, High=sonnet-4-6
   - OpenAI 기본: Light=gpt-5-mini, High=gpt-5 (reasoning_effort=medium)
@@ -100,3 +101,5 @@ data/
 ```
 
 `data/` 디렉토리는 git 추적 대상에서 제외됩니다.
+
+RAG(선택 기능)가 켜져 있으면 `rag-postgres` 컨테이너(docker volume, `data/`와 별도)에 청크·임베딩이 저장된다 — `docker compose --profile rag up`으로만 뜬다.
