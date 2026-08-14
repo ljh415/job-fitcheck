@@ -21,7 +21,7 @@ python-multipart==0.0.12
 Pillow>=10.0.0
 PyJWT>=2.8.0
 
-# RAG(Agentic RAG) — PostgreSQL+pgvector 클라이언트. RAG는 opt-in 기능(DATABASE_URL 미설정 시
+# RAG(Agentic RAG) — PostgreSQL+pgvector 클라이언트. RAG는 opt-in 기능(RAG_POSTGRES_HOST 미설정 시
 # 비활성)이지만, 패키지 자체는 항상 설치한다.
 psycopg[binary]>=3.2.0
 pgvector>=0.3.0

@@ -21,11 +21,13 @@ docker compose --profile rag up --build
 
 임베딩은 `GOOGLE_API_KEY`(메인 앱에서 이미 설정한 키)를 그대로 재사용하므로 별도 키가 필요 없습니다. 켜져 있으면 상단 네비게이션에 **🤖 RAG** 버튼이 나타납니다.
 
+> **최초 실행 시 반드시 재색인을 한 번 해야 합니다** — 버튼이 보이는 것과 실제로 검색이 되는 것은 다릅니다. 새로 띄운 Postgres는 비어있는 상태라, 로그인 → 🤖 RAG → **"🔄 재색인"** 버튼을 눌러 완료될 때까지 기다린 뒤에 질문하세요(회사 등록 상황에 따라 몇 초~몇 분 걸릴 수 있습니다). 이 단계를 건너뛰면 질문에 오류가 납니다.
+
 > **Docker 없이 `uv`로 직접 실행하는 경로는 지원하지 않습니다** — Postgres를 별도로 준비해야 해서, `run/start-uv.command`/`.bat` 경로에서는 RAG 버튼이 계속 안 보입니다. RAG까지 쓰려면 Docker 방식으로 실행해주세요([GETTING_STARTED.md](GETTING_STARTED.md)의 "Docker로 실행하고 싶다면" 참고).
 
 ## 끄는 방법
 
-`.env`에서 `RAG_POSTGRES_HOST`를 지우거나 빈 값으로 두면 됩니다. RAG 버튼이 사라지고, 나머지 기능은 영향 없습니다. `docker compose up`(profile 없이)으로 다시 실행하면 `rag-postgres` 컨테이너 자체도 안 뜹니다.
+`.env`에서 `RAG_POSTGRES_HOST`를 지우거나 빈 값으로 두고 다시 실행하면 됩니다. RAG 버튼이 사라지고, 나머지 기능은 영향 없습니다. `docker compose up`(profile 없이)으로 **새로** 띄우면 `rag-postgres`는 안 뜨지만, **이미 떠 있던 `rag-postgres` 컨테이너는 profile을 뺀다고 자동으로 안 내려갑니다** — 완전히 끄려면 `docker compose --profile rag down`으로 명시적으로 내려야 합니다.
 
 ## 이력서(프로필) 내용도 근거로 쓰려면
 
@@ -35,7 +37,7 @@ docker compose --profile rag up --build
 RAG_INCLUDE_PROFILE=true
 ```
 
-이 값이 켜져 있으면 이력서 내용이 임베딩 API(Google)로 전송됩니다 — 기본값이 꺼져 있는 이유입니다. 켠 뒤에는 RAG 화면의 "🔄 재색인" 버튼을 한 번 눌러야 프로필이 실제로 반영됩니다.
+이 값이 켜져 있으면 이력서 내용이 현재 선택된 임베딩 provider(기본 Google, 아래 "사용하는 LLM provider" 참고)로 전송됩니다 — 기본값이 꺼져 있는 이유입니다. 켠 뒤에는 RAG 화면의 "🔄 재색인" 버튼을 한 번 눌러야 프로필이 실제로 반영됩니다. 꺼져 있으면 스킬 갭 분석 등 프로필 근거 기반 기능 UI 자체가 숨겨지고, API를 직접 호출해도 400으로 차단됩니다(공고 검색·시장수요 등 프로필과 무관한 기능은 영향 없음).
 
 ## 사용하는 LLM provider
 
