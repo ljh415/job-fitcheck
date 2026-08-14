@@ -57,6 +57,32 @@ class Settings(BaseSettings):
     # 데이터 루트 디렉토리 (Docker에서는 볼륨 마운트 경로)
     data_dir: Path = Path(__file__).parent.parent / "data"
 
+    # RAG(Agentic RAG) — 3050Ti 로컬 임베딩 추론 서버 SSH 접속 정보. 비어 있어도 무방
+    # (LocalEmbeddingProvider 사용 시에만 필요).
+    rag_local_ssh_host: str = ""
+    rag_local_ssh_port: int = 10222
+    rag_local_ssh_user: str = ""
+    rag_local_ssh_key_path: str = ""
+    rag_local_embed_port: int = 8500
+
+    # RAG(Agentic RAG) — PostgreSQL+pgvector 접속 정보. RAG는 opt-in 기능이라 host가 비어
+    # 있으면 비활성으로 간주한다(2번 "DB 없음 원칙" 항목 참고) — rag/main의 기본값
+    # ("rag-postgres")과 달리 main에서는 빈 문자열이 기본값이다.
+    rag_postgres_host: str = ""
+    rag_postgres_port: int = 5432
+    rag_postgres_db: str = "rag"
+    rag_postgres_user: str = "rag"
+    # docker-compose.yml의 POSTGRES_PASSWORD 기본값(${RAG_POSTGRES_PASSWORD:-rag})과
+    # 반드시 일치시킨다 — 어긋나면 .env를 안 채운 상태에서 인증 실패가 난다(Codex 리뷰로
+    # 발견, 2026-07-31).
+    rag_postgres_password: str = "rag"
+
+    # 후보자 프로필(이력서 내용)을 임베딩 API로 전송할지 여부. 기본값 false(전송 안 함) —
+    # 켜면 이력서 텍스트가 임베딩 provider(Google 등)로 나간다는 걸 사용자가 명시적으로
+    # 선택해야 한다. 꺼져 있으면 Agent의 프로필 근거 기반 기능(스킬 갭 분석 등)은 근거를
+    # 못 찾아 "근거 없음"만 반환한다 — 검색/시장수요 같은 공고 기반 기능은 영향 없음.
+    rag_include_profile: bool = False
+
     @property
     def companies_dir(self) -> Path:
         return self.data_dir / "companies"
@@ -68,6 +94,14 @@ class Settings(BaseSettings):
     @property
     def candidate_profile_path(self) -> Path:
         return self.data_dir / "candidate_profile.md"
+
+    @property
+    def rag_configured_providers(self) -> list[str]:
+        """이 배포에서 실제로 사용 가능한 임베딩 provider 목록. Google은 main의 필수 키를
+        재사용하므로 항상 포함, Local은 rag_local_ssh_host가 설정된 경우에만 포함(GPU 인프라를
+        직접 구성한 사용자만 해당). 재색인 훅·웹 트리거·CLI·provider 검증이 이 property 하나를
+        공유 참조한다 — 감지 조건이 늘어나도 여기 한 곳만 고치면 된다."""
+        return ["google"] + (["local"] if self.rag_local_ssh_host else [])
 
 
 settings = Settings()
@@ -101,6 +135,45 @@ def set_model_override(key: str, model: str) -> None:
 
 def get_reasoning_effort() -> str:
     return _runtime_models.get("openai_reasoning_effort") or settings.openai_reasoning_effort
+
+
+# RAG 임베딩 provider — 쿼리마다 고르던 드롭다운을 없애고 설정값 하나로 통일(2026-07-31).
+# None(기본)이면 메인 LLM provider를 따라간다: gemini→google, claude/openai→google
+# (Claude는 임베딩 API 자체가 없고, OpenAI 임베딩 provider는 아직 미구현 — rag/embed/openai.py
+# 추가 전까지는 둘 다 google로 폴백). 명시적으로 값을 설정하면 그 값이 항상 우선한다.
+_MAIN_PROVIDER_TO_EMBEDDING = {"gemini": "google"}  # 매핑 없는 provider(claude/openai)는 google 폴백
+_runtime_rag_embedding_provider: str | None = None
+
+
+def get_rag_embedding_provider_override() -> str | None:
+    return _runtime_rag_embedding_provider
+
+
+def set_rag_embedding_provider_override(provider: str | None) -> None:
+    global _runtime_rag_embedding_provider
+    if provider is not None and provider not in settings.rag_configured_providers:
+        raise ValueError(f"Unknown RAG embedding provider: {provider}")
+    _runtime_rag_embedding_provider = provider
+    _save_runtime_state()
+
+
+def default_embedding_provider() -> str:
+    """override가 없을 때 메인 LLM provider로부터 자동 매핑한 임베딩 provider. 설정 변경
+    시 "바뀌는 대상이 뭔지" 미리 계산해야 하는 routers/rag.py도 이 함수를 그대로 쓴다."""
+    return _MAIN_PROVIDER_TO_EMBEDDING.get(get_active_provider(), "google")
+
+
+def resolve_rag_embedding_provider() -> str:
+    global _runtime_rag_embedding_provider
+    if _runtime_rag_embedding_provider:
+        if _runtime_rag_embedding_provider in settings.rag_configured_providers:
+            return _runtime_rag_embedding_provider
+        # 저장된 override가 더 이상 유효하지 않음(예: 이후 배포에서 RAG_LOCAL_SSH_HOST 제거) —
+        # 계속 이 값을 신뢰하면 매 요청이 존재하지 않는 provider로 실패한다. 자동으로 되돌리고
+        # 되돌린 상태를 영속화해 설정 화면에도 반영한다.
+        _runtime_rag_embedding_provider = None
+        _save_runtime_state()
+    return default_embedding_provider()
 
 
 # 분석 완료 알림 메시지에 포함할 항목 토글
@@ -146,6 +219,7 @@ _RUNTIME_SETTINGS_FILE = settings.data_dir / "runtime_settings.json"
 
 def _load_runtime_state() -> None:
     global _runtime_provider, _runtime_models, _runtime_notify_prefs, _runtime_weekly_summary_schedule
+    global _runtime_rag_embedding_provider
     if not _RUNTIME_SETTINGS_FILE.exists():
         return
     try:
@@ -156,6 +230,7 @@ def _load_runtime_state() -> None:
     _runtime_models = data.get("models", _runtime_models)
     _runtime_notify_prefs = data.get("notify_prefs", _runtime_notify_prefs)
     _runtime_weekly_summary_schedule = data.get("weekly_summary_schedule", _runtime_weekly_summary_schedule)
+    _runtime_rag_embedding_provider = data.get("rag_embedding_provider", _runtime_rag_embedding_provider)
 
 
 def _save_runtime_state() -> None:
@@ -165,6 +240,7 @@ def _save_runtime_state() -> None:
         "models": _runtime_models,
         "notify_prefs": _runtime_notify_prefs,
         "weekly_summary_schedule": _runtime_weekly_summary_schedule,
+        "rag_embedding_provider": _runtime_rag_embedding_provider,
     }
     tmp = _RUNTIME_SETTINGS_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")

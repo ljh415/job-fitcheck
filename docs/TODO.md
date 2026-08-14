@@ -240,10 +240,10 @@ private 저장소를 지인 대상 셀프호스팅 공개로 전환하기 위한
 
 ---
 
-## Phase 11 — RAG 서브프로젝트 main 반영 + MCP 설계 (계획 배경만 정리, 구체화 전)
+## Phase 11 — RAG 서브프로젝트 main 반영 + MCP 설계 (RAG 반영 구현 완료, main 합류 전, 2026-07-31)
 
-> 상세: `docs/mcp_plan_notes.md`(MCP 부분). RAG는 `rag/main` 브랜치에서 별도 진행 중(대화형 근거 기반 RAG → RAG 모듈 안정화, 상세는 `rag/main` 브랜치의 `docs/rag-project-plans/00_meta/STATUS.md`).
+> 상세: `docs/mcp_plan_notes.md`(MCP 부분), `docs/rag-integration/STATUS.md`(RAG main 반영 부분, `feat/rag-integration-plan` 브랜치 — 6개 항목 전부 완료, main으로의 실제 merge 시점·방식은 아직 미정). RAG 자체 개발은 `rag/main` 브랜치에서 별도 진행 중(대화형 근거 기반 RAG → RAG 모듈 안정화, 상세는 `rag/main` 브랜치의 `docs/rag-project-plans/00_meta/STATUS.md`).
 
-- ⬜ RAG(`rag/main`) 완료 후 main 반영 — 브랜치를 통째로 merge하지 않고, 완성된 코드만 새 `feat/...` 브랜치로 재작성해 main에 반영(실험·시행착오 히스토리는 `rag/main`에만 남김)
+- 🔧 RAG `feat/rag-integration-plan` 구현 완료(파일 이식·opt-in 구조·provider 선택·데이터 동기화·Agent provider 지원·UI 전부) — 남은 건 main으로의 실제 반영(merge) 시점·방식 결정. 세부는 `docs/rag-integration/STATUS.md` 참고.
 - ⬜ 그 다음 MCP 설계·구현 착수 — 세부 도구·전송 방식·인증·쓰기 승인 정책은 아직 미확정
 - 💡 후보자 프로필 버전 관리 — 프로필 업로드 시점마다 스냅샷 보관(diff 아님, 전체 사본). 개수 제한 없음, RAG 채팅 세션처럼 개별 삭제는 가능해야 함. RAG 반영 이후, 새 feature 브랜치(dev worktree)로 시작(2026-08-11 논의, 세부 계획은 아직 안 함)

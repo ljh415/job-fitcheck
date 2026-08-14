@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 
 import auth
 from config import ensure_dirs
-from routers import companies, profile, qa
+from routers import companies, profile, qa, rag
 from routers import settings as settings_router
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -42,6 +42,7 @@ app.include_router(settings_router.router)
 app.include_router(profile.router)
 app.include_router(companies.router)
 app.include_router(qa.router)
+app.include_router(rag.router)  # opt-in 기능 — RAG_POSTGRES_HOST 미설정 시 각 엔드포인트가 503
 
 # Docker 배포 시에는 nginx가 frontend/를 서빙하므로 이미지 안에 frontend/가 없다(Dockerfile 참고).
 # uv 등으로 로컬에서 직접 실행할 때만 frontend/가 실제로 존재하므로, 있을 때만 마운트해

@@ -28,6 +28,7 @@ from services import scraper
 import storage
 from config import get_notify_pref, get_weekly_summary_schedule
 from export import save_backup_zip
+from routers.rag import trigger_reindex_background
 from services.jobplanet import fetch_jobplanet_score
 from llm.base import LLMAPIError
 from llm.router import LLMSnapshot, capture_snapshot, high_from_snapshot, light_from_snapshot
@@ -319,6 +320,10 @@ async def update_company(slug: str, req: CompanyUpdateRequest):
     fm.created_at = existing.frontmatter.created_at
     record = storage.write_company(slug, fm, req.body)
     logger.info("공고 수동 편집: %s", slug)
+    # 원문(.raw.txt)은 안 바뀌지만 RAG의 posting 테이블이 tech_stack/stability/employee_count
+    # 등 frontmatter 필드를 그대로 복제해 비교 도구에 노출한다 — 훅이 없으면 수동 재색인 전까지
+    # 옛 값이 계속 반환된다(Codex 4차 리뷰로 발견, 2026-08-03). RAG 꺼져 있으면 no-op.
+    trigger_reindex_background()
     return record
 
 
@@ -332,6 +337,8 @@ async def delete_company(slug: str):
     if not deleted:
         raise HTTPException(status_code=404, detail="회사를 찾을 수 없습니다.")
     logger.info("공고 삭제: %s", slug)
+    # RAG(opt-in) 자동 재색인 — 삭제된 공고의 고아 임베딩을 prune_deleted_postings()가 정리하도록.
+    trigger_reindex_background()
     return {"status": "deleted"}
 
 
@@ -379,6 +386,7 @@ async def sync_wanted(slug: str, req: SyncWantedRequest = SyncWantedRequest()):
     record = storage.write_company(slug, fm, existing.body)
     updated_keys = [k for k, v in facts.items() if v is not None]
     logger.info("원티드 동기화: %s → 업데이트 필드: %s", slug, updated_keys)
+    trigger_reindex_background()  # RAG가 복제하는 stability/employee_count 등 갱신, RAG 꺼져 있으면 no-op
     return {"status": "ok", "updated": {k: v for k, v in facts.items() if v is not None}}
 
 
@@ -645,6 +653,9 @@ async def _process_company(
         materials["employee_count"] = fm.employee_count
 
     await send_notification(materials)
+    # RAG(opt-in) 자동 재색인 — 공고 원문(.raw.txt)이 방금 바뀌었으니 백그라운드로 반영한다.
+    # RAG가 꺼져 있으면 즉시 아무 일도 안 함(4번 "데이터 동기화" 항목).
+    trigger_reindex_background()
     return record
 
 
@@ -697,7 +708,15 @@ async def add_from_text(req: FromTextRequest):
         )
         body = f"# {req.company_name} — {req.job_title}\n\n## 지원 상태 로그\n- {date.today().isoformat()}: 등록"
         slug = storage.make_slug(req.company_name, req.job_title)
-        return storage.write_company(slug, fm, body)
+        # RAG는 .raw.txt만 원문으로 스캔한다 — 프론트가 실제로 쓰는 경로인데도 이 분기는
+        # write_raw_text()/trigger_reindex_background()가 빠져 있어 RAG에서 계속 안 보이고
+        # 있었다(add_manual()만 고쳐졌는데 프론트는 그 엔드포인트를 안 씀, Codex 4차 리뷰로
+        # 발견, 2026-08-03). body를 원문으로 저장한다 — 자유 텍스트 입력 자체가 없는
+        # 최소 등록이라 body가 가장 원문에 가깝다.
+        storage.write_raw_text(slug, body)
+        record = storage.write_company(slug, fm, body)
+        trigger_reindex_background()
+        return record
     try:
         return await asyncio.wait_for(
             _process_company(
@@ -785,7 +804,14 @@ async def add_manual(req: ManualCompanyRequest):
     )
     body = f"# {fm.display_name} — {fm.job_title}\n\n{req.notes}"
     slug = storage.make_slug(fm.company_name, fm.job_title or "")
-    return storage.write_company(slug, fm, body)
+    # RAG(rag/postgres/ingest.py)는 .raw.txt만 원문으로 스캔한다 — 수동 추가는 다른 경로
+    # (add_from_url/text/image)와 달리 write_raw_text()를 안 불러서 원래 RAG에서 안
+    # 보였다(4번 "데이터 동기화" 항목에서 발견). 수동 입력 시 사용자가 직접 쓴 notes가
+    # 가장 원문에 가까우므로 그대로 raw.txt로 저장한다.
+    storage.write_raw_text(slug, req.notes)
+    record = storage.write_company(slug, fm, body)
+    trigger_reindex_background()
+    return record
 
 
 @router.post("/api/companies/{slug}/refill")
@@ -904,4 +930,5 @@ async def refit_company(slug: str):
     body = _append_status_log(body, "적합도 재평가 완료")
 
     record = storage.write_company(slug, fm, body)
+    trigger_reindex_background()  # RAG가 복제하는 fit_score/strengths/gaps 갱신, RAG 꺼져 있으면 no-op
     return record

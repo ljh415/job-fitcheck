@@ -460,6 +460,28 @@ label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-w
 .tl-summary-count { font-size: 22px; font-weight: 800; line-height: 1; }
 .tl-summary-label { font-size: 11px; color: var(--text-muted); font-weight: 500; }
 
+/* ── RAG ──────────────────────────────────────────────────────────── */
+.rag-section-card { border: 1px solid var(--border); border-radius: 8px; padding: 20px; background: var(--bg-surface); margin-bottom: 20px; }
+.rag-section-card h3 { margin: 0 0 12px; font-size: 15px; }
+.rag-form { display: flex; gap: 8px; margin-bottom: 12px; }
+.rag-form input[type="text"] { flex: 1 1 auto; width: auto; min-width: 0; }
+.rag-form button { flex: 0 0 auto; white-space: nowrap; }
+.rag-note { font-size: 12px; color: var(--text-dimmed); }
+.rag-settings-popup { display: flex; align-items: center; gap: 10px; border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; background: var(--bg-surface); }
+.rag-settings-popup label { font-size: 13px; font-weight: 600; }
+.rag-settings-popup select { width: auto; }
+.rag-settings-popup .rag-note { margin: 0; }
+.rag-error { color: var(--score-none-text); background: var(--score-none-bg); padding: 8px 12px; border-radius: 6px; font-size: 13px; }
+.rag-result-section { margin-top: 14px; }
+.rag-result-section h4 { margin: 0 0 6px; font-size: 13px; color: var(--text-secondary); }
+.rag-excerpt { font-size: 13px; color: var(--text-muted); border-left: 3px solid var(--border); padding-left: 10px; margin: 6px 0; }
+.rag-tool-trace summary { cursor: pointer; font-size: 13px; }
+.rag-tool-result { font-size: 12px; overflow-x: auto; white-space: pre-wrap; word-break: break-word; background: var(--bg-muted); padding: 8px; border-radius: 4px; margin-top: 4px; }
+.rag-chat-panel { height: 480px; display: flex; flex-direction: column; }
+.rag-chat-panel .qa-messages { border: 1px solid var(--border); border-radius: 8px; padding: 8px; }
+.rag-chat-panel .qa-input-row button { flex: 0 0 auto; white-space: nowrap; }
+#rag-chat-select { flex: 0 0 auto; width: auto; }
+
 /* ── 모바일 반응형 ───────────────────────────────────────────────── */
 @media (max-width: 768px) {
   /* 네비게이션 */
