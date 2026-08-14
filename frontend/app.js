@@ -2264,7 +2264,12 @@ async function runRagAsk(event) {
   }
   history = history.slice(-40);  // 백엔드 AskRequest.history 상한(40)과 동일하게 자름
 
-  const entry = { question, data: null, pending: true };
+  // id를 부여해야 응답 도착 시 최신 저장 상태에서 이 항목을 다시 찾아 그 자리만 갱신할 수 있다
+  // — 안 그러면(예전 방식) 응답 시점에 요청 시작 때 붙잡아둔 chats 전체를 그대로 다시 저장해서,
+  // 대기하는 동안 사용자가 새 채팅을 만들거나 다른 채팅을 지우면 그 변경이 통째로 덮어써졌다
+  // (Codex 리뷰로 발견 + DOM/localStorage mock 격리 재현, 2026-08-12).
+  const entryId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const entry = { id: entryId, question, data: null, pending: true };
   chat.messages.push(entry);
   if (!chat.title) chat.title = question.slice(0, 24) + (question.length > 24 ? '…' : '');
   ragSaveChats(chats);
@@ -2274,17 +2279,33 @@ async function runRagAsk(event) {
   btn.textContent = '전송 중...';
   if (ragGetCurrentChatId() === chatId) ragRenderThread(chat.messages);
 
+  // 응답/에러 처리 공통: 요청 시작 시점 스냅샷(chats/chat) 대신 최신 상태를 다시 읽어서
+  // 이 채팅이 그새 삭제됐으면 조용히 포기하고(되살리지 않음), 남아있으면 해당 메시지만 찾아
+  // 갱신한다 — 그 사이 생긴 다른 채팅·삭제는 그대로 보존된다.
+  function applyToLatest(mutate) {
+    const latest = ragLoadChats();
+    const latestChat = latest[chatId];
+    if (!latestChat) return null;  // 대기 중 삭제된 채팅 — 되살리지 않음
+    const idx = latestChat.messages.findIndex(m => m.id === entryId);
+    if (idx === -1) return null;
+    mutate(latestChat, idx);
+    ragSaveChats(latest);
+    return latestChat;
+  }
+
   try {
-    entry.data = await api('/rag/ask', { method: 'POST', body: JSON.stringify({ question, history }) });
-    entry.pending = false;
-    ragSaveChats(chats);
-    if (ragGetCurrentChatId() === chatId) ragRenderThread(chat.messages);
+    const data = await api('/rag/ask', { method: 'POST', body: JSON.stringify({ question, history }) });
+    const latestChat = applyToLatest((c, idx) => {
+      c.messages[idx].data = data;
+      c.messages[idx].pending = false;
+    });
+    if (latestChat && ragGetCurrentChatId() === chatId) ragRenderThread(latestChat.messages);
   } catch (e) {
-    const idx = chat.messages.indexOf(entry);
-    if (idx !== -1) chat.messages.splice(idx, 1);  // 실패한 pending 질문은 지워서 재시도 가능하게
-    ragSaveChats(chats);
+    const latestChat = applyToLatest((c, idx) => {
+      c.messages.splice(idx, 1);  // 실패한 pending 질문은 지워서 재시도 가능하게
+    });
     if (ragGetCurrentChatId() === chatId) {
-      ragRenderThread(chat.messages);
+      if (latestChat) ragRenderThread(latestChat.messages);
       document.getElementById('rag-ask-result').innerHTML += `<div class="rag-error">${escHtml(e.message)}</div>`;
     }
   } finally {
