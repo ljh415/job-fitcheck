@@ -1,5 +1,38 @@
 # Changelog
 
+## v1.3.0 — RAG(Agentic RAG) 채팅 기능 추가, 선택 기능 (2026-08-15)
+
+등록된 채용공고 전체를 근거로 자연어로 질문하는 대화형 채팅 기능. `rag/main` 브랜치에서
+별도로 개발·안정화한 뒤 완성된 코드만 `feat/rag-integration-plan`에 재작성해 `main`에
+합류시켰다. 기본은 꺼져 있고, `RAG_POSTGRES_HOST` 설정 시에만 켜지는 opt-in 구조 — 기존
+"DB 없음"(회사 정보는 마크다운 파일) 원칙은 그대로 유지되고, RAG는 그 위에 얹히는 선택
+계층이다.
+
+**`backend/rag/`** (신규 패키지)
+- PostgreSQL + pgvector 기반 청킹·임베딩·검색·Agent(tool-use) 파이프라인
+- 임베딩 provider: Google(기본, 메인 앱 키 재사용) 또는 개인 GPU 서버(SSH, opt-in) 중 활성 provider 하나만 사용
+- Agent가 Claude/OpenAI/Gemini 3개 provider 전부 지원(메인 앱의 현재 provider 설정을 그대로 따라감)
+- 회사 등록/편집/삭제, 프로필 수정/업로드 시 자동 재색인 훅 연결(동시 트리거는 락+pending 큐로 직렬화)
+- 이력서(프로필) 내용은 `RAG_INCLUDE_PROFILE`(기본 false)을 켜야만 임베딩 API로 전송됨
+
+**`docker-compose.yml` / `docker/Dockerfile`**
+- `rag-postgres`(pgvector) 서비스를 `profiles: ["rag"]`로 추가 — `docker compose --profile rag up`으로만 뜸
+- `openssh-client` 설치 단계 추가(로컬 임베딩 provider의 SSH 터널용)
+
+**`frontend/`**
+- 네비게이션에 RAG 진입 버튼 신규(`GET /api/rag/status`로 조건부 노출), `/rag` 뷰(기술 갭 확인 폼 + 멀티세션 채팅 패널) 추가
+
+**`backend/requirements.txt`**
+- `google-genai` 1.2.0→2.15.0, `httpx` 0.27.2→0.28.1, `openai` 1.54.0→1.109.1, `pydantic` 2.9.2→2.13.4 (RAG 쪽 요구사항으로 상향, 기존 기능도 이 버전으로 재검증됨)
+- `cryptography<49` 핀 추가 — 49부터 macOS Intel(x86_64) wheel 배포가 중단돼 Rust 빌드 환경 없이는 설치가 안 되는 문제 방지
+
+**문서**
+- `RAG_GUIDE.md` 신설(사용자 가이드), `backend/rag/README.md`(코드 구조), `.env.example`/`docker-compose.yml`에 로컬 임베딩 provider 설정법(SSH 키 볼륨 마운트 등) 추가
+
+**검증**
+- Codex 코드리뷰 5차(총 23건 발견, 22건 해결) + merge 후 전체 앱 회귀 체크리스트(`docs/regression_testing_checklist.md`, 54개 항목) + RAG 전용 체크리스트(`docs/rag_testing_checklist.md`, 25개 항목)로 실사용 시나리오 실측 검증
+- merge와 무관한 기존 버그 1건(Jobplanet 평점 매칭 로직) 발견·기록, 후속 개선 예정
+
 ## v1.2.4 — provider/모델/알림설정이 재시작 후에도 유지되도록 수정 (2026-07-21)
 
 **`backend/config.py`**

@@ -240,10 +240,21 @@ private 저장소를 지인 대상 셀프호스팅 공개로 전환하기 위한
 
 ---
 
-## Phase 11 — RAG 서브프로젝트 main 반영 + MCP 설계 (RAG 반영 구현 완료, main 합류 전, 2026-07-31)
+## Phase 11 — RAG 서브프로젝트 main 반영 + MCP 설계 (RAG main 반영 완료, MCP 설계 착수 전, 2026-08-15)
 
-> 상세: `docs/mcp_plan_notes.md`(MCP 부분), `docs/rag-integration/STATUS.md`(RAG main 반영 부분, `feat/rag-integration-plan` 브랜치 — 6개 항목 전부 완료, main으로의 실제 merge 시점·방식은 아직 미정). RAG 자체 개발은 `rag/main` 브랜치에서 별도 진행 중(대화형 근거 기반 RAG → RAG 모듈 안정화, 상세는 `rag/main` 브랜치의 `docs/rag-project-plans/00_meta/STATUS.md`).
+> 상세: `docs/mcp_plan_notes.md`(MCP 부분), `docs/rag-integration/STATUS.md`(RAG main 반영 부분 — 6개 항목 구현 + 코드리뷰 5차까지 전부 완료 후 `main`에 실제 merge됨, `f882c00`). RAG 자체 개발은 `rag/main` 브랜치에서 별도 진행 중(대화형 근거 기반 RAG → RAG 모듈 안정화, 상세는 `rag/main` 브랜치의 `docs/rag-project-plans/00_meta/STATUS.md`).
 
-- 🔧 RAG `feat/rag-integration-plan` 구현 완료(파일 이식·opt-in 구조·provider 선택·데이터 동기화·Agent provider 지원·UI 전부) — 남은 건 main으로의 실제 반영(merge) 시점·방식 결정. 세부는 `docs/rag-integration/STATUS.md` 참고.
+- ✅ RAG `feat/rag-integration-plan`을 `main`에 merge 완료(2026-08-15, `f882c00`) — 파일 이식·opt-in 구조·provider 선택·데이터 동기화·Agent provider 지원·UI 전부 포함. merge 후 전체 앱 회귀 체크리스트(`docs/regression_testing_checklist.md`) + RAG 전용 체크리스트(`docs/rag_testing_checklist.md`)로 실사용 시나리오 검증까지 완료(총 79개 항목 중 77개 통과, 2개는 사용자 판단으로 생략/서버 미가동). 세부는 `docs/rag-integration/STATUS.md` 참고.
 - ⬜ 그 다음 MCP 설계·구현 착수 — 세부 도구·전송 방식·인증·쓰기 승인 정책은 아직 미확정
 - 💡 후보자 프로필 버전 관리 — 프로필 업로드 시점마다 스냅샷 보관(diff 아님, 전체 사본). 개수 제한 없음, RAG 채팅 세션처럼 개별 삭제는 가능해야 함. RAG 반영 이후, 새 feature 브랜치(dev worktree)로 시작(2026-08-11 논의, 세부 계획은 아직 안 함)
+- ⬜ Jobplanet 평점 조회 매칭 로직 개선 — merge 후 회귀 테스트 중 발견(2026-08-15, merge와는 무관한 기존 버그, `backend/services/jobplanet.py`는 이번 merge에서 미수정 확인됨). 카카오처럼 리뷰가 많은 회사도 `not_found` 처리됨 — 원인은 현재 코드가 Naver 검색 결과의 JSON `"title"` 필드만 정규식(`_SCORE_RE`)으로 파싱하는데, 이 title 텍스트가 매번 다른 지점에서 "..."로 잘려 평점 숫자가 아예 없는 경우가 많음. 실제로는 같은 검색 결과 페이지에 훨씬 안정적인 별도 구조화 블록이 존재함 — `class="fds-listitemlabel"`(값 "평점") 다음에 `<span>3.8/5</span>` ... `<span>1,307 참여</span>` 형태로 평점·리뷰수가 title과 무관하게 따로 렌더링됨. 이 블록을 BeautifulSoup으로 파싱하도록 `_search_naver()` 교체 검토(현재 title-JSON 정규식 방식 대신 또는 폴백으로 추가). RAG merge 완료 후 개선.
+- ✅ RAG 로컬 임베딩 provider 사용자 문서·설정 공백 — merge 후 회귀 테스트 중 발견·즉시 수정
+  (2026-08-15). `LocalEmbeddingProvider`/`resolve_rag_embedding_provider()` 코드는 GPU 있는
+  사용자면 누구나 쓸 수 있게 만들어졌는데, `RAG_LOCAL_SSH_*` 5개 변수가 `.env.example`에
+  전혀 없고 SSH 키 볼륨 마운트 예시도 `docker-compose.yml`에 없어서(개인 전용
+  `docker-compose.dev.yml`에만 있었음) 일반 사용자는 이 기능이 있는지조차 알 방법이 없었음.
+  `.env.example`에 변수 5개+설명 추가, `docker-compose.yml`에 주석 처리된 볼륨 마운트 예시
+  추가, `RAG_GUIDE.md`에 "개인 GPU 서버로 로컬 임베딩 쓰기" 섹션 신설(설정 방법 4단계 +
+  실패 시 동작 설명)로 전부 채움. 전환 성공 케이스 자체는 실제 개인 GPU 서버로 검증 완료
+  (2026-08-15 이전, RAG 자체 개발 단계) — 이번 merge 회귀 테스트에서는 서버가 꺼져있어
+  실패 시나리오만 재확인(503 + override 유지, `docs/rag_testing_checklist.md` 참고).

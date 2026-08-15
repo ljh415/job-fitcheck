@@ -20,6 +20,10 @@ services:
       - TZ=Asia/Seoul
     volumes:
       - ./data:/app/data
+      # RAG 로컬 임베딩 provider(선택, RAG_GUIDE.md 참고)를 쓰려면 SSH 개인키를 컨테이너
+      # 안 같은 경로로 마운트해야 함 — 개인 키 경로라 기본으로는 주석 처리해둠, 필요하면
+      # 아래 줄의 경로를 자기 키 경로로 바꾸고 주석만 해제할 것:
+      # - /home/you/.ssh/your_key:/home/you/.ssh/your_key:ro
     restart: unless-stopped
 
   rag-postgres:

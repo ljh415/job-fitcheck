@@ -43,6 +43,20 @@ RAG_INCLUDE_PROFILE=true
 
 RAG 채팅은 메인 앱의 현재 LLM provider 설정(Claude/OpenAI/Gemini, 설정 화면에서 전환)을 그대로 따라갑니다. 임베딩 provider는 기본적으로 Google이고, RAG 화면 안의 "⚙️ 설정" 팝업에서 다른 provider로 바꿀 수 있습니다(GPU 인프라를 직접 구성한 경우에 한함 — 대부분의 배포에서는 Google 하나만 선택 가능합니다).
 
+### 개인 GPU 서버로 로컬 임베딩 쓰기 (선택)
+
+SSH로 접속 가능한 GPU 서버가 있다면 Google 대신 그 서버로 임베딩을 계산할 수 있습니다.
+
+1. 그 서버에 임베딩 추론 서버가 떠 있어야 합니다(포트는 `RAG_LOCAL_EMBED_PORT`, 기본 8500).
+2. `.env`에 다음 5개를 채웁니다: `RAG_LOCAL_SSH_HOST`, `RAG_LOCAL_SSH_PORT`, `RAG_LOCAL_SSH_USER`, `RAG_LOCAL_SSH_KEY_PATH`, `RAG_LOCAL_EMBED_PORT`.
+3. `docker-compose.yml`의 `api` 서비스 `volumes`에 SSH 개인키를 컨테이너 안 **같은 경로**로 마운트하는 줄을 직접 추가해야 합니다 — 개인 키 경로라 기본 파일엔 예시가 없습니다:
+   ```yaml
+   - /home/you/.ssh/your_key:/home/you/.ssh/your_key:ro
+   ```
+4. 재빌드(`docker compose --profile rag up --build`) 후 RAG 화면 "⚙️ 설정" 팝업에서 provider 목록에 "local"이 뜨면 성공입니다. 전환 시 재색인이 필요하다는 확인창이 뜨고, 승인하면 재색인까지 자동으로 진행됩니다.
+
+SSH 접속이 안 되면(서버가 꺼져있거나 키가 안 맞으면) 전환 요청 자체가 실패하고 기존 provider가 그대로 유지됩니다 — 중간에 애매한 상태로 남지 않습니다.
+
 ## 문제가 생기면
 
 - RAG 버튼이 안 보임 → `.env`의 `RAG_POSTGRES_HOST`가 비어있거나, Docker 대신 uv로 실행 중인 경우입니다.
