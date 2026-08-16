@@ -20,6 +20,9 @@ def build_export_zip(buf: io.BytesIO, include_pdf: bool = False, include_log: bo
         criteria = settings.data_dir / "eval_criteria.md"
         if criteria.exists():
             zf.write(criteria, criteria.name)
+        app_db = settings.data_dir / "app.db"
+        if app_db.exists():
+            zf.write(app_db, app_db.name)
         if include_pdf:
             for path in sorted(settings.uploads_dir.glob("*.pdf")):
                 zf.write(path, f"uploads/{path.name}")
