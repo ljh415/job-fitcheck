@@ -88,6 +88,57 @@ def delete_profile_version(version_id: int) -> bool:
         return cur.rowcount > 0
 
 
+def latest_profile_version_id() -> int | None:
+    """가장 최근 프로필 스냅샷 id. 평가 이력을 남길 때 "현재 프로필 버전"으로 참조한다."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT id FROM profile_versions ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        return row["id"] if row else None
+
+
+def create_fit_history_entry(
+    company_slug: str,
+    profile_version_id: int | None,
+    fit_score: int | None,
+    fit_label: str | None,
+    content: str,
+) -> int:
+    """평가 결과를 이력에 추가한다(덮어쓰기 아님) — 최초 평가도 포함해서 매번 호출."""
+    with get_connection() as conn:
+        cur = conn.execute(
+            "INSERT INTO fit_history (company_slug, created_at, profile_version_id, "
+            "fit_score, fit_label, content) VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                company_slug,
+                datetime.now().isoformat(timespec="seconds"),
+                profile_version_id,
+                fit_score,
+                fit_label,
+                content,
+            ),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+
+def list_fit_history(company_slug: str) -> list[dict]:
+    """표시용 — content(무거운 원문)는 제외, 프로필 버전의 존재 여부까지 같이 반환."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT fh.id, fh.created_at, fh.fit_score, fh.fit_label,
+                   fh.profile_version_id, pv.created_at AS profile_version_created_at
+            FROM fit_history fh
+            LEFT JOIN profile_versions pv ON pv.id = fh.profile_version_id
+            WHERE fh.company_slug = ?
+            ORDER BY fh.id DESC
+            """,
+            (company_slug,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
 if __name__ == "__main__":
     import os
     import tempfile
@@ -120,17 +171,16 @@ if __name__ == "__main__":
 
         # fit_history는 FK를 강제하지 않으므로, 삭제된 스냅샷을 참조해도 insert는 성공해야
         # 한다("삭제됨" 표시는 조회 시점에 판단, 위 profile_history_plan.md 참고)
-        with get_connection() as conn:
-            conn.execute(
-                "INSERT INTO fit_history (company_slug, created_at, profile_version_id, "
-                "fit_score, fit_label, content) VALUES (?, ?, ?, ?, ?, ?)",
-                ("테스트회사__직무", "2026-08-16T00:00:00", version_id, 72, "추천", "리포트 원문"),
-            )
-            conn.commit()
-            hist = conn.execute(
-                "SELECT * FROM fit_history WHERE company_slug = ?", ("테스트회사__직무",)
-            ).fetchone()
-            assert hist["fit_score"] == 72 and hist["profile_version_id"] == version_id
+        assert latest_profile_version_id() == version_id2
+        create_fit_history_entry("테스트회사__직무", version_id, 72, "추천", "리포트 원문(삭제된 버전 참조)")
+        create_fit_history_entry("테스트회사__직무", version_id2, 62, "조건부추천", "리포트 원문(정상 참조)")
+
+        hist_list = list_fit_history("테스트회사__직무")
+        assert len(hist_list) == 2
+        assert hist_list[0]["fit_score"] == 62  # 최신순(나중에 넣은 것)
+        assert hist_list[0]["profile_version_created_at"] is not None  # 정상 참조
+        assert hist_list[1]["fit_score"] == 72
+        assert hist_list[1]["profile_version_created_at"] is None  # 삭제된 버전 참조 → "삭제됨" 판단용
 
         # 초기화 재호출(idempotent) 확인
         init_db()

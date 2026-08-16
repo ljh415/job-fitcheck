@@ -26,9 +26,10 @@ from pydantic import BaseModel
 import prompts
 from services import scraper
 import storage
-from config import get_notify_pref, get_weekly_summary_schedule
+from config import get_notify_pref, get_weekly_summary_schedule, settings
 from export import save_backup_zip
 from routers.rag import trigger_reindex_background
+from services.app_db import create_fit_history_entry, latest_profile_version_id
 from services.jobplanet import fetch_jobplanet_score
 from llm.base import LLMAPIError
 from llm.router import LLMSnapshot, capture_snapshot, high_from_snapshot, light_from_snapshot
@@ -82,6 +83,19 @@ def _resize_image(data: bytes) -> tuple[bytes, str]:
 
 
 # ── 진행 중 표시 ──────────────────────────────────────────────────────────────
+
+def _snapshot_fit_history(slug: str, fit_score, fit_label) -> None:
+    """방금 저장된 회사 평가 결과를 이력(SQLite)에 추가한다 — 덮어쓰기 아니라 누적.
+    실제 평가가 있었을 때만(fit_score가 있을 때만) 기록하고, 실패해도 회사 저장 자체에는
+    영향 주지 않는다."""
+    if fit_score is None:
+        return
+    try:
+        content = (settings.companies_dir / f"{slug}.md").read_text(encoding="utf-8")
+        create_fit_history_entry(slug, latest_profile_version_id(), fit_score, fit_label, content)
+    except Exception as e:
+        logger.warning("평가 이력 저장 실패: %s", e)
+
 
 _in_progress_count = 0
 
@@ -636,6 +650,7 @@ async def _process_company(
     slug = existing_slug or storage.make_slug(fm.company_name, fm.job_title or "")
     storage.write_raw_text(slug, raw_text)
     record = storage.write_company(slug, fm, body)
+    _snapshot_fit_history(slug, fm.fit_score, fm.fit_label)
 
     materials = {
         "company": fm.display_name or fm.company_name,
@@ -930,5 +945,6 @@ async def refit_company(slug: str):
     body = _append_status_log(body, "적합도 재평가 완료")
 
     record = storage.write_company(slug, fm, body)
+    _snapshot_fit_history(slug, fm.fit_score, fm.fit_label)
     trigger_reindex_background()  # RAG가 복제하는 fit_score/strengths/gaps 갱신, RAG 꺼져 있으면 no-op
     return record
