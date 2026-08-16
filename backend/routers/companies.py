@@ -32,6 +32,7 @@ from export import save_backup_zip
 from routers.rag import trigger_reindex_background
 from services.app_db import (
     create_fit_history_entry,
+    delete_fit_history_for_slug,
     get_fit_history_entry,
     latest_profile_version_id,
     list_fit_history,
@@ -393,6 +394,12 @@ async def delete_company(slug: str):
     if not deleted:
         raise HTTPException(status_code=404, detail="회사를 찾을 수 없습니다.")
     logger.info("공고 삭제: %s", slug)
+    try:
+        # slug는 회사명+직무명으로 결정적 생성되므로, 이력을 안 지우면 같은 이름으로
+        # 재등록했을 때 예전(별개) 지원의 평가 이력이 새 회사에 다시 붙는다.
+        delete_fit_history_for_slug(slug)
+    except Exception as e:
+        logger.warning("삭제된 회사의 평가 이력 정리 실패 (slug=%s): %s", slug, e)
     # RAG(opt-in) 자동 재색인 — 삭제된 공고의 고아 임베딩을 prune_deleted_postings()가 정리하도록.
     trigger_reindex_background()
     return {"status": "deleted"}

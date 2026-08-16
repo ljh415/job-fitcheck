@@ -197,6 +197,16 @@ def list_fit_history(company_slug: str) -> list[dict]:
         return [dict(r) for r in rows]
 
 
+def delete_fit_history_for_slug(company_slug: str) -> int:
+    """회사 삭제 시 그 slug의 평가 이력을 전부 지운다. slug는 회사명+직무명으로 결정적
+    생성되므로, 이력을 안 지우면 같은 이름으로 재등록했을 때 예전(별개) 지원의 이력이
+    새 회사에 다시 붙어버린다(Codex 리뷰 2026-08-16 발견) — 반환값은 지워진 행 수."""
+    with get_connection() as conn:
+        cur = conn.execute("DELETE FROM fit_history WHERE company_slug = ?", (company_slug,))
+        conn.commit()
+        return cur.rowcount
+
+
 if __name__ == "__main__":
     import os
     import tempfile
@@ -271,6 +281,11 @@ if __name__ == "__main__":
         entry = get_fit_history_entry(hist_list[0]["id"])
         assert entry["content"] == "리포트 원문(정상 참조)"
         assert get_fit_history_entry(999999) is None
+
+        # 회사 삭제 시 이력도 같이 지워야 slug 재사용 시 옛 이력이 다시 안 붙는다
+        assert delete_fit_history_for_slug("테스트회사__직무") == 2
+        assert list_fit_history("테스트회사__직무") == []
+        assert delete_fit_history_for_slug("테스트회사__직무") == 0  # 이미 없음
 
         # 초기화 재호출(idempotent) 확인
         init_db()
