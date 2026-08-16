@@ -90,15 +90,18 @@ def _resize_image(data: bytes) -> tuple[bytes, str]:
 
 # ── 진행 중 표시 ──────────────────────────────────────────────────────────────
 
-def _snapshot_fit_history(slug: str, fit_score, fit_label) -> None:
+def _snapshot_fit_history(slug: str, fit_score, fit_label, profile_version_id: int | None) -> None:
     """방금 저장된 회사 평가 결과를 이력(SQLite)에 추가한다 — 덮어쓰기 아니라 누적.
+    profile_version_id는 평가에 실제로 사용한 프로필을 읽은 시점에 고정해서 전달받는다
+    (평가 완료 시점에 다시 조회하면, 평가 대기 중 프로필이 바뀐 경우 엉뚱한 버전과
+    연결될 수 있음 — Codex 리뷰 2026-08-16 발견).
     실제 평가가 있었을 때만(fit_score가 있을 때만) 기록하고, 실패해도 회사 저장 자체에는
     영향 주지 않는다."""
     if fit_score is None:
         return
     try:
         content = (settings.companies_dir / f"{slug}.md").read_text(encoding="utf-8")
-        create_fit_history_entry(slug, latest_profile_version_id(), fit_score, fit_label, content)
+        create_fit_history_entry(slug, profile_version_id, fit_score, fit_label, content)
     except Exception as e:
         logger.warning("평가 이력 저장 실패: %s", e)
 
@@ -594,10 +597,14 @@ async def _process_company(
     # 4. High: 후보자 프로필 대비 적합도 평가 (프로필 없으면 생략)
     fit_data: dict = {}
     fit_report = ""
+    profile_version_id_at_eval: int | None = None
     if storage.profile_exists():
         high, high_model = high_from_snapshot(snap)
         logger.info("[4/4] 적합도 평가 시작 (model=%s)", high_model)
         profile_text = storage.read_profile_text() or ""
+        # 이 프로필을 실제로 읽은 시점의 최신 스냅샷 id를 고정 — LLM 호출이 끝날 때까지
+        # 기다렸다 조회하면 그 사이 프로필이 갱신된 경우 엉뚱한 버전과 연결된다.
+        profile_version_id_at_eval = latest_profile_version_id()
         eval_criteria = storage.read_eval_criteria().strip()
         custom_criteria_section = (
             f"\n\n## 추가 평가 기준 (사용자 지정)\n{eval_criteria}{prompts.CUSTOM_CRITERIA_BOUNDARY_NOTICE}"
@@ -689,7 +696,7 @@ async def _process_company(
     slug = existing_slug or storage.make_slug(fm.company_name, fm.job_title or "")
     storage.write_raw_text(slug, raw_text)
     record = storage.write_company(slug, fm, body)
-    _snapshot_fit_history(slug, fm.fit_score, fm.fit_label)
+    _snapshot_fit_history(slug, fm.fit_score, fm.fit_label, profile_version_id_at_eval)
 
     materials = {
         "company": fm.display_name or fm.company_name,
@@ -915,6 +922,8 @@ async def refit_company(slug: str):
     logger.info("[refit] 적합도 재산정 시작 (slug=%s, model=%s)", slug, high_model)
 
     profile_text = storage.read_profile_text() or ""
+    # 이 프로필을 실제로 읽은 시점의 최신 스냅샷 id를 고정 (이유는 _snapshot_fit_history 참고)
+    profile_version_id_at_eval = latest_profile_version_id()
     raw_text = prompts.escape_tag_chars(storage.read_raw_text(slug) or record.body)
     eval_criteria = storage.read_eval_criteria().strip()
     custom_criteria_section = (
@@ -984,6 +993,6 @@ async def refit_company(slug: str):
     body = _append_status_log(body, "적합도 재평가 완료")
 
     record = storage.write_company(slug, fm, body)
-    _snapshot_fit_history(slug, fm.fit_score, fm.fit_label)
+    _snapshot_fit_history(slug, fm.fit_score, fm.fit_label, profile_version_id_at_eval)
     trigger_reindex_background()  # RAG가 복제하는 fit_score/strengths/gaps 갱신, RAG 꺼져 있으면 no-op
     return record
