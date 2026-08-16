@@ -31,9 +31,14 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS profile_versions (
                 id         INTEGER PRIMARY KEY AUTOINCREMENT,
                 created_at TEXT NOT NULL,
-                content    TEXT NOT NULL
+                content    TEXT NOT NULL,
+                note       TEXT
             )
         """)
+        # note 컬럼 마이그레이션 — 이미 만들어진 DB(테이블은 있지만 컬럼 추가 전)에도 대응
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(profile_versions)").fetchall()}
+        if "note" not in cols:
+            conn.execute("ALTER TABLE profile_versions ADD COLUMN note TEXT")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS fit_history (
                 id                 INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -52,22 +57,22 @@ def init_db() -> None:
         conn.commit()
 
 
-def create_profile_version(content: str) -> int:
-    """프로필 스냅샷을 저장하고 새로 생성된 id를 반환한다."""
+def create_profile_version(content: str, note: str | None = None) -> int:
+    """프로필 스냅샷을 저장하고 새로 생성된 id를 반환한다. note는 사용자가 남긴 짧은 메모(선택)."""
     with get_connection() as conn:
         cur = conn.execute(
-            "INSERT INTO profile_versions (created_at, content) VALUES (?, ?)",
-            (datetime.now().isoformat(timespec="seconds"), content),
+            "INSERT INTO profile_versions (created_at, content, note) VALUES (?, ?, ?)",
+            (datetime.now().isoformat(timespec="seconds"), content, note),
         )
         conn.commit()
         return cur.lastrowid
 
 
 def list_profile_versions() -> list[dict]:
-    """최신순 (id, created_at, content) 목록. content에서 summary 등을 뽑는 건 호출부 몫."""
+    """최신순 (id, created_at, note) 목록 — 표시용, 무거운 content는 제외."""
     with get_connection() as conn:
         rows = conn.execute(
-            "SELECT id, created_at, content FROM profile_versions ORDER BY id DESC"
+            "SELECT id, created_at, note FROM profile_versions ORDER BY id DESC"
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -75,10 +80,19 @@ def list_profile_versions() -> list[dict]:
 def get_profile_version(version_id: int) -> dict | None:
     with get_connection() as conn:
         row = conn.execute(
-            "SELECT id, created_at, content FROM profile_versions WHERE id = ?",
+            "SELECT id, created_at, content, note FROM profile_versions WHERE id = ?",
             (version_id,),
         ).fetchone()
         return dict(row) if row else None
+
+
+def update_profile_version_note(version_id: int, note: str | None) -> bool:
+    with get_connection() as conn:
+        cur = conn.execute(
+            "UPDATE profile_versions SET note = ? WHERE id = ?", (note, version_id)
+        )
+        conn.commit()
+        return cur.rowcount > 0
 
 
 def delete_profile_version(version_id: int) -> bool:
@@ -151,12 +165,18 @@ if __name__ == "__main__":
         assert os.path.exists(DB_PATH)
 
         version_id = create_profile_version("테스트 프로필 내용")
-        version_id2 = create_profile_version("두번째 프로필 내용")
+        version_id2 = create_profile_version("두번째 프로필 내용", note="사이드 프로젝트 추가")
         with get_connection() as conn:
             row = conn.execute(
                 "SELECT * FROM profile_versions WHERE id = ?", (version_id,)
             ).fetchone()
             assert row["content"] == "테스트 프로필 내용"
+            assert row["note"] is None  # note 안 남기면 NULL
+
+            row2 = conn.execute(
+                "SELECT * FROM profile_versions WHERE id = ?", (version_id2,)
+            ).fetchone()
+            assert row2["note"] == "사이드 프로젝트 추가"
 
         versions = list_profile_versions()
         assert [v["id"] for v in versions] == [version_id2, version_id]  # 최신순
@@ -164,6 +184,10 @@ if __name__ == "__main__":
         fetched = get_profile_version(version_id)
         assert fetched["content"] == "테스트 프로필 내용"
         assert get_profile_version(999999) is None
+
+        assert update_profile_version_note(version_id, "나중에 붙인 메모") is True
+        assert get_profile_version(version_id)["note"] == "나중에 붙인 메모"
+        assert update_profile_version_note(999999, "없는 버전") is False
 
         assert delete_profile_version(version_id) is True
         assert get_profile_version(version_id) is None

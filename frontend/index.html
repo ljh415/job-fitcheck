@@ -378,6 +378,7 @@
           <input type="file" id="pdf-input" accept=".pdf" multiple style="display:none" onchange="updateDropzoneLabel()" />
         </div>
         <textarea id="profile-extra-note" rows="3" placeholder="추가 설명 (선택) — 예: 백엔드 전문이며 MLOps 경험 있음. 풀스택보다 AI 인프라 역할 선호." style="margin-top:10px;width:100%;font-size:13px;color:#374151;resize:vertical;box-sizing:border-box" oninput="localStorage.setItem('profile-extra-note', this.value)"></textarea>
+        <input type="text" id="profile-upload-version-note" placeholder="이번 업로드에 대한 메모 (선택, 예: 최신 이력서로 갱신)" style="margin-top:10px;width:100%;font-size:13px;box-sizing:border-box" />
         <div class="profile-upload-footer">
           <label class="upload-option-label" title="프로필 본문 생성 시 최대 출력 토큰 수. 이력서·포트폴리오가 길수록 높게 설정하세요.">
             본문 max_tokens
@@ -390,6 +391,11 @@
           <div class="spinner"></div>
         </div>
         </div><!-- /upload-box-body -->
+      </div>
+
+      <div class="profile-version-section">
+        <h4 id="profile-version-title" style="margin:16px 0 8px;font-size:14px">이전 버전</h4>
+        <div id="profile-version-list"></div>
       </div>
     </section>
 
@@ -523,6 +529,17 @@
       </div>
       <div id="cal-grid" class="cal-grid"></div>
     </div>
+  </div>
+</template>
+
+<template id="tpl-profile-version">
+  <div class="view">
+    <div class="view-header">
+      <button onclick="navigate('settings')" class="back-btn">← 설정</button>
+      <h2>프로필 이전 버전</h2>
+    </div>
+    <div id="profile-version-detail-meta" style="font-size:13px;color:#6b7280;margin-bottom:12px"></div>
+    <div id="profile-version-detail-body" class="markdown-body profile-preview-area"></div>
   </div>
 </template>
 
