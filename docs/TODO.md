@@ -242,11 +242,11 @@ private 저장소를 지인 대상 셀프호스팅 공개로 전환하기 위한
 
 ## Phase 11 — RAG 서브프로젝트 main 반영 + MCP 설계 (RAG main 반영 완료, MCP 설계 착수 전, 2026-08-15)
 
-> 상세: `docs/mcp_plan_notes.md`(MCP 부분), `docs/rag-integration/STATUS.md`(RAG main 반영 부분 — 6개 항목 구현 + 코드리뷰 5차까지 전부 완료 후 `main`에 실제 merge됨, `f882c00`). RAG 자체 개발은 `rag/main` 브랜치에서 별도 진행 중(대화형 근거 기반 RAG → RAG 모듈 안정화, 상세는 `rag/main` 브랜치의 `docs/rag-project-plans/00_meta/STATUS.md`).
+> 상세: `docs/planning/mcp_plan_notes.md`(MCP 부분, 로컬 전용), `docs/rag-integration/STATUS.md`(RAG main 반영 부분 — 6개 항목 구현 + 코드리뷰 5차까지 전부 완료 후 `main`에 실제 merge됨, `f882c00`). RAG 자체 개발은 `rag/main` 브랜치에서 별도 진행 중(대화형 근거 기반 RAG → RAG 모듈 안정화, 상세는 `rag/main` 브랜치의 `docs/rag-project-plans/00_meta/STATUS.md`).
 
 - ✅ RAG `feat/rag-integration-plan`을 `main`에 merge 완료(2026-08-15, `f882c00`) — 파일 이식·opt-in 구조·provider 선택·데이터 동기화·Agent provider 지원·UI 전부 포함. merge 후 전체 앱 회귀 체크리스트(`docs/regression_testing_checklist.md`) + RAG 전용 체크리스트(`docs/rag_testing_checklist.md`)로 실사용 시나리오 검증까지 완료(총 79개 항목 중 77개 통과, 2개는 사용자 판단으로 생략/서버 미가동). 세부는 `docs/rag-integration/STATUS.md` 참고.
 - ⬜ 그 다음 MCP 설계·구현 착수 — 세부 도구·전송 방식·인증·쓰기 승인 정책은 아직 미확정
-- 💡 프로필 스냅샷 & 적합도 평가 히스토리 — 프로필 변경 시점마다 스냅샷 보관 + 회사별 refit 결과를 덮어쓰지 않고 이력으로 누적, 각 이력이 어느 프로필 스냅샷 기준인지 연결(예: 사이드 프로젝트 추가 후 점수가 몇 점 올랐는지 추적). SQLite로 저장(RAG의 Postgres는 opt-in이라 의존 안 함). 세부 설계는 `docs/profile_history_plan.md` 참고. RAG 반영 이후, 새 feature 브랜치(dev worktree)로 시작(2026-08-11 논의 시작, 2026-08-15 설계 구체화, 구현은 아직 착수 안 함)
+- 💡 프로필 스냅샷 & 적합도 평가 히스토리 — 프로필 변경 시점마다 스냅샷 보관 + 회사별 refit 결과를 덮어쓰지 않고 이력으로 누적, 각 이력이 어느 프로필 스냅샷 기준인지 연결(예: 사이드 프로젝트 추가 후 점수가 몇 점 올랐는지 추적). SQLite로 저장(RAG의 Postgres는 opt-in이라 의존 안 함). 세부 설계는 `docs/planning/profile_history_plan.md` 참고(로컬 전용). RAG 반영 이후, 새 feature 브랜치(dev worktree)로 시작(2026-08-11 논의 시작, 2026-08-15 설계 구체화, 구현은 아직 착수 안 함)
 - ⬜ Jobplanet 평점 조회 매칭 로직 개선 — merge 후 회귀 테스트 중 발견(2026-08-15, merge와는 무관한 기존 버그, `backend/services/jobplanet.py`는 이번 merge에서 미수정 확인됨). 카카오처럼 리뷰가 많은 회사도 `not_found` 처리됨 — 원인은 현재 코드가 Naver 검색 결과의 JSON `"title"` 필드만 정규식(`_SCORE_RE`)으로 파싱하는데, 이 title 텍스트가 매번 다른 지점에서 "..."로 잘려 평점 숫자가 아예 없는 경우가 많음. 실제로는 같은 검색 결과 페이지에 훨씬 안정적인 별도 구조화 블록이 존재함 — `class="fds-listitemlabel"`(값 "평점") 다음에 `<span>3.8/5</span>` ... `<span>1,307 참여</span>` 형태로 평점·리뷰수가 title과 무관하게 따로 렌더링됨. 이 블록을 BeautifulSoup으로 파싱하도록 `_search_naver()` 교체 검토(현재 title-JSON 정규식 방식 대신 또는 폴백으로 추가). RAG merge 완료 후 개선.
 - ✅ RAG 로컬 임베딩 provider 사용자 문서·설정 공백 — merge 후 회귀 테스트 중 발견·즉시 수정
   (2026-08-15). `LocalEmbeddingProvider`/`resolve_rag_embedding_provider()` 코드는 GPU 있는
