@@ -8,6 +8,8 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
 
+import frontmatter
+
 from config import settings
 
 DB_PATH = settings.data_dir / "app.db"
@@ -54,6 +56,37 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_fit_history_slug
             ON fit_history(company_slug, created_at)
         """)
+        conn.commit()
+    _backfill_fit_history()
+
+
+def _backfill_fit_history() -> None:
+    """기존 회사(.md에 fit_score 있음)의 이력이 하나도 없으면 현재 값을 첫 이력으로
+    소급 적용한다(profile_version_id=NULL, "이전 버전 불명"). 회사별로 이력이 하나라도
+    있으면 건너뛰므로 init_db() 호출마다(=앱 시작마다) 반복 실행해도 중복 생성되지 않는다."""
+    with get_connection() as conn:
+        for md_path in sorted(settings.companies_dir.glob("*.md")):
+            slug = md_path.stem
+            existing = conn.execute(
+                "SELECT 1 FROM fit_history WHERE company_slug = ? LIMIT 1", (slug,)
+            ).fetchone()
+            if existing:
+                continue
+            post = frontmatter.load(str(md_path))
+            fit_score = post.metadata.get("fit_score")
+            if fit_score is None:
+                continue
+            conn.execute(
+                "INSERT INTO fit_history (company_slug, created_at, profile_version_id, "
+                "fit_score, fit_label, content) VALUES (?, ?, NULL, ?, ?, ?)",
+                (
+                    slug,
+                    datetime.now().isoformat(timespec="seconds"),
+                    fit_score,
+                    post.metadata.get("fit_label"),
+                    md_path.read_text(encoding="utf-8"),
+                ),
+            )
         conn.commit()
 
 
@@ -174,6 +207,24 @@ if __name__ == "__main__":
 
         init_db()
         assert os.path.exists(DB_PATH)
+
+        # 소급 이력 백필 — fit_score 있는 기존 회사 파일이 생긴 뒤 init_db()를 다시
+        # 부르면(=앱 재시작 상황을 흉내) 1건만 생기고, 반복 호출해도 중복 안 생겨야 한다.
+        settings.companies_dir.mkdir(parents=True, exist_ok=True)
+        (settings.companies_dir / "백필테스트__직무.md").write_text(
+            "---\nfit_score: 55\nfit_label: 조건부추천\n---\n본문", encoding="utf-8"
+        )
+        (settings.companies_dir / "미평가회사__직무.md").write_text(
+            "---\ncompany_name: 미평가회사\n---\n본문(fit_score 없음)", encoding="utf-8"
+        )
+        init_db()
+        backfilled = list_fit_history("백필테스트__직무")
+        assert len(backfilled) == 1
+        assert backfilled[0]["fit_score"] == 55
+        assert backfilled[0]["profile_version_id"] is None  # "이전 버전 불명"
+        assert list_fit_history("미평가회사__직무") == []  # fit_score 없으면 백필 안 함
+        init_db()  # 재시작 흉내 — 중복 생성 안 됨
+        assert len(list_fit_history("백필테스트__직무")) == 1
 
         version_id = create_profile_version("테스트 프로필 내용")
         version_id2 = create_profile_version("두번째 프로필 내용", note="사이드 프로젝트 추가")
