@@ -683,6 +683,10 @@ async function loadFitHistory(slug) {
   } catch (e) {
     console.error('평가 이력 로딩 실패:', e);
     _fitHistoryCache = [];
+    // "이력 없음"과 구분해서 보여줌 — 안 보이면 사용자가 DB 문제를 알 방법이 없음
+    toggleEl.textContent = '⚠ 평가 이력을 불러오지 못했습니다';
+    toggleEl.classList.remove('hidden');
+    return;
   }
   if (!_fitHistoryCache.length) {
     toggleEl.classList.add('hidden');
@@ -1427,6 +1431,8 @@ async function loadProfileVersions() {
     versions = await api('/profile/versions');
   } catch (e) {
     console.error('프로필 버전 목록 로딩 실패:', e);
+    // "아직 없음"과 구분해서 보여줌 — 안 보이면 사용자가 DB 문제를 알 방법이 없음
+    listEl.innerHTML = '<p style="font-size:13px;color:#dc2626">⚠ 이전 버전 목록을 불러오지 못했습니다.</p>';
     return;
   }
   if (titleEl) titleEl.textContent = `이전 버전 (${versions.length}개)`;
