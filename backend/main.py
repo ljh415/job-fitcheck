@@ -20,6 +20,7 @@ import auth
 from config import ensure_dirs
 from routers import companies, profile, qa, rag
 from routers import settings as settings_router
+from services.app_db import init_db
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -28,6 +29,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     ensure_dirs()
+    init_db()
     task = asyncio.create_task(companies.weekly_summary_loop())
     yield
     task.cancel()
