@@ -6,6 +6,7 @@ RAG를 안 쓰는 사용자도 써야 하는 핵심 기능이라 선택 기능�
 """
 import sqlite3
 from contextlib import contextmanager
+from datetime import datetime
 
 from config import settings
 
@@ -51,6 +52,17 @@ def init_db() -> None:
         conn.commit()
 
 
+def create_profile_version(content: str) -> int:
+    """프로필 스냅샷을 저장하고 새로 생성된 id를 반환한다."""
+    with get_connection() as conn:
+        cur = conn.execute(
+            "INSERT INTO profile_versions (created_at, content) VALUES (?, ?)",
+            (datetime.now().isoformat(timespec="seconds"), content),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+
 if __name__ == "__main__":
     import os
     import tempfile
@@ -62,25 +74,23 @@ if __name__ == "__main__":
         init_db()
         assert os.path.exists(DB_PATH)
 
+        version_id = create_profile_version("테스트 프로필 내용")
         with get_connection() as conn:
-            conn.execute(
-                "INSERT INTO profile_versions (created_at, content) VALUES (?, ?)",
-                ("2026-08-16T00:00:00", "테스트 프로필 내용"),
-            )
-            conn.commit()
-            row = conn.execute("SELECT * FROM profile_versions").fetchone()
+            row = conn.execute(
+                "SELECT * FROM profile_versions WHERE id = ?", (version_id,)
+            ).fetchone()
             assert row["content"] == "테스트 프로필 내용"
 
             conn.execute(
                 "INSERT INTO fit_history (company_slug, created_at, profile_version_id, "
                 "fit_score, fit_label, content) VALUES (?, ?, ?, ?, ?, ?)",
-                ("테스트회사__직무", "2026-08-16T00:00:00", row["id"], 72, "추천", "리포트 원문"),
+                ("테스트회사__직무", "2026-08-16T00:00:00", version_id, 72, "추천", "리포트 원문"),
             )
             conn.commit()
             hist = conn.execute(
                 "SELECT * FROM fit_history WHERE company_slug = ?", ("테스트회사__직무",)
             ).fetchone()
-            assert hist["fit_score"] == 72 and hist["profile_version_id"] == row["id"]
+            assert hist["fit_score"] == 72 and hist["profile_version_id"] == version_id
 
         # 초기화 재호출(idempotent) 확인
         init_db()
