@@ -29,7 +29,7 @@ import storage
 from config import get_notify_pref, get_weekly_summary_schedule, settings
 from export import save_backup_zip
 from routers.rag import trigger_reindex_background
-from services.app_db import create_fit_history_entry, latest_profile_version_id
+from services.app_db import create_fit_history_entry, latest_profile_version_id, list_fit_history
 from services.jobplanet import fetch_jobplanet_score
 from llm.base import LLMAPIError
 from llm.router import LLMSnapshot, capture_snapshot, high_from_snapshot, light_from_snapshot
@@ -312,6 +312,25 @@ async def get_company(slug: str):
     if not record:
         raise HTTPException(status_code=404, detail="회사를 찾을 수 없습니다.")
     return record
+
+
+@router.get("/api/companies/{slug}/fit-history")
+async def get_company_fit_history(slug: str):
+    """적합도 평가 이력(최신순) — 표시용 요약만, 무거운 원문(content)은 제외."""
+    if not storage.read_company(slug):
+        raise HTTPException(status_code=404, detail="회사를 찾을 수 없습니다.")
+    history = list_fit_history(slug)
+    return [
+        {
+            "id": h["id"],
+            "created_at": h["created_at"],
+            "profile_version_id": h["profile_version_id"],
+            "profile_version_created_at": h["profile_version_created_at"],
+            "fit_score": h["fit_score"],
+            "fit_label": h["fit_label"],
+        }
+        for h in history
+    ]
 
 
 _EDIT_FORM_FIELDS = {
