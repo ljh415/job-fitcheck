@@ -136,6 +136,17 @@ def create_fit_history_entry(
         return cur.lastrowid
 
 
+def get_fit_history_entry(entry_id: int) -> dict | None:
+    """평가 이력 1건 전체(그 시점 회사 .md 원문 포함) — 상세보기용."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT id, company_slug, created_at, fit_score, fit_label, content "
+            "FROM fit_history WHERE id = ?",
+            (entry_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+
 def list_fit_history(company_slug: str) -> list[dict]:
     """표시용 — content(무거운 원문)는 제외, 프로필 버전의 존재 여부까지 같이 반환."""
     with get_connection() as conn:
@@ -205,6 +216,10 @@ if __name__ == "__main__":
         assert hist_list[0]["profile_version_created_at"] is not None  # 정상 참조
         assert hist_list[1]["fit_score"] == 72
         assert hist_list[1]["profile_version_created_at"] is None  # 삭제된 버전 참조 → "삭제됨" 판단용
+
+        entry = get_fit_history_entry(hist_list[0]["id"])
+        assert entry["content"] == "리포트 원문(정상 참조)"
+        assert get_fit_history_entry(999999) is None
 
         # 초기화 재호출(idempotent) 확인
         init_db()

@@ -144,10 +144,12 @@
     <div id="tab-content-info" class="tab-content">
       <div class="detail-meta">
         <div id="fit-badge"></div>
+        <span id="fit-history-toggle" class="hidden" style="font-size:13px;color:var(--primary);cursor:pointer;margin-left:8px" onclick="toggleFitHistory()"></span>
         <div id="meta-chips"></div>
         <div id="company-facts" class="company-facts hidden"></div>
       </div>
       <div id="company-body" class="markdown-body"></div>
+      <div id="fit-history-panel" class="hidden" style="margin:20px 0"></div>
     </div>
 
     <div id="tab-content-edit" class="tab-content hidden">
@@ -540,6 +542,17 @@
     </div>
     <div id="profile-version-detail-meta" style="font-size:13px;color:#6b7280;margin-bottom:12px"></div>
     <div id="profile-version-detail-body" class="markdown-body profile-preview-area"></div>
+  </div>
+</template>
+
+<template id="tpl-fit-history">
+  <div class="view">
+    <div class="view-header">
+      <button id="fit-history-back-btn" onclick="navigate('dashboard')" class="back-btn">← 목록</button>
+      <h2>평가 이력 상세</h2>
+    </div>
+    <div id="fit-history-detail-meta" style="font-size:13px;color:#6b7280;margin-bottom:12px"></div>
+    <div id="fit-history-detail-body" class="markdown-body"></div>
   </div>
 </template>
 

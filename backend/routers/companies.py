@@ -18,6 +18,7 @@ import logging
 import re
 from datetime import date, datetime, timedelta
 
+import frontmatter
 import httpx
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
@@ -29,7 +30,12 @@ import storage
 from config import get_notify_pref, get_weekly_summary_schedule, settings
 from export import save_backup_zip
 from routers.rag import trigger_reindex_background
-from services.app_db import create_fit_history_entry, latest_profile_version_id, list_fit_history
+from services.app_db import (
+    create_fit_history_entry,
+    get_fit_history_entry,
+    latest_profile_version_id,
+    list_fit_history,
+)
 from services.jobplanet import fetch_jobplanet_score
 from llm.base import LLMAPIError
 from llm.router import LLMSnapshot, capture_snapshot, high_from_snapshot, light_from_snapshot
@@ -331,6 +337,20 @@ async def get_company_fit_history(slug: str):
         }
         for h in history
     ]
+
+
+@router.get("/api/fit-history/{entry_id}")
+async def get_fit_history_detail(entry_id: int):
+    """평가 이력 1건 전체(그 시점 회사 정보+적합도 리포트 원문). id 하나로 조회 —
+    entry 자체에 company_slug가 있어 부모 경로 없이도 유일하게 식별 가능(프로필 버전
+    상세 조회와 같은 패턴)."""
+    entry = get_fit_history_entry(entry_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="해당 이력을 찾을 수 없습니다.")
+    post = frontmatter.loads(entry["content"])
+    fm = CompanyFrontmatter(**post.metadata)
+    record = CompanyRecord(slug=entry["company_slug"], frontmatter=fm, body=post.content)
+    return {**record.model_dump(), "history_created_at": entry["created_at"]}
 
 
 _EDIT_FORM_FIELDS = {
