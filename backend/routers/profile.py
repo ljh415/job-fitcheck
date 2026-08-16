@@ -4,6 +4,7 @@ import logging
 from datetime import date
 from pathlib import Path
 
+import frontmatter
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 
@@ -13,9 +14,14 @@ import storage
 from config import settings
 from llm.base import LLMAPIError
 from llm.router import capture_snapshot, high_from_snapshot
-from models import CandidateProfile, ProfileUpdateRequest
+from models import CandidateProfile, CandidateRecord, ProfileUpdateRequest
 from routers.rag import trigger_reindex_background
-from services.app_db import create_profile_version
+from services.app_db import (
+    create_profile_version,
+    delete_profile_version,
+    get_profile_version,
+    list_profile_versions,
+)
 from services.pdf_parser import PDFExtractError
 
 logger = logging.getLogger(__name__)
@@ -62,6 +68,38 @@ async def export_profile():
         media_type="text/markdown; charset=utf-8",
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
     )
+
+
+@router.get("/api/profile/versions")
+async def list_profile_version_history():
+    """프로필 스냅샷 목록(최신순) — 표시용 요약만 반환, 원문은 상세 조회에서."""
+    versions = list_profile_versions()
+    result = []
+    for v in versions:
+        try:
+            summary = frontmatter.loads(v["content"]).metadata.get("summary")
+        except Exception:
+            summary = None
+        result.append({"id": v["id"], "created_at": v["created_at"], "summary": summary})
+    return result
+
+
+@router.get("/api/profile/versions/{version_id}")
+async def get_profile_version_detail(version_id: int):
+    """특정 시점 프로필 스냅샷 전체(현재 `GET /api/profile`과 같은 형태)."""
+    v = get_profile_version(version_id)
+    if not v:
+        raise HTTPException(status_code=404, detail="해당 버전을 찾을 수 없습니다.")
+    post = frontmatter.loads(v["content"])
+    fm = CandidateProfile(**post.metadata)
+    return CandidateRecord(frontmatter=fm, body=post.content)
+
+
+@router.delete("/api/profile/versions/{version_id}")
+async def delete_profile_version_endpoint(version_id: int):
+    if not delete_profile_version(version_id):
+        raise HTTPException(status_code=404, detail="해당 버전을 찾을 수 없습니다.")
+    return {"status": "deleted"}
 
 
 @router.put("/api/profile")
