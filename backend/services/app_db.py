@@ -75,11 +75,42 @@ def init_db() -> None:
                 ON fit_history(company_slug, created_at)
             """)
             conn.commit()
+        _backfill_profile_version()
         _backfill_fit_history()
         _healthy = True
     except Exception as e:
         logger.error("프로필 히스토리 DB 초기화 실패 - 이 기능만 비활성화됩니다: %s", e)
         _healthy = False
+
+
+def _backfill_profile_version() -> None:
+    """프로필 스냅샷이 하나도 없는데 candidate_profile.md는 있으면(이 기능이
+    생기기 전부터 있던 기존 프로필), 그 파일을 첫 스냅샷으로 소급 적용한다.
+    이건 "최초 설치 시 1회" 마이그레이션이지, 사용자가 스냅샷을 전부 삭제한
+    걸 되살리는 게 아니다 — 그래서 단순히 "테이블이 비었는지"가 아니라
+    sqlite_sequence(SQLite가 AUTOINCREMENT 최고값을 추적하는 내장 테이블,
+    행을 다 지워도 기록은 남음)에 이 테이블 이력이 아예 없을 때만("지금까지
+    단 한 번도 INSERT가 없었을 때만") 백필한다. 안 그러면 사용자가 마지막
+    스냅샷을 명시적으로 삭제해도 다음 재시작에 새 id로 조용히 되살아난다
+    (Codex 리뷰 2026-08-17 발견)."""
+    with get_connection() as conn:
+        ever_inserted = conn.execute(
+            "SELECT 1 FROM sqlite_sequence WHERE name = 'profile_versions'"
+        ).fetchone()
+        if ever_inserted:
+            return
+        if not settings.candidate_profile_path.exists():
+            return
+        try:
+            content = settings.candidate_profile_path.read_text(encoding="utf-8")
+        except Exception as e:
+            logger.warning("프로필 소급 스냅샷 생성 실패: %s", e)
+            return
+        conn.execute(
+            "INSERT INTO profile_versions (created_at, content, note) VALUES (?, ?, ?)",
+            (datetime.now().isoformat(timespec="seconds"), content, None),
+        )
+        conn.commit()
 
 
 def _backfill_fit_history() -> None:
@@ -247,6 +278,29 @@ if __name__ == "__main__":
 
         init_db()
         assert os.path.exists(DB_PATH)
+        assert list_profile_versions() == []  # 프로필 파일 없으면 백필 안 함
+
+        # 프로필 소급 백필 — 이 기능 생기기 전부터 있던 candidate_profile.md가
+        # 생긴 뒤 init_db()를 다시 부르면(=앱 재시작 흉내) 1건만 생기고, 반복
+        # 호출해도 중복 안 생겨야 한다.
+        settings.candidate_profile_path.write_text("---\nname: 테스트\n---\n소급 프로필", encoding="utf-8")
+        init_db()
+        profile_backfilled = list_profile_versions()
+        assert len(profile_backfilled) == 1
+        assert get_profile_version(profile_backfilled[0]["id"])["content"] == "---\nname: 테스트\n---\n소급 프로필"
+        init_db()  # 재시작 흉내 — 중복 생성 안 됨
+        assert len(list_profile_versions()) == 1
+        assert delete_profile_version(profile_backfilled[0]["id"]) is True
+        assert list_profile_versions() == []
+        # 사용자가 마지막 스냅샷을 명시적으로 지운 것 — 프로필 파일이 그대로
+        # 있어도 재시작 때 되살아나면 안 된다("한 번도 없었음"과 구분)
+        init_db()
+        assert list_profile_versions() == [], "삭제한 스냅샷이 재시작으로 되살아나면 안 됨"
+
+        # 이후 테스트들이 빈 상태를 가정하므로 백필 테스트용 파일 정리
+        # (파일을 안 지우면 이후에도 계속 존재하지만, 위 재검증으로 더 이상
+        # 백필 대상이 아님을 확인했으므로 상태 정리 차원)
+        settings.candidate_profile_path.unlink()
 
         # 소급 이력 백필 — fit_score 있는 기존 회사 파일이 생긴 뒤 init_db()를 다시
         # 부르면(=앱 재시작 상황을 흉내) 1건만 생기고, 반복 호출해도 중복 안 생겨야 한다.
