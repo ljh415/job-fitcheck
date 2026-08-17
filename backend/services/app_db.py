@@ -69,34 +69,35 @@ def _backfill_fit_history() -> None:
     있으면 건너뛰므로 init_db() 호출마다(=앱 시작마다) 반복 실행해도 중복 생성되지 않는다.
     회사 파일 하나가 파싱 실패해도(손상된 frontmatter 등) 그 파일만 건너뛰고 나머지는
     계속 진행한다 — 한 파일 때문에 전체가 실패하면 트랜잭션이 커밋 전 롤백돼 정상
-    회사들 이력까지 통째로 안 생긴다(Codex 리뷰 2026-08-17 발견)."""
+    회사들 이력까지 통째로 안 생긴다(Codex 리뷰 2026-08-17 발견).
+    단, try/except는 "파일 내용 파싱"만 감싼다 — DB 자체가 read-only/손상이면(SQLite
+    호출 실패) 그건 파일 문제가 아니라 인프라 문제라 여기서 삼키지 않고 그대로
+    올려보내서 init_db() 호출부(main.py)의 격리 로직이 처리하게 한다. 안 그러면 DB가
+    통째로 고장나도 "파일 파싱 실패"로 매번 조용히 넘어가 아무도 못 알아챈다(Codex
+    재리뷰 2026-08-17 발견)."""
     with get_connection() as conn:
         for md_path in sorted(settings.companies_dir.glob("*.md")):
             slug = md_path.stem
+            existing = conn.execute(
+                "SELECT 1 FROM fit_history WHERE company_slug = ? LIMIT 1", (slug,)
+            ).fetchone()
+            if existing:
+                continue
             try:
-                existing = conn.execute(
-                    "SELECT 1 FROM fit_history WHERE company_slug = ? LIMIT 1", (slug,)
-                ).fetchone()
-                if existing:
-                    continue
                 post = frontmatter.load(str(md_path))
                 fit_score = post.metadata.get("fit_score")
-                if fit_score is None:
-                    continue
-                conn.execute(
-                    "INSERT INTO fit_history (company_slug, created_at, profile_version_id, "
-                    "fit_score, fit_label, content) VALUES (?, ?, NULL, ?, ?, ?)",
-                    (
-                        slug,
-                        datetime.now().isoformat(timespec="seconds"),
-                        fit_score,
-                        post.metadata.get("fit_label"),
-                        md_path.read_text(encoding="utf-8"),
-                    ),
-                )
+                fit_label = post.metadata.get("fit_label")
+                content = md_path.read_text(encoding="utf-8")
             except Exception as e:
-                logger.warning("소급 이력 생성 실패 (slug=%s): %s", slug, e)
+                logger.warning("소급 이력 생성 실패 - 파일 파싱 오류 (slug=%s): %s", slug, e)
                 continue
+            if fit_score is None:
+                continue
+            conn.execute(
+                "INSERT INTO fit_history (company_slug, created_at, profile_version_id, "
+                "fit_score, fit_label, content) VALUES (?, ?, NULL, ?, ?, ?)",
+                (slug, datetime.now().isoformat(timespec="seconds"), fit_score, fit_label, content),
+            )
         conn.commit()
 
 
@@ -259,6 +260,23 @@ if __name__ == "__main__":
         assert list_fit_history("새회사__직무")[0]["fit_score"] == 88
         assert list_fit_history("깨진회사__직무") == []  # 파싱 실패 → 건너뜀, 크래시 안 함
         assert len(list_fit_history("백필테스트__직무")) == 1  # 기존 이력도 롤백 안 됨
+
+        # DB 자체가 고장난 경우(예: read-only)는 파일 파싱 실패와 달리 삼키면 안 되고
+        # 그대로 예외가 올라가야 한다 — 안 그러면 init_db() 호출부(main.py)가 DB 장애를
+        # 감지 못 해서 "정상 0건"처럼 조용히 넘어간다(Codex 재리뷰 2026-08-17 발견)
+        (settings.companies_dir / "읽기전용테스트__직무.md").write_text(
+            "---\nfit_score: 70\n---\n본문", encoding="utf-8"
+        )
+        os.chmod(DB_PATH, 0o444)
+        try:
+            raised = False
+            try:
+                _backfill_fit_history()
+            except Exception:
+                raised = True
+            assert raised, "read-only DB에서도 예외 없이 조용히 끝나면 안 됨"
+        finally:
+            os.chmod(DB_PATH, 0o644)  # 이후 테스트가 계속 쓸 수 있도록 원복
 
         version_id = create_profile_version("테스트 프로필 내용")
         version_id2 = create_profile_version("두번째 프로필 내용", note="사이드 프로젝트 추가")
