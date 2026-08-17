@@ -15,7 +15,11 @@ docs/review-w-codex/
 docs/phase*.md
 
 # RAG 서브 프로젝트 계획 (Codex 작업 중, 로컬 보관용)
+# prod worktree에는 dev worktree의 실제 디렉토리를 가리키는 심볼릭 링크로 존재함
+# (2026-07-22 생성) — 끝에 슬래시 붙은 패턴은 실제 디렉토리만 매칭하고 심볼릭
+# 링크는 매칭 안 하는 git 사양 때문에, 슬래시 없는 패턴을 하나 더 추가해야 함
 docs/rag-project-plans/
+docs/rag-project-plans
 
 # 계획/설계 문서 (구현 전 아이디어·초안 — 공개 저장소에 로드맵 노출 원치 않음, 로컬 보관용)
 docs/planning/
