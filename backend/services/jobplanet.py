@@ -5,11 +5,21 @@
 검색 엔진 스니펫에서 평점을 파싱하는 방식을 사용한다.
 
 검색 전략 (순서대로 시도):
-  1. Naver  — 안정적이나 일부 소규모 회사는 인덱싱 안 됨
+  1. Naver  — 검색결과 안의 안정적인 평점 블록(class="fds-listitem")을 파싱.
+     예전엔 JSON title 필드(최대 300자)를 정규식으로 훑었는데, Naver가 그
+     텍스트를 매번 다른 지점에서 잘라버려서 평점 부분이 종종 통째로 사라졌다
+     (카카오처럼 리뷰 많은 회사도 not_found로 오탐, 2026-08-15 발견 → 2026-08-17
+     수정). fds-listitem 블록은 title JSON과 별도로 안정적으로 렌더링되고 잘릴
+     걱정이 없다.
   2. DuckDuckGo HTML — Naver에서 못 찾은 경우 fallback
      단, 연속 요청 시 rate limiting (202) 발생 가능
 
-스니펫 형식 예시:
+Naver 평점 블록 형식 예시 (item.get_text()):
+  "평점 3.8/5 1,307 참여"
+같은 컨테이너 상위에 "(주) 카카오 기업정보 - 산업: ..." 형태의 링크가 있어
+회사명을 같이 뽑는다.
+
+DDG 스니펫 형식 예시:
   "(주)에너닷 2026년 상반기 채용 | 기업리뷰 13건, 3.8 리뷰평점"
 
 회사명 오탐 방지:
@@ -34,12 +44,14 @@ _HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 }
 
-# 스니펫/제목에서 평점 패턴: "기업리뷰 13건, 3.8 리뷰평점"
+# DDG 스니펫에서 평점 패턴: "기업리뷰 13건, 3.8 리뷰평점"
 _SCORE_RE = re.compile(r"기업리뷰\s*(\d+)건[,\s]+(\d+\.\d+)\s*리뷰평점")
-# Naver JSON title 필드
-_NAVER_TITLE_RE = re.compile(r'"title"\s*:\s*"([^"]{0,300})"')
-_MARK_RE = re.compile(r"</?mark>")
-# 제목 앞부분 회사명 추출
+# Naver 평점 블록(class="fds-listitem") 텍스트: "평점 3.8/5 1,307 참여"
+_NAVER_SCORE_RE = re.compile(r"평점\s*(\d+\.\d+)/5\s*([\d,]+)\s*참여")
+# Naver "기업정보" 링크에서 회사명 추출: "(주) 카카오 기업정보 - 산업: ..."
+_NAVER_INFO_RE = re.compile(r"^(.*?)\s*기업정보")
+# 제목 앞부분 회사명 추출 (DDG 스니펫용, Naver 쪽은 _NAVER_INFO_RE로 이미 순수
+# 회사명만 뽑으므로 " 기업정보"를 합성해서 이 정규식과 호환되게 넘긴다)
 _SNIPPET_COMPANY_RE = re.compile(r"^(.+?)\s*(?:\d{4}년|기업정보|기업리뷰)")
 
 
@@ -107,22 +119,62 @@ def _best_candidate(company_name: str, candidates: list[tuple[float, int, str]])
     return None
 
 
-async def _search_naver(company_name: str, client: httpx.AsyncClient) -> list[tuple[float, int, str]]:
-    """Naver 검색 결과 HTML의 JSON title 필드에서 후보를 추출한다.
+def _extract_naver_candidates(html: str) -> list[tuple[float, int, str]]:
+    """Naver 검색 결과 HTML의 안정적인 평점 블록(class="fds-listitem")에서
+    후보를 추출한다. 네트워크와 분리해뒀다 — self-check에서 fixture HTML로
+    직접 검증할 수 있도록.
 
-    'site:jobplanet.co.kr' 쿼리를 사용하면 잡플래닛 페이지만 인덱싱되어
-    일반 쿼리보다 훨씬 더 많은 회사를 찾을 수 있다 (에너닷 등 소규모 포함).
+    각 평점 블록에서 위쪽 조상 요소(최대 6단계)를 훑어 "...기업정보" 링크를
+    찾아 회사명을 페어링한다 — 못 찾으면 그 후보는 버린다(회사명 없인 유사도
+    매칭이 불가능하므로). 다만 조상이 평점 블록을 2개 이상 포함하게 되면 그건
+    검색 결과 카드 하나의 범위를 넘어 여러 카드를 감싸는 공통 조상이라는
+    뜻이라 — 거기서 찾은 링크는 남의 카드 것일 수 있으므로 더 올라가지 않고
+    포기한다(자기 카드에 링크가 없는 항목이 옆 카드 링크를 가로채 틀린
+    회사명과 페어링되는 걸 방지, Codex 리뷰 2026-08-17 발견).
+    """
+    soup = BeautifulSoup(html, "lxml")
+    candidates = []
+    for item in soup.select(".fds-listitem"):
+        sm = _NAVER_SCORE_RE.search(item.get_text(" ", strip=True))
+        if not sm:
+            continue
+        score = float(sm.group(1))
+        count = int(sm.group(2).replace(",", ""))
+        company = None
+        node = item.parent
+        for _ in range(6):
+            if node is None:
+                break
+            # 이 조상 안에 평점 블록이 2개 이상이면 카드 경계를 이미 넘은 것
+            # — 남의 카드 링크를 잘못 집어올 수 있으니 여기서 포기한다.
+            if len(node.select(".fds-listitem")) >= 2:
+                break
+            for a in node.find_all("a"):
+                m = _NAVER_INFO_RE.match(a.get_text(" ", strip=True))
+                if m and m.group(1):
+                    company = m.group(1)
+                    break
+            if company:
+                break
+            node = node.parent
+        if company:
+            # _best_candidate()의 _SNIPPET_COMPANY_RE가 "...기업정보" 형태를
+            # 기대하므로, 이미 순수하게 뽑아낸 회사명에 마커를 다시 합성해서 넘긴다.
+            candidates.append((score, count, f"{company} 기업정보"))
+    return candidates
+
+
+async def _search_naver(company_name: str, client: httpx.AsyncClient) -> list[tuple[float, int, str]]:
+    """'site:jobplanet.co.kr' 쿼리로 Naver 검색 결과를 받아 후보를 추출한다.
+
+    이 쿼리를 쓰면 잡플래닛 페이지만 인덱싱되어 일반 쿼리보다 훨씬 더 많은
+    회사를 찾을 수 있다 (에너닷 등 소규모 포함). 실제 파싱은
+    _extract_naver_candidates() 참고.
     """
     query = f"site:jobplanet.co.kr {company_name}"
     resp = await client.get(_NAVER_URL, params={"query": query})
     resp.raise_for_status()
-    candidates = []
-    for m in _NAVER_TITLE_RE.finditer(resp.text):
-        raw = _MARK_RE.sub("", m.group(1))
-        sm = _SCORE_RE.search(raw)
-        if sm:
-            candidates.append((float(sm.group(2)), int(sm.group(1)), raw))
-    return candidates
+    return _extract_naver_candidates(resp.text)
 
 
 async def _search_ddg(company_name: str, client: httpx.AsyncClient) -> list[tuple[float, int, str]]:
@@ -173,3 +225,45 @@ async def fetch_jobplanet_score(company_name: str) -> JobplanetResult:
         return JobplanetResult(None, None, "error", str(e))
 
     return JobplanetResult(None, None, "not_found")
+
+
+if __name__ == "__main__":
+    import asyncio
+
+    # 링크 없는 평점 블록(4.9/999, 가짜)이 다음 카드의 "(주) 카카오" 링크를
+    # 가로채 틀린 점수로 채택되던 문제 재현·회귀 방지(네트워크 불필요,
+    # Codex 리뷰 2026-08-17 발견)
+    _CROSS_CARD_FIXTURE = """
+    <div class="container">
+      <div class="card">
+        <div class="fds-listitem">평점 4.9/5 999 참여</div>
+      </div>
+      <div class="card">
+        <a href="x">(주) 카카오 기업정보 - 산업: ...</a>
+        <div class="fds-listitem">평점 3.8/5 1,307 참여</div>
+      </div>
+    </div>
+    """
+    _fixture_candidates = _extract_naver_candidates(_CROSS_CARD_FIXTURE)
+    assert _fixture_candidates == [(3.8, 1307, "(주) 카카오 기업정보")], _fixture_candidates
+    print("교차 카드 fixture:", _fixture_candidates)
+
+    async def _check():
+        # 카카오: 이전엔 title JSON 절단으로 not_found 오탐(2026-08-15 발견)
+        kakao = await fetch_jobplanet_score("카카오")
+        assert kakao.source == "search_snippet", f"카카오: {kakao.source}"
+        assert kakao.score is not None and kakao.score > 0
+        print("카카오:", kakao.score, kakao.review_count)
+
+        # 에너닷: 소규모 회사, 예전에도 되던 케이스라 회귀 확인용
+        enerdat = await fetch_jobplanet_score("에너닷")
+        assert enerdat.source == "search_snippet", f"에너닷: {enerdat.source}"
+        print("에너닷:", enerdat.score, enerdat.review_count)
+
+        # 존재하지 않는 회사: false positive 없이 not_found여야 함
+        none_result = await fetch_jobplanet_score("존재하지않는가상의회사이름ABCXYZ123")
+        assert none_result.source == "not_found", f"미등록 회사인데: {none_result.source}"
+        print("미등록 회사:", none_result.source)
+
+    asyncio.run(_check())
+    print("jobplanet self-check 통과")
