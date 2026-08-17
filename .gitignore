@@ -24,6 +24,10 @@ docs/planning/
 # 반영 시 완성된 코드만 재작성하고 이 문서는 안 가져감)
 docs/rag-integration/
 
+# 기능 브랜치 전용 개발 문서(설계+히스토리) — 브랜치 하나로 바로 만드는 기능은
+# docs/rag-integration/과 같은 패턴으로 docs/{기능명}/에 PLAN.md+HISTORY.md, 로컬 보관용
+docs/profile-history/
+
 # 데이터 (개인 정보 포함)
 data/
 

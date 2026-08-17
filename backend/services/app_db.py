@@ -2,7 +2,7 @@
 
 단일 파일(data/app.db)로 관리한다. RAG의 Postgres(opt-in)와는 무관 — 프로필 히스토리는
 RAG를 안 쓰는 사용자도 써야 하는 핵심 기능이라 선택 기능의 DB에 의존하지 않는다.
-세부 설계는 docs/planning/profile_history_plan.md 참고.
+세부 설계는 docs/profile-history/PLAN.md 참고.
 """
 import logging
 import sqlite3
@@ -336,7 +336,7 @@ if __name__ == "__main__":
         assert delete_profile_version(version_id) is False  # 이미 삭제됨
 
         # fit_history는 FK를 강제하지 않으므로, 삭제된 스냅샷을 참조해도 insert는 성공해야
-        # 한다("삭제됨" 표시는 조회 시점에 판단, 위 profile_history_plan.md 참고)
+        # 한다("삭제됨" 표시는 조회 시점에 판단, 위 docs/profile-history/PLAN.md 참고)
         assert latest_profile_version_id() == version_id2
         create_fit_history_entry("테스트회사__직무", version_id, 72, "추천", "리포트 원문(삭제된 버전 참조)")
         create_fit_history_entry("테스트회사__직무", version_id2, 62, "조건부추천", "리포트 원문(정상 참조)")
