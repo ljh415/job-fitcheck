@@ -119,21 +119,20 @@ def _best_candidate(company_name: str, candidates: list[tuple[float, int, str]])
     return None
 
 
-async def _search_naver(company_name: str, client: httpx.AsyncClient) -> list[tuple[float, int, str]]:
+def _extract_naver_candidates(html: str) -> list[tuple[float, int, str]]:
     """Naver 검색 결과 HTML의 안정적인 평점 블록(class="fds-listitem")에서
-    후보를 추출한다.
-
-    'site:jobplanet.co.kr' 쿼리를 사용하면 잡플래닛 페이지만 인덱싱되어
-    일반 쿼리보다 훨씬 더 많은 회사를 찾을 수 있다 (에너닷 등 소규모 포함).
+    후보를 추출한다. 네트워크와 분리해뒀다 — self-check에서 fixture HTML로
+    직접 검증할 수 있도록.
 
     각 평점 블록에서 위쪽 조상 요소(최대 6단계)를 훑어 "...기업정보" 링크를
     찾아 회사명을 페어링한다 — 못 찾으면 그 후보는 버린다(회사명 없인 유사도
-    매칭이 불가능하므로).
+    매칭이 불가능하므로). 다만 조상이 평점 블록을 2개 이상 포함하게 되면 그건
+    검색 결과 카드 하나의 범위를 넘어 여러 카드를 감싸는 공통 조상이라는
+    뜻이라 — 거기서 찾은 링크는 남의 카드 것일 수 있으므로 더 올라가지 않고
+    포기한다(자기 카드에 링크가 없는 항목이 옆 카드 링크를 가로채 틀린
+    회사명과 페어링되는 걸 방지, Codex 리뷰 2026-08-17 발견).
     """
-    query = f"site:jobplanet.co.kr {company_name}"
-    resp = await client.get(_NAVER_URL, params={"query": query})
-    resp.raise_for_status()
-    soup = BeautifulSoup(resp.text, "lxml")
+    soup = BeautifulSoup(html, "lxml")
     candidates = []
     for item in soup.select(".fds-listitem"):
         sm = _NAVER_SCORE_RE.search(item.get_text(" ", strip=True))
@@ -145,6 +144,10 @@ async def _search_naver(company_name: str, client: httpx.AsyncClient) -> list[tu
         node = item.parent
         for _ in range(6):
             if node is None:
+                break
+            # 이 조상 안에 평점 블록이 2개 이상이면 카드 경계를 이미 넘은 것
+            # — 남의 카드 링크를 잘못 집어올 수 있으니 여기서 포기한다.
+            if len(node.select(".fds-listitem")) >= 2:
                 break
             for a in node.find_all("a"):
                 m = _NAVER_INFO_RE.match(a.get_text(" ", strip=True))
@@ -159,6 +162,19 @@ async def _search_naver(company_name: str, client: httpx.AsyncClient) -> list[tu
             # 기대하므로, 이미 순수하게 뽑아낸 회사명에 마커를 다시 합성해서 넘긴다.
             candidates.append((score, count, f"{company} 기업정보"))
     return candidates
+
+
+async def _search_naver(company_name: str, client: httpx.AsyncClient) -> list[tuple[float, int, str]]:
+    """'site:jobplanet.co.kr' 쿼리로 Naver 검색 결과를 받아 후보를 추출한다.
+
+    이 쿼리를 쓰면 잡플래닛 페이지만 인덱싱되어 일반 쿼리보다 훨씬 더 많은
+    회사를 찾을 수 있다 (에너닷 등 소규모 포함). 실제 파싱은
+    _extract_naver_candidates() 참고.
+    """
+    query = f"site:jobplanet.co.kr {company_name}"
+    resp = await client.get(_NAVER_URL, params={"query": query})
+    resp.raise_for_status()
+    return _extract_naver_candidates(resp.text)
 
 
 async def _search_ddg(company_name: str, client: httpx.AsyncClient) -> list[tuple[float, int, str]]:
@@ -213,6 +229,24 @@ async def fetch_jobplanet_score(company_name: str) -> JobplanetResult:
 
 if __name__ == "__main__":
     import asyncio
+
+    # 링크 없는 평점 블록(4.9/999, 가짜)이 다음 카드의 "(주) 카카오" 링크를
+    # 가로채 틀린 점수로 채택되던 문제 재현·회귀 방지(네트워크 불필요,
+    # Codex 리뷰 2026-08-17 발견)
+    _CROSS_CARD_FIXTURE = """
+    <div class="container">
+      <div class="card">
+        <div class="fds-listitem">평점 4.9/5 999 참여</div>
+      </div>
+      <div class="card">
+        <a href="x">(주) 카카오 기업정보 - 산업: ...</a>
+        <div class="fds-listitem">평점 3.8/5 1,307 참여</div>
+      </div>
+    </div>
+    """
+    _fixture_candidates = _extract_naver_candidates(_CROSS_CARD_FIXTURE)
+    assert _fixture_candidates == [(3.8, 1307, "(주) 카카오 기업정보")], _fixture_candidates
+    print("교차 카드 fixture:", _fixture_candidates)
 
     async def _check():
         # 카카오: 이전엔 title JSON 절단으로 not_found 오탐(2026-08-15 발견)
