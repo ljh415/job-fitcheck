@@ -4,6 +4,7 @@
 RAG를 안 쓰는 사용자도 써야 하는 핵심 기능이라 선택 기능의 DB에 의존하지 않는다.
 세부 설계는 docs/planning/profile_history_plan.md 참고.
 """
+import logging
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
@@ -11,6 +12,8 @@ from datetime import datetime
 import frontmatter
 
 from config import settings
+
+logger = logging.getLogger(__name__)
 
 DB_PATH = settings.data_dir / "app.db"
 
@@ -63,30 +66,37 @@ def init_db() -> None:
 def _backfill_fit_history() -> None:
     """기존 회사(.md에 fit_score 있음)의 이력이 하나도 없으면 현재 값을 첫 이력으로
     소급 적용한다(profile_version_id=NULL, "이전 버전 불명"). 회사별로 이력이 하나라도
-    있으면 건너뛰므로 init_db() 호출마다(=앱 시작마다) 반복 실행해도 중복 생성되지 않는다."""
+    있으면 건너뛰므로 init_db() 호출마다(=앱 시작마다) 반복 실행해도 중복 생성되지 않는다.
+    회사 파일 하나가 파싱 실패해도(손상된 frontmatter 등) 그 파일만 건너뛰고 나머지는
+    계속 진행한다 — 한 파일 때문에 전체가 실패하면 트랜잭션이 커밋 전 롤백돼 정상
+    회사들 이력까지 통째로 안 생긴다(Codex 리뷰 2026-08-17 발견)."""
     with get_connection() as conn:
         for md_path in sorted(settings.companies_dir.glob("*.md")):
             slug = md_path.stem
-            existing = conn.execute(
-                "SELECT 1 FROM fit_history WHERE company_slug = ? LIMIT 1", (slug,)
-            ).fetchone()
-            if existing:
+            try:
+                existing = conn.execute(
+                    "SELECT 1 FROM fit_history WHERE company_slug = ? LIMIT 1", (slug,)
+                ).fetchone()
+                if existing:
+                    continue
+                post = frontmatter.load(str(md_path))
+                fit_score = post.metadata.get("fit_score")
+                if fit_score is None:
+                    continue
+                conn.execute(
+                    "INSERT INTO fit_history (company_slug, created_at, profile_version_id, "
+                    "fit_score, fit_label, content) VALUES (?, ?, NULL, ?, ?, ?)",
+                    (
+                        slug,
+                        datetime.now().isoformat(timespec="seconds"),
+                        fit_score,
+                        post.metadata.get("fit_label"),
+                        md_path.read_text(encoding="utf-8"),
+                    ),
+                )
+            except Exception as e:
+                logger.warning("소급 이력 생성 실패 (slug=%s): %s", slug, e)
                 continue
-            post = frontmatter.load(str(md_path))
-            fit_score = post.metadata.get("fit_score")
-            if fit_score is None:
-                continue
-            conn.execute(
-                "INSERT INTO fit_history (company_slug, created_at, profile_version_id, "
-                "fit_score, fit_label, content) VALUES (?, ?, NULL, ?, ?, ?)",
-                (
-                    slug,
-                    datetime.now().isoformat(timespec="seconds"),
-                    fit_score,
-                    post.metadata.get("fit_label"),
-                    md_path.read_text(encoding="utf-8"),
-                ),
-            )
         conn.commit()
 
 
@@ -235,6 +245,20 @@ if __name__ == "__main__":
         assert list_fit_history("미평가회사__직무") == []  # fit_score 없으면 백필 안 함
         init_db()  # 재시작 흉내 — 중복 생성 안 됨
         assert len(list_fit_history("백필테스트__직무")) == 1
+
+        # 손상된 회사 파일 하나가 섞여도 나머지 정상 회사는 백필돼야 한다(트랜잭션
+        # 전체 롤백 금지 — 한 파일이 깨졌다고 이미 처리된 정상 이력까지 사라지면 안 됨)
+        (settings.companies_dir / "깨진회사__직무.md").write_text(
+            "---\nfit_score: [닫히지 않은 리스트\n---\n본문", encoding="utf-8"
+        )
+        (settings.companies_dir / "새회사__직무.md").write_text(
+            "---\nfit_score: 88\nfit_label: 추천\n---\n본문", encoding="utf-8"
+        )
+        init_db()
+        assert len(list_fit_history("새회사__직무")) == 1
+        assert list_fit_history("새회사__직무")[0]["fit_score"] == 88
+        assert list_fit_history("깨진회사__직무") == []  # 파싱 실패 → 건너뜀, 크래시 안 함
+        assert len(list_fit_history("백필테스트__직무")) == 1  # 기존 이력도 롤백 안 됨
 
         version_id = create_profile_version("테스트 프로필 내용")
         version_id2 = create_profile_version("두번째 프로필 내용", note="사이드 프로젝트 추가")
