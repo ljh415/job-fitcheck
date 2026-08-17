@@ -218,6 +218,7 @@ private 저장소를 지인 대상 셀프호스팅 공개로 전환하기 위한
 - ⬜ Claude haiku 추출 시 매출 필드에 원문에 없는 연도 날조 1건 관찰 (n=1, 지시문 방어선 있음) → 재발 시 "원문 발췌 문자열만 허용" 제약 검토 (공용 스키마라 타 모델 간섭 주의)
 - ✅ OpenAI High=`gpt-5`(reasoning_effort=medium)로 `/api/companies/from-url` 실행 시 적합도 평가 단계가 120초를 넘겨 5/5 전부 504 Gateway Timeout (2026-07-13, dev 실측) — `_process_company` 호출부 3곳(URL/텍스트/이미지)의 `asyncio.wait_for` 타임아웃을 120초→300초로 상향해 nginx 일반 API 제한(300초)과 통일(v1.1.1). Codex 전체 코드 리뷰(`review_w_codex_2026-07-14_v1.0.5.md`)에서 발견된 나머지 7건(slug URL 인코딩, Q&A 히스토리 40개 제한, 비교 5개 제한, 백업 fail-closed, 재분석 타임라인 노출, 텔레그램 오류감지, 타임존)도 함께 수정
 - ✅ Gemini 429 오류 메시지가 실제 원인과 무관하게 항상 "무료 티어 요청 한도 초과"로 고정 출력되던 버그 수정 (2026-07-13). refit 비용 측정 중 유료(prepay) 계정에서 429가 발생했는데도 무료 티어 문구가 나가 사용자 혼선 발생 — docker 로그에서 확인한 구글 원본 오류는 `Your prepayment credits are depleted`(선불 크레딧 소진)였음. `gemini.py` `_raise()`에서 `e.message`(google-genai `APIError`가 원본 메시지를 그대로 담고 있음)를 읽어 "prepay" 포함 시 크레딧 소진 안내로, 그 외 429는 원본 메시지를 함께 노출하도록 수정
+- ⬜ 코드 내 주석이 "고고학적 서사"(누가·언제·어떤 리뷰 라운드에서 발견했는지의 조사 경위)로 과도하게 길어진 곳이 많음(2026-08-17 발견, 예: `backend/routers/rag.py`는 전체 줄 수의 23%가 주석). WHY(비자명한 불변조건·제약)는 남기고, 발견 경위·날짜·"Codex 리뷰로 발견" 같은 인용은 커밋 메시지나 각 기능의 HISTORY 문서로 옮기는 일괄 정리 필요. 기능상 문제는 없어 급하지 않음, 여유 있을 때 진행
 
 ---
 
