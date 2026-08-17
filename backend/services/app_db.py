@@ -91,9 +91,9 @@ def _backfill_fit_history() -> None:
     회사들 이력까지 통째로 안 생긴다(Codex 리뷰 2026-08-17 발견).
     단, try/except는 "파일 내용 파싱"만 감싼다 — DB 자체가 read-only/손상이면(SQLite
     호출 실패) 그건 파일 문제가 아니라 인프라 문제라 여기서 삼키지 않고 그대로
-    올려보내서 init_db() 호출부(main.py)의 격리 로직이 처리하게 한다. 안 그러면 DB가
-    통째로 고장나도 "파일 파싱 실패"로 매번 조용히 넘어가 아무도 못 알아챈다(Codex
-    재리뷰 2026-08-17 발견)."""
+    올려보내서 init_db()가 잡아 health flag(is_healthy())로 바꾸게 한다. 안 그러면
+    DB가 통째로 고장나도 "파일 파싱 실패"로 매번 조용히 넘어가 아무도 못 알아챈다
+    (Codex 재리뷰 2026-08-17 발견)."""
     with get_connection() as conn:
         for md_path in sorted(settings.companies_dir.glob("*.md")):
             slug = md_path.stem
@@ -281,8 +281,8 @@ if __name__ == "__main__":
         assert len(list_fit_history("백필테스트__직무")) == 1  # 기존 이력도 롤백 안 됨
 
         # DB 자체가 고장난 경우(예: read-only)는 파일 파싱 실패와 달리 삼키면 안 되고
-        # 그대로 예외가 올라가야 한다 — 안 그러면 init_db() 호출부(main.py)가 DB 장애를
-        # 감지 못 해서 "정상 0건"처럼 조용히 넘어간다(Codex 재리뷰 2026-08-17 발견)
+        # 그대로 예외가 올라가야 한다 — 안 그러면 init_db()가 DB 장애를 감지 못 해서
+        # "정상 0건"처럼 조용히 넘어간다(Codex 재리뷰 2026-08-17 발견)
         (settings.companies_dir / "읽기전용테스트__직무.md").write_text(
             "---\nfit_score: 70\n---\n본문", encoding="utf-8"
         )
