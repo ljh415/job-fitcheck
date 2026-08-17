@@ -75,11 +75,38 @@ def init_db() -> None:
                 ON fit_history(company_slug, created_at)
             """)
             conn.commit()
+        _backfill_profile_version()
         _backfill_fit_history()
         _healthy = True
     except Exception as e:
         logger.error("프로필 히스토리 DB 초기화 실패 - 이 기능만 비활성화됩니다: %s", e)
         _healthy = False
+
+
+def _backfill_profile_version() -> None:
+    """프로필 스냅샷이 하나도 없는데 candidate_profile.md는 있으면(이 기능이
+    생기기 전부터 있던 기존 프로필), 그 파일을 첫 스냅샷으로 소급 적용한다.
+    회사별로 체크하는 fit_history와 달리 프로필은 사용자당 하나뿐이라 테이블
+    전체가 비어있는지만 확인하면 된다 — 한 번이라도 스냅샷이 생기면(백필이든
+    실제 업로드/편집이든) 그 뒤로는 다시 안 걸리므로 init_db() 호출마다(=앱
+    시작마다) 반복 실행해도 안전하다(2026-08-17, 실사용 중 발견 — 회사 평가
+    이력만 소급 적용하고 프로필 쪽은 빠뜨렸었음)."""
+    with get_connection() as conn:
+        existing = conn.execute("SELECT 1 FROM profile_versions LIMIT 1").fetchone()
+        if existing:
+            return
+        if not settings.candidate_profile_path.exists():
+            return
+        try:
+            content = settings.candidate_profile_path.read_text(encoding="utf-8")
+        except Exception as e:
+            logger.warning("프로필 소급 스냅샷 생성 실패: %s", e)
+            return
+        conn.execute(
+            "INSERT INTO profile_versions (created_at, content, note) VALUES (?, ?, ?)",
+            (datetime.now().isoformat(timespec="seconds"), content, None),
+        )
+        conn.commit()
 
 
 def _backfill_fit_history() -> None:
@@ -247,6 +274,23 @@ if __name__ == "__main__":
 
         init_db()
         assert os.path.exists(DB_PATH)
+        assert list_profile_versions() == []  # 프로필 파일 없으면 백필 안 함
+
+        # 프로필 소급 백필 — 이 기능 생기기 전부터 있던 candidate_profile.md가
+        # 생긴 뒤 init_db()를 다시 부르면(=앱 재시작 흉내) 1건만 생기고, 반복
+        # 호출해도 중복 안 생겨야 한다.
+        settings.candidate_profile_path.write_text("---\nname: 테스트\n---\n소급 프로필", encoding="utf-8")
+        init_db()
+        profile_backfilled = list_profile_versions()
+        assert len(profile_backfilled) == 1
+        assert get_profile_version(profile_backfilled[0]["id"])["content"] == "---\nname: 테스트\n---\n소급 프로필"
+        init_db()  # 재시작 흉내 — 중복 생성 안 됨
+        assert len(list_profile_versions()) == 1
+        # 이후 테스트들이 빈 상태를 가정하므로 백필 테스트용 row·파일 정리
+        # (파일을 안 지우면 이후 init_db() 호출마다 다시 백필돼 뒤 테스트가 깨짐)
+        assert delete_profile_version(profile_backfilled[0]["id"]) is True
+        assert list_profile_versions() == []
+        settings.candidate_profile_path.unlink()
 
         # 소급 이력 백필 — fit_score 있는 기존 회사 파일이 생긴 뒤 init_db()를 다시
         # 부르면(=앱 재시작 상황을 흉내) 1건만 생기고, 반복 호출해도 중복 안 생겨야 한다.
