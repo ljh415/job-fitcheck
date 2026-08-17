@@ -35,6 +35,7 @@ from services.app_db import (
     delete_fit_history_for_slug,
     get_fit_history_entry,
     get_profile_version,
+    is_healthy,
     latest_profile_version_id,
     list_fit_history,
 )
@@ -348,11 +349,17 @@ async def get_company(slug: str):
     return record
 
 
+_DB_UNAVAILABLE_DETAIL = "프로필 히스토리 기능을 일시적으로 사용할 수 없습니다."
+
+
 @router.get("/api/companies/{slug}/fit-history")
 async def get_company_fit_history(slug: str):
-    """적합도 평가 이력(최신순) — 표시용 요약만, 무거운 원문(content)은 제외."""
+    """적합도 평가 이력(최신순) — 표시용 요약만, 무거운 원문(content)은 제외.
+    DB 장애 시 빈 목록 대신 503 — 그래야 "이력 없음"과 구분된다."""
     if not storage.read_company(slug):
         raise HTTPException(status_code=404, detail="회사를 찾을 수 없습니다.")
+    if not is_healthy():
+        raise HTTPException(status_code=503, detail=_DB_UNAVAILABLE_DETAIL)
     history = list_fit_history(slug)
     return [
         {
@@ -372,6 +379,8 @@ async def get_fit_history_detail(entry_id: int):
     """평가 이력 1건 전체(그 시점 회사 정보+적합도 리포트 원문). id 하나로 조회 —
     entry 자체에 company_slug가 있어 부모 경로 없이도 유일하게 식별 가능(프로필 버전
     상세 조회와 같은 패턴)."""
+    if not is_healthy():
+        raise HTTPException(status_code=503, detail=_DB_UNAVAILABLE_DETAIL)
     entry = get_fit_history_entry(entry_id)
     if not entry:
         raise HTTPException(status_code=404, detail="해당 이력을 찾을 수 없습니다.")

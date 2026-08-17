@@ -29,13 +29,10 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     ensure_dirs()
-    try:
-        init_db()
-    except Exception as e:
-        # 프로필 히스토리는 핵심 기능이 아니다 - DB 손상/권한 문제로 여기서 죽으면
-        # 회사 CRUD 같은 핵심 기능까지 통째로 막힌다. 실패해도 앱은 정상 시작하고,
-        # 이후 관련 API 호출은 각자 에러로 실패한다(프론트가 사용자에게 표시함).
-        logger.error("프로필 히스토리 DB 초기화 실패 - 이 기능만 비활성화됩니다: %s", e)
+    # 프로필 히스토리는 핵심 기능이 아니다 - init_db()는 내부에서 실패를 흡수하고
+    # is_healthy()에 남긴다(app_db.py). DB 손상/권한 문제로 회사 CRUD 같은 핵심
+    # 기능까지 막히면 안 되기 때문 - 실패해도 앱은 정상 시작한다.
+    init_db()
     task = asyncio.create_task(companies.weekly_summary_loop())
     yield
     task.cancel()

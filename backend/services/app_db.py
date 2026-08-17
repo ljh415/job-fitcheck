@@ -17,6 +17,9 @@ logger = logging.getLogger(__name__)
 
 DB_PATH = settings.data_dir / "app.db"
 
+_healthy = True  # init_db()가 실패하면 False로 남는다 — 조회 API가 이 값을 보고
+                  # "이력 0건"과 "DB 장애"를 구분한다(is_healthy() 참고).
+
 
 @contextmanager
 def get_connection():
@@ -28,39 +31,55 @@ def get_connection():
         conn.close()
 
 
+def is_healthy() -> bool:
+    """init_db()가 성공적으로 끝났는지. False면 조회 API가 빈 목록 대신 503을
+    반환해야 한다 — 그렇지 않으면 SELECT는 계속 성공할 수 있어(read-only DB 등)
+    "이력이 원래 없음"과 "DB 장애로 못 채워짐"이 화면에서 구분이 안 된다
+    (Codex 재리뷰 2026-08-17 발견)."""
+    return _healthy
+
+
 def init_db() -> None:
-    """앱 시작 시 호출 — 테이블이 없으면 생성한다."""
-    settings.data_dir.mkdir(parents=True, exist_ok=True)
-    with get_connection() as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS profile_versions (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                created_at TEXT NOT NULL,
-                content    TEXT NOT NULL,
-                note       TEXT
-            )
-        """)
-        # note 컬럼 마이그레이션 — 이미 만들어진 DB(테이블은 있지만 컬럼 추가 전)에도 대응
-        cols = {r["name"] for r in conn.execute("PRAGMA table_info(profile_versions)").fetchall()}
-        if "note" not in cols:
-            conn.execute("ALTER TABLE profile_versions ADD COLUMN note TEXT")
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS fit_history (
-                id                 INTEGER PRIMARY KEY AUTOINCREMENT,
-                company_slug       TEXT NOT NULL,
-                created_at         TEXT NOT NULL,
-                profile_version_id INTEGER,
-                fit_score          INTEGER,
-                fit_label          TEXT,
-                content            TEXT
-            )
-        """)
-        conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_fit_history_slug
-            ON fit_history(company_slug, created_at)
-        """)
-        conn.commit()
-    _backfill_fit_history()
+    """앱 시작 시 호출 — 테이블이 없으면 생성한다. 실패해도 예외를 밖으로 내지
+    않는다 — 회사 CRUD 같은 핵심 기능까지 이 기능 하나 때문에 막히면 안 된다.
+    대신 is_healthy()가 False가 되어 조회 API가 이를 반영한다."""
+    global _healthy
+    try:
+        settings.data_dir.mkdir(parents=True, exist_ok=True)
+        with get_connection() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS profile_versions (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TEXT NOT NULL,
+                    content    TEXT NOT NULL,
+                    note       TEXT
+                )
+            """)
+            # note 컬럼 마이그레이션 — 이미 만들어진 DB(테이블은 있지만 컬럼 추가 전)에도 대응
+            cols = {r["name"] for r in conn.execute("PRAGMA table_info(profile_versions)").fetchall()}
+            if "note" not in cols:
+                conn.execute("ALTER TABLE profile_versions ADD COLUMN note TEXT")
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS fit_history (
+                    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                    company_slug       TEXT NOT NULL,
+                    created_at         TEXT NOT NULL,
+                    profile_version_id INTEGER,
+                    fit_score          INTEGER,
+                    fit_label          TEXT,
+                    content            TEXT
+                )
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_fit_history_slug
+                ON fit_history(company_slug, created_at)
+            """)
+            conn.commit()
+        _backfill_fit_history()
+        _healthy = True
+    except Exception as e:
+        logger.error("프로필 히스토리 DB 초기화 실패 - 이 기능만 비활성화됩니다: %s", e)
+        _healthy = False
 
 
 def _backfill_fit_history() -> None:
@@ -275,8 +294,17 @@ if __name__ == "__main__":
             except Exception:
                 raised = True
             assert raised, "read-only DB에서도 예외 없이 조용히 끝나면 안 됨"
+
+            # 공개 진입점인 init_db()는 반대로 예외를 밖으로 내지 않고 흡수해야
+            # 한다(main.py가 앱 전체를 죽이지 않도록) — 대신 is_healthy()가 False가
+            # 되고, 그 상태에서 회복(권한 원복 후 재호출)하면 다시 True가 되는지도 확인
+            assert is_healthy() is True  # 지금까지는 전부 정상 케이스였음
+            init_db()
+            assert is_healthy() is False
         finally:
             os.chmod(DB_PATH, 0o644)  # 이후 테스트가 계속 쓸 수 있도록 원복
+        init_db()
+        assert is_healthy() is True  # 권한 원복 후 재시작하면 다시 정상으로 돌아옴
 
         version_id = create_profile_version("테스트 프로필 내용")
         version_id2 = create_profile_version("두번째 프로필 내용", note="사이드 프로젝트 추가")

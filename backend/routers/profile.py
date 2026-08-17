@@ -20,6 +20,7 @@ from services.app_db import (
     create_profile_version,
     delete_profile_version,
     get_profile_version,
+    is_healthy,
     list_profile_versions,
     update_profile_version_note,
 )
@@ -72,15 +73,23 @@ async def export_profile():
     )
 
 
+_DB_UNAVAILABLE_DETAIL = "프로필 히스토리 기능을 일시적으로 사용할 수 없습니다."
+
+
 @router.get("/api/profile/versions")
 async def list_profile_version_history():
-    """프로필 스냅샷 목록(최신순) — id/시점만. 내용은 상세 조회(GET .../{id})에서."""
+    """프로필 스냅샷 목록(최신순) — id/시점만. 내용은 상세 조회(GET .../{id})에서.
+    DB 장애 시 빈 목록 대신 503 — 그래야 "이전 버전 없음"과 구분된다."""
+    if not is_healthy():
+        raise HTTPException(status_code=503, detail=_DB_UNAVAILABLE_DETAIL)
     return list_profile_versions()
 
 
 @router.get("/api/profile/versions/{version_id}")
 async def get_profile_version_detail(version_id: int):
     """특정 시점 프로필 스냅샷 전체(현재 `GET /api/profile`과 같은 형태)."""
+    if not is_healthy():
+        raise HTTPException(status_code=503, detail=_DB_UNAVAILABLE_DETAIL)
     v = get_profile_version(version_id)
     if not v:
         raise HTTPException(status_code=404, detail="해당 버전을 찾을 수 없습니다.")
