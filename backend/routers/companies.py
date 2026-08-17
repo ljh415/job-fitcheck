@@ -34,6 +34,7 @@ from services.app_db import (
     create_fit_history_entry,
     delete_fit_history_for_slug,
     get_fit_history_entry,
+    get_profile_version,
     latest_profile_version_id,
     list_fit_history,
 )
@@ -90,6 +91,29 @@ def _resize_image(data: bytes) -> tuple[bytes, str]:
 
 
 # ── 진행 중 표시 ──────────────────────────────────────────────────────────────
+
+def _resolve_profile_version_id_for_eval() -> int | None:
+    """평가 직전 후보자 프로필의 스냅샷 id를 안전하게 구한다.
+    - DB 조회 자체가 실패해도(히스토리 DB 장애) 예외를 밖으로 내보내지 않는다 — 이
+      함수가 실패한다고 회사 등록/재분석(핵심 기능)까지 막히면 안 된다.
+    - 최신 스냅샷의 저장된 내용이 지금 파일과 다르면(스냅샷 insert가 조용히 실패한
+      경우 등, non-fatal 처리라 있을 수 있음) id를 반환하지 않는다 — 확신 없이 엉뚱한
+      버전과 연결하는 것보다 "이전 버전 불명"(None)으로 남기는 게 낫다.
+    (Codex 리뷰 2026-08-17 발견)
+    """
+    try:
+        version_id = latest_profile_version_id()
+        if version_id is None:
+            return None
+        version = get_profile_version(version_id)
+        current_raw = settings.candidate_profile_path.read_text(encoding="utf-8")
+        if version is None or version["content"] != current_raw:
+            return None
+        return version_id
+    except Exception as e:
+        logger.warning("평가용 프로필 스냅샷 조회 실패 (이력엔 '이전 버전 불명'으로 기록됨): %s", e)
+        return None
+
 
 def _snapshot_fit_history(slug: str, fit_score, fit_label, profile_version_id: int | None) -> None:
     """방금 저장된 회사 평가 결과를 이력(SQLite)에 추가한다 — 덮어쓰기 아니라 누적.
@@ -609,9 +633,9 @@ async def _process_company(
         high, high_model = high_from_snapshot(snap)
         logger.info("[4/4] 적합도 평가 시작 (model=%s)", high_model)
         profile_text = storage.read_profile_text() or ""
-        # 이 프로필을 실제로 읽은 시점의 최신 스냅샷 id를 고정 — LLM 호출이 끝날 때까지
+        # 이 프로필을 실제로 읽은 시점의 스냅샷 id를 고정 — LLM 호출이 끝날 때까지
         # 기다렸다 조회하면 그 사이 프로필이 갱신된 경우 엉뚱한 버전과 연결된다.
-        profile_version_id_at_eval = latest_profile_version_id()
+        profile_version_id_at_eval = _resolve_profile_version_id_for_eval()
         eval_criteria = storage.read_eval_criteria().strip()
         custom_criteria_section = (
             f"\n\n## 추가 평가 기준 (사용자 지정)\n{eval_criteria}{prompts.CUSTOM_CRITERIA_BOUNDARY_NOTICE}"
@@ -929,8 +953,8 @@ async def refit_company(slug: str):
     logger.info("[refit] 적합도 재산정 시작 (slug=%s, model=%s)", slug, high_model)
 
     profile_text = storage.read_profile_text() or ""
-    # 이 프로필을 실제로 읽은 시점의 최신 스냅샷 id를 고정 (이유는 _snapshot_fit_history 참고)
-    profile_version_id_at_eval = latest_profile_version_id()
+    # 이 프로필을 실제로 읽은 시점의 스냅샷 id를 고정 (이유는 _resolve_profile_version_id_for_eval 참고)
+    profile_version_id_at_eval = _resolve_profile_version_id_for_eval()
     raw_text = prompts.escape_tag_chars(storage.read_raw_text(slug) or record.body)
     eval_criteria = storage.read_eval_criteria().strip()
     custom_criteria_section = (
