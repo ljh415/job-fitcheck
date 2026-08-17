@@ -697,6 +697,7 @@ async function loadFitHistory(slug) {
 }
 
 function toggleFitHistory() {
+  if (!_fitHistoryCache.length) return;  // 로딩 실패(⚠) 상태 — 클릭해도 "0건"으로 안 바뀌게
   const toggleEl = document.getElementById('fit-history-toggle');
   const panelEl = document.getElementById('fit-history-panel');
   if (!panelEl) return;
