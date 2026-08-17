@@ -733,6 +733,9 @@ function toggleFitHistory() {
       <tbody>${rows}</tbody>
     </table>
   `;
+  // 버튼은 상단(점수 배지 옆)인데 패널은 본문 아래라, 열어도 스크롤 안 하면
+  // 화면엔 아무 변화가 안 보인다(실사용 중 발견, 2026-08-17).
+  panelEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function switchTab(name) {
