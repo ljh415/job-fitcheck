@@ -27,6 +27,7 @@ docs/rag-integration/
 # 기능 브랜치 전용 개발 문서(설계+히스토리) — 브랜치 하나로 바로 만드는 기능은
 # docs/rag-integration/과 같은 패턴으로 docs/{기능명}/에 PLAN.md+HISTORY.md, 로컬 보관용
 docs/profile-history/
+docs/jobplanet-matching/
 
 # 데이터 (개인 정보 포함)
 data/
