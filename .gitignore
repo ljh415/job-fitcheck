@@ -28,6 +28,7 @@ docs/rag-integration/
 # docs/rag-integration/과 같은 패턴으로 docs/{기능명}/에 PLAN.md+HISTORY.md, 로컬 보관용
 docs/profile-history/
 docs/jobplanet-matching/
+docs/profile-history-followup/
 
 # 데이터 (개인 정보 포함)
 data/
