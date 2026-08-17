@@ -144,10 +144,12 @@
     <div id="tab-content-info" class="tab-content">
       <div class="detail-meta">
         <div id="fit-badge"></div>
+        <span id="fit-history-toggle" class="hidden" style="font-size:13px;color:var(--primary);cursor:pointer;margin-left:8px" onclick="toggleFitHistory()"></span>
         <div id="meta-chips"></div>
         <div id="company-facts" class="company-facts hidden"></div>
       </div>
       <div id="company-body" class="markdown-body"></div>
+      <div id="fit-history-panel" class="hidden" style="margin:20px 0"></div>
     </div>
 
     <div id="tab-content-edit" class="tab-content hidden">
@@ -332,6 +334,7 @@
           <label class="export-check-item export-check-required"><input type="checkbox" checked disabled> 회사 분석 + 원문 <span class="export-check-path">companies/*</span></label>
           <label class="export-check-item export-check-required"><input type="checkbox" checked disabled> 내 프로필 <span class="export-check-path">candidate_profile.md</span></label>
           <label class="export-check-item export-check-required"><input type="checkbox" checked disabled> 커스텀 평가 기준 <span class="export-check-path">eval_criteria.md</span></label>
+          <label class="export-check-item export-check-required"><input type="checkbox" checked disabled> 프로필 히스토리·평가 이력 <span class="export-check-path">app.db</span></label>
           <label class="export-check-item"><input type="checkbox" id="export-include-pdf"> 원본 PDF <span class="export-check-path">uploads/*.pdf</span></label>
           <label class="export-check-item"><input type="checkbox" id="export-include-log"> 비용 로그 <span class="export-check-path">usage_log.jsonl</span></label>
           <button class="btn-primary export-dropdown-action" onclick="exportZip()">ZIP 다운로드</button>
@@ -378,6 +381,7 @@
           <input type="file" id="pdf-input" accept=".pdf" multiple style="display:none" onchange="updateDropzoneLabel()" />
         </div>
         <textarea id="profile-extra-note" rows="3" placeholder="추가 설명 (선택) — 예: 백엔드 전문이며 MLOps 경험 있음. 풀스택보다 AI 인프라 역할 선호." style="margin-top:10px;width:100%;font-size:13px;color:#374151;resize:vertical;box-sizing:border-box" oninput="localStorage.setItem('profile-extra-note', this.value)"></textarea>
+        <input type="text" id="profile-upload-version-note" placeholder="이번 업로드에 대한 메모 (선택, 예: 최신 이력서로 갱신)" style="margin-top:10px;width:100%;font-size:13px;box-sizing:border-box" />
         <div class="profile-upload-footer">
           <label class="upload-option-label" title="프로필 본문 생성 시 최대 출력 토큰 수. 이력서·포트폴리오가 길수록 높게 설정하세요.">
             본문 max_tokens
@@ -390,6 +394,11 @@
           <div class="spinner"></div>
         </div>
         </div><!-- /upload-box-body -->
+      </div>
+
+      <div class="profile-version-section">
+        <h4 id="profile-version-title" style="margin:16px 0 8px;font-size:14px">이전 버전</h4>
+        <div id="profile-version-list"></div>
       </div>
     </section>
 
@@ -523,6 +532,28 @@
       </div>
       <div id="cal-grid" class="cal-grid"></div>
     </div>
+  </div>
+</template>
+
+<template id="tpl-profile-version">
+  <div class="view">
+    <div class="view-header">
+      <button onclick="navigate('settings')" class="back-btn">← 설정</button>
+      <h2>프로필 이전 버전</h2>
+    </div>
+    <div id="profile-version-detail-meta" style="font-size:13px;color:#6b7280;margin-bottom:12px"></div>
+    <div id="profile-version-detail-body" class="markdown-body profile-preview-area"></div>
+  </div>
+</template>
+
+<template id="tpl-fit-history">
+  <div class="view">
+    <div class="view-header">
+      <button id="fit-history-back-btn" onclick="navigate('dashboard')" class="back-btn">← 목록</button>
+      <h2>평가 이력 상세</h2>
+    </div>
+    <div id="fit-history-detail-meta" style="font-size:13px;color:#6b7280;margin-bottom:12px"></div>
+    <div id="fit-history-detail-body" class="markdown-body"></div>
   </div>
 </template>
 

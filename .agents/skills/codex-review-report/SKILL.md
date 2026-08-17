@@ -22,14 +22,14 @@ Perform a read-only code review and write the result to `docs/review-w-codex/`. 
 Use:
 
 ```text
-docs/review-w-codex/review_w_codex_YYYY-MM-DD_vX.Y.Z.md
+docs/review-w-codex/review_w_codex_YYYY-MM-DD_vX.Y.Z_rN.md
 ```
 
 - Use the current Asia/Seoul date.
 - Use the latest applicable `CHANGELOG.md`/Git-tag version, even when later commits only change documentation.
 - Record the exact reviewed `HEAD` separately inside the report.
 - If no version exists, use `unreleased` in place of `vX.Y.Z`.
-- If today's target file already exists, update that file instead of creating a numbered duplicate.
+- `N` is the round number for that date+version: list existing `docs/review-w-codex/review_w_codex_{date}_{version}_r*.md` files, take the highest existing `N`, and use `N+1` (start at `r1` if none exist). Never overwrite an existing round file — same-day repeat reviews (e.g. re-checking whether prior findings were fixed) must each get their own file, otherwise earlier rounds' findings are lost. If the reviewed `HEAD` is identical to the immediately preceding round's recorded `HEAD` (nothing changed since then), update that round's file in place instead of creating a new one.
 - Do not rename, delete, track, or commit older review documents unless explicitly requested.
 
 ## Report Format

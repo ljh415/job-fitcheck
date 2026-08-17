@@ -18,6 +18,7 @@ import logging
 import re
 from datetime import date, datetime, timedelta
 
+import frontmatter
 import httpx
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
@@ -26,9 +27,18 @@ from pydantic import BaseModel
 import prompts
 from services import scraper
 import storage
-from config import get_notify_pref, get_weekly_summary_schedule
+from config import get_notify_pref, get_weekly_summary_schedule, settings
 from export import save_backup_zip
 from routers.rag import trigger_reindex_background
+from services.app_db import (
+    create_fit_history_entry,
+    delete_fit_history_for_slug,
+    get_fit_history_entry,
+    get_profile_version,
+    is_healthy,
+    latest_profile_version_id,
+    list_fit_history,
+)
 from services.jobplanet import fetch_jobplanet_score
 from llm.base import LLMAPIError
 from llm.router import LLMSnapshot, capture_snapshot, high_from_snapshot, light_from_snapshot
@@ -82,6 +92,45 @@ def _resize_image(data: bytes) -> tuple[bytes, str]:
 
 
 # ── 진행 중 표시 ──────────────────────────────────────────────────────────────
+
+def _resolve_profile_version_id_for_eval() -> int | None:
+    """평가 직전 후보자 프로필의 스냅샷 id를 안전하게 구한다.
+    - DB 조회 자체가 실패해도(히스토리 DB 장애) 예외를 밖으로 내보내지 않는다 — 이
+      함수가 실패한다고 회사 등록/재분석(핵심 기능)까지 막히면 안 된다.
+    - 최신 스냅샷의 저장된 내용이 지금 파일과 다르면(스냅샷 insert가 조용히 실패한
+      경우 등, non-fatal 처리라 있을 수 있음) id를 반환하지 않는다 — 확신 없이 엉뚱한
+      버전과 연결하는 것보다 "이전 버전 불명"(None)으로 남기는 게 낫다.
+    (Codex 리뷰 2026-08-17 발견)
+    """
+    try:
+        version_id = latest_profile_version_id()
+        if version_id is None:
+            return None
+        version = get_profile_version(version_id)
+        current_raw = settings.candidate_profile_path.read_text(encoding="utf-8")
+        if version is None or version["content"] != current_raw:
+            return None
+        return version_id
+    except Exception as e:
+        logger.warning("평가용 프로필 스냅샷 조회 실패 (이력엔 '이전 버전 불명'으로 기록됨): %s", e)
+        return None
+
+
+def _snapshot_fit_history(slug: str, fit_score, fit_label, profile_version_id: int | None) -> None:
+    """방금 저장된 회사 평가 결과를 이력(SQLite)에 추가한다 — 덮어쓰기 아니라 누적.
+    profile_version_id는 평가에 실제로 사용한 프로필을 읽은 시점에 고정해서 전달받는다
+    (평가 완료 시점에 다시 조회하면, 평가 대기 중 프로필이 바뀐 경우 엉뚱한 버전과
+    연결될 수 있음 — Codex 리뷰 2026-08-16 발견).
+    실제 평가가 있었을 때만(fit_score가 있을 때만) 기록하고, 실패해도 회사 저장 자체에는
+    영향 주지 않는다."""
+    if fit_score is None:
+        return
+    try:
+        content = (settings.companies_dir / f"{slug}.md").read_text(encoding="utf-8")
+        create_fit_history_entry(slug, profile_version_id, fit_score, fit_label, content)
+    except Exception as e:
+        logger.warning("평가 이력 저장 실패: %s", e)
+
 
 _in_progress_count = 0
 
@@ -300,6 +349,47 @@ async def get_company(slug: str):
     return record
 
 
+_DB_UNAVAILABLE_DETAIL = "프로필 히스토리 기능을 일시적으로 사용할 수 없습니다."
+
+
+@router.get("/api/companies/{slug}/fit-history")
+async def get_company_fit_history(slug: str):
+    """적합도 평가 이력(최신순) — 표시용 요약만, 무거운 원문(content)은 제외.
+    DB 장애 시 빈 목록 대신 503 — 그래야 "이력 없음"과 구분된다."""
+    if not storage.read_company(slug):
+        raise HTTPException(status_code=404, detail="회사를 찾을 수 없습니다.")
+    if not is_healthy():
+        raise HTTPException(status_code=503, detail=_DB_UNAVAILABLE_DETAIL)
+    history = list_fit_history(slug)
+    return [
+        {
+            "id": h["id"],
+            "created_at": h["created_at"],
+            "profile_version_id": h["profile_version_id"],
+            "profile_version_created_at": h["profile_version_created_at"],
+            "fit_score": h["fit_score"],
+            "fit_label": h["fit_label"],
+        }
+        for h in history
+    ]
+
+
+@router.get("/api/fit-history/{entry_id}")
+async def get_fit_history_detail(entry_id: int):
+    """평가 이력 1건 전체(그 시점 회사 정보+적합도 리포트 원문). id 하나로 조회 —
+    entry 자체에 company_slug가 있어 부모 경로 없이도 유일하게 식별 가능(프로필 버전
+    상세 조회와 같은 패턴)."""
+    if not is_healthy():
+        raise HTTPException(status_code=503, detail=_DB_UNAVAILABLE_DETAIL)
+    entry = get_fit_history_entry(entry_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="해당 이력을 찾을 수 없습니다.")
+    post = frontmatter.loads(entry["content"])
+    fm = CompanyFrontmatter(**post.metadata)
+    record = CompanyRecord(slug=entry["company_slug"], frontmatter=fm, body=post.content)
+    return {**record.model_dump(), "history_created_at": entry["created_at"]}
+
+
 _EDIT_FORM_FIELDS = {
     "company_name", "job_title", "source_url",
     "location", "employee_count", "stability", "investment_stage",
@@ -337,6 +427,12 @@ async def delete_company(slug: str):
     if not deleted:
         raise HTTPException(status_code=404, detail="회사를 찾을 수 없습니다.")
     logger.info("공고 삭제: %s", slug)
+    try:
+        # slug는 회사명+직무명으로 결정적 생성되므로, 이력을 안 지우면 같은 이름으로
+        # 재등록했을 때 예전(별개) 지원의 평가 이력이 새 회사에 다시 붙는다.
+        delete_fit_history_for_slug(slug)
+    except Exception as e:
+        logger.warning("삭제된 회사의 평가 이력 정리 실패 (slug=%s): %s", slug, e)
     # RAG(opt-in) 자동 재색인 — 삭제된 공고의 고아 임베딩을 prune_deleted_postings()가 정리하도록.
     trigger_reindex_background()
     return {"status": "deleted"}
@@ -541,10 +637,14 @@ async def _process_company(
     # 4. High: 후보자 프로필 대비 적합도 평가 (프로필 없으면 생략)
     fit_data: dict = {}
     fit_report = ""
+    profile_version_id_at_eval: int | None = None
     if storage.profile_exists():
         high, high_model = high_from_snapshot(snap)
         logger.info("[4/4] 적합도 평가 시작 (model=%s)", high_model)
         profile_text = storage.read_profile_text() or ""
+        # 이 프로필을 실제로 읽은 시점의 스냅샷 id를 고정 — LLM 호출이 끝날 때까지
+        # 기다렸다 조회하면 그 사이 프로필이 갱신된 경우 엉뚱한 버전과 연결된다.
+        profile_version_id_at_eval = _resolve_profile_version_id_for_eval()
         eval_criteria = storage.read_eval_criteria().strip()
         custom_criteria_section = (
             f"\n\n## 추가 평가 기준 (사용자 지정)\n{eval_criteria}{prompts.CUSTOM_CRITERIA_BOUNDARY_NOTICE}"
@@ -636,6 +736,7 @@ async def _process_company(
     slug = existing_slug or storage.make_slug(fm.company_name, fm.job_title or "")
     storage.write_raw_text(slug, raw_text)
     record = storage.write_company(slug, fm, body)
+    _snapshot_fit_history(slug, fm.fit_score, fm.fit_label, profile_version_id_at_eval)
 
     materials = {
         "company": fm.display_name or fm.company_name,
@@ -861,6 +962,8 @@ async def refit_company(slug: str):
     logger.info("[refit] 적합도 재산정 시작 (slug=%s, model=%s)", slug, high_model)
 
     profile_text = storage.read_profile_text() or ""
+    # 이 프로필을 실제로 읽은 시점의 스냅샷 id를 고정 (이유는 _resolve_profile_version_id_for_eval 참고)
+    profile_version_id_at_eval = _resolve_profile_version_id_for_eval()
     raw_text = prompts.escape_tag_chars(storage.read_raw_text(slug) or record.body)
     eval_criteria = storage.read_eval_criteria().strip()
     custom_criteria_section = (
@@ -930,5 +1033,6 @@ async def refit_company(slug: str):
     body = _append_status_log(body, "적합도 재평가 완료")
 
     record = storage.write_company(slug, fm, body)
+    _snapshot_fit_history(slug, fm.fit_score, fm.fit_label, profile_version_id_at_eval)
     trigger_reindex_background()  # RAG가 복제하는 fit_score/strengths/gaps 갱신, RAG 꺼져 있으면 no-op
     return record

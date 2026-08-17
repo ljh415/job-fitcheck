@@ -93,6 +93,8 @@ function viewToUrl(view, slug) {
   if (view === 'settings') return '/settings';
   if (view === 'timeline') return '/timeline';
   if (view === 'rag') return '/rag';
+  if (view === 'profile-version' && slug) return `/profile-version/${slug}`;
+  if (view === 'fit-history' && slug) return `/fit-history/${slug}`;
   return '/';
 }
 
@@ -105,6 +107,10 @@ function parseUrl() {
   if (path === '/settings') return { view: 'settings', slug: null };
   if (path === '/timeline') return { view: 'timeline', slug: null };
   if (path === '/rag') return { view: 'rag', slug: null };
+  const versionMatch = path.match(/^\/profile-version\/(\d+)$/);
+  if (versionMatch) return { view: 'profile-version', slug: versionMatch[1] };
+  const fitHistoryMatch = path.match(/^\/fit-history\/(\d+)$/);
+  if (fitHistoryMatch) return { view: 'fit-history', slug: fitHistoryMatch[1] };
   return { view: 'dashboard', slug: null };
 }
 
@@ -142,6 +148,8 @@ window.addEventListener('popstate', (e) => {
 document.getElementById('app').addEventListener('click', (e) => {
   const pinBtn = e.target.closest('[data-action="toggle-pin"]');
   if (pinBtn) { togglePin(pinBtn.dataset.slug); return; }
+  const noteArea = e.target.closest('[data-action="edit-version-note"]');
+  if (noteArea) { editProfileVersionNote(Number(noteArea.dataset.id)); return; }
   if (e.target.closest('input, select, a')) return;
   const navEl = e.target.closest('[data-nav="detail"]');
   if (navEl) navigate('detail', navEl.dataset.slug);
@@ -171,6 +179,8 @@ function render() {
   else if (currentView === 'settings') initSettings();
   else if (currentView === 'timeline') initTimeline();
   else if (currentView === 'rag') initRag();
+  else if (currentView === 'profile-version') initProfileVersion(currentSlug);
+  else if (currentView === 'fit-history') initFitHistoryDetail(currentSlug);
 }
 
 /* ── 공통 API ─────────────────────────────────────────────────────── */
@@ -598,6 +608,7 @@ async function initDetail(slug) {
       ${score !== null && score !== undefined ? score + '점' : '미평가'} ${escHtml(fm.fit_label || '')}
     </span>`;
   }
+  loadFitHistory(slug);
 
   // 메타 칩
   const chips = document.getElementById('meta-chips');
@@ -656,6 +667,72 @@ async function initDetail(slug) {
 
   // 편집 폼 채우기
   fillEditForm(fm, record.body);
+}
+
+let _fitHistoryCache = [];
+let _fitHistoryOpen = false;
+
+async function loadFitHistory(slug) {
+  const toggleEl = document.getElementById('fit-history-toggle');
+  const panelEl = document.getElementById('fit-history-panel');
+  _fitHistoryOpen = false;
+  if (panelEl) panelEl.classList.add('hidden');
+  if (!toggleEl) return;
+  try {
+    _fitHistoryCache = await api(`/companies/${encodeURIComponent(slug)}/fit-history`);
+  } catch (e) {
+    console.error('평가 이력 로딩 실패:', e);
+    _fitHistoryCache = [];
+    // "이력 없음"과 구분해서 보여줌 — 안 보이면 사용자가 DB 문제를 알 방법이 없음
+    toggleEl.textContent = '⚠ 평가 이력을 불러오지 못했습니다';
+    toggleEl.classList.remove('hidden');
+    return;
+  }
+  if (!_fitHistoryCache.length) {
+    toggleEl.classList.add('hidden');
+    return;
+  }
+  toggleEl.textContent = `📋 평가 이력 보기 (${_fitHistoryCache.length}건) ▾`;
+  toggleEl.classList.remove('hidden');
+}
+
+function toggleFitHistory() {
+  if (!_fitHistoryCache.length) return;  // 로딩 실패(⚠) 상태 — 클릭해도 "0건"으로 안 바뀌게
+  const toggleEl = document.getElementById('fit-history-toggle');
+  const panelEl = document.getElementById('fit-history-panel');
+  if (!panelEl) return;
+  _fitHistoryOpen = !_fitHistoryOpen;
+  panelEl.classList.toggle('hidden', !_fitHistoryOpen);
+  if (toggleEl) toggleEl.textContent = `📋 평가 이력 보기 (${_fitHistoryCache.length}건) ${_fitHistoryOpen ? '▴' : '▾'}`;
+  if (!_fitHistoryOpen) return;
+
+  const rows = _fitHistoryCache.map((h, i) => {
+    const prev = _fitHistoryCache[i + 1];  // 최신순이므로 다음 항목이 더 이전 값
+    let delta = '';
+    if (prev && typeof h.fit_score === 'number' && typeof prev.fit_score === 'number') {
+      const diff = h.fit_score - prev.fit_score;
+      if (diff !== 0) {
+        delta = ` <span style="font-size:11px;color:${diff > 0 ? '#065f46' : '#991b1b'}">${diff > 0 ? '+' : ''}${diff}</span>`;
+      }
+    }
+    let versionCell;
+    if (!h.profile_version_id) versionCell = '<span style="color:#9ca3af">이전 버전 불명</span>';
+    else if (!h.profile_version_created_at) versionCell = '<span style="color:#9ca3af">삭제됨</span>';
+    else versionCell = `<a href="#" onclick="navigate('profile-version', '${h.profile_version_id}'); return false;">${escHtml(h.profile_version_created_at)}</a>`;
+    return `<tr>
+      <td><a href="#" onclick="navigate('fit-history', '${h.id}'); return false;">${escHtml(h.created_at)}</a></td>
+      <td>${versionCell}</td>
+      <td>${h.fit_score ?? '-'}${delta}</td>
+      <td>${escHtml(h.fit_label || '')}</td>
+    </tr>`;
+  }).join('');
+
+  panelEl.innerHTML = `
+    <table class="info-table">
+      <thead><tr><th>시점</th><th>프로필 버전</th><th>점수</th><th>라벨</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
 }
 
 function switchTab(name) {
@@ -1342,6 +1419,113 @@ async function initSettings() {
     const usageData = await api('/usage');
     renderUsage(usageData);
   } catch (e) { console.error('사용량 로딩 실패:', e); }
+
+  loadProfileVersions();
+}
+
+async function loadProfileVersions() {
+  const listEl = document.getElementById('profile-version-list');
+  const titleEl = document.getElementById('profile-version-title');
+  if (!listEl) return;
+  let versions;
+  try {
+    versions = await api('/profile/versions');
+  } catch (e) {
+    console.error('프로필 버전 목록 로딩 실패:', e);
+    // "아직 없음"과 구분해서 보여줌 — 안 보이면 사용자가 DB 문제를 알 방법이 없음
+    listEl.innerHTML = '<p style="font-size:13px;color:#dc2626">⚠ 이전 버전 목록을 불러오지 못했습니다.</p>';
+    return;
+  }
+  if (titleEl) titleEl.textContent = `이전 버전 (${versions.length}개)`;
+  if (!versions.length) {
+    listEl.innerHTML = '<p style="font-size:13px;color:#9ca3af">아직 이전 버전이 없습니다.</p>';
+    return;
+  }
+  _profileVersionsCache = versions;
+  listEl.innerHTML = versions.map(v => `
+    <div class="profile-version-row" style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid #f0f0f0">
+      <div data-action="edit-version-note" data-id="${v.id}" style="min-width:0;overflow:hidden;cursor:pointer">
+        <div style="font-size:13px">${v.created_at}</div>
+        <div style="font-size:12px;color:${v.note ? '#6b7280' : '#c1c5cd'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${v.note ? escHtml(v.note) : '+ 메모 추가'}</div>
+      </div>
+      <div style="display:flex;gap:6px;flex-shrink:0">
+        <button class="btn-secondary" onclick="navigate('profile-version', '${v.id}')" style="font-size:12px;padding:5px 10px;white-space:nowrap">보기</button>
+        <button class="btn-secondary" onclick="deleteProfileVersionUI(${v.id})" style="font-size:12px;padding:5px 8px;white-space:nowrap">🗑</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+let _profileVersionsCache = [];
+
+async function editProfileVersionNote(id) {
+  const v = _profileVersionsCache.find(x => x.id === id);
+  const note = prompt('메모', (v && v.note) || '');
+  if (note === null) return;  // 취소
+  try {
+    await api(`/profile/versions/${id}`, { method: 'PATCH', body: JSON.stringify({ note }) });
+    loadProfileVersions();
+  } catch (e) {
+    showToast('메모 저장 실패: ' + e.message, 'error');
+  }
+}
+
+async function deleteProfileVersionUI(id) {
+  if (!confirm('이 버전을 삭제하시겠습니까?')) return;
+  try {
+    await api(`/profile/versions/${id}`, { method: 'DELETE' });
+    showToast('삭제되었습니다.', 'success');
+    loadProfileVersions();
+  } catch (e) {
+    showToast('삭제 실패: ' + e.message, 'error');
+  }
+}
+
+async function initProfileVersion(versionId) {
+  const metaEl = document.getElementById('profile-version-detail-meta');
+  const bodyEl = document.getElementById('profile-version-detail-body');
+  if (!metaEl || !bodyEl) return;
+  let record;
+  try {
+    record = await api(`/profile/versions/${versionId}`);
+  } catch (e) {
+    metaEl.textContent = '';
+    bodyEl.innerHTML = `<p style="color:#9ca3af">불러오지 못했습니다: ${escHtml(e.message)}</p>`;
+    return;
+  }
+  const fm = record.frontmatter || {};
+  metaEl.textContent = `저장 시점: ${fm.updated_at || ''}` + (record.note ? ` · 메모: ${record.note}` : '');
+  if (record.body && record.body.trim()) {
+    bodyEl.innerHTML = parseMarkdown(record.body);
+    applyHljs(bodyEl);
+  } else {
+    bodyEl.innerHTML = '<p style="color:#9ca3af">내용이 없습니다.</p>';
+  }
+}
+
+async function initFitHistoryDetail(entryId) {
+  const metaEl = document.getElementById('fit-history-detail-meta');
+  const bodyEl = document.getElementById('fit-history-detail-body');
+  const backBtn = document.getElementById('fit-history-back-btn');
+  if (!metaEl || !bodyEl) return;
+  let record;
+  try {
+    record = await api(`/fit-history/${entryId}`);
+  } catch (e) {
+    metaEl.textContent = '';
+    bodyEl.innerHTML = `<p style="color:#9ca3af">불러오지 못했습니다: ${escHtml(e.message)}</p>`;
+    return;
+  }
+  metaEl.textContent = `평가 시점: ${record.history_created_at || ''}`;
+  if (backBtn && record.slug) {
+    backBtn.onclick = () => navigate('detail', record.slug);
+  }
+  if (record.body && record.body.trim()) {
+    bodyEl.innerHTML = parseMarkdown(record.body);
+    applyHljs(bodyEl);
+  } else {
+    bodyEl.innerHTML = '<p style="color:#9ca3af">내용이 없습니다.</p>';
+  }
 }
 
 function renderUsage(data) {
@@ -1432,6 +1616,7 @@ async function saveProfileEdit() {
     applyHljs(previewEl);
     toggleProfileEditor();
     showToast('프로필이 저장되었습니다.');
+    loadProfileVersions();
   } catch (e) {
     showToast('저장 실패: ' + e.message, 'error');
   }
@@ -1475,6 +1660,8 @@ async function uploadProfile() {
   if (extraNote) formData.append('extra_note', extraNote);
   const maxTokens = parseInt(document.getElementById('profile-max-tokens')?.value || '8192', 10);
   formData.append('max_tokens', String(maxTokens));
+  const versionNote = document.getElementById('profile-upload-version-note')?.value.trim() || '';
+  if (versionNote) formData.append('version_note', versionNote);
 
   const token = localStorage.getItem(TOKEN_KEY);
   try {

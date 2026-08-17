@@ -202,5 +202,9 @@ class ProfileUpdateRequest(BaseModel):
     body: str = ""
 
 
+class ProfileVersionNoteRequest(BaseModel):
+    note: str | None = None
+
+
 class LoginRequest(BaseModel):
     password: str

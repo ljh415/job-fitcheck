@@ -4,6 +4,7 @@ import logging
 from datetime import date
 from pathlib import Path
 
+import frontmatter
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 
@@ -13,8 +14,16 @@ import storage
 from config import settings
 from llm.base import LLMAPIError
 from llm.router import capture_snapshot, high_from_snapshot
-from models import CandidateProfile, ProfileUpdateRequest
+from models import CandidateProfile, CandidateRecord, ProfileUpdateRequest, ProfileVersionNoteRequest
 from routers.rag import trigger_reindex_background
+from services.app_db import (
+    create_profile_version,
+    delete_profile_version,
+    get_profile_version,
+    is_healthy,
+    list_profile_versions,
+    update_profile_version_note,
+)
 from services.pdf_parser import PDFExtractError
 
 logger = logging.getLogger(__name__)
@@ -24,6 +33,17 @@ router = APIRouter()
 # 정상 사용에서는 절대 걸리지 않을 만큼 넉넉하되 실수·이상 입력만 걸러내는 안전판.
 _MAX_UPLOAD_FILES = 10  # 이력서+포트폴리오 여러 개 정도는 통과
 _MAX_PDF_BYTES = 30 * 1024 * 1024  # 이미지가 많은 포트폴리오 PDF도 통과하는 수준
+
+
+def _snapshot_profile(note: str | None = None) -> None:
+    """방금 저장된 candidate_profile.md를 프로필 히스토리(SQLite)에 스냅샷으로 남긴다.
+    note는 사용자가 남긴 짧은 메모(선택). 실패해도 프로필 저장 자체(핵심 동작)에는
+    영향 주지 않는다."""
+    try:
+        content = settings.candidate_profile_path.read_text(encoding="utf-8")
+        create_profile_version(content, note=(note.strip() or None) if note else None)
+    except Exception as e:
+        logger.warning("프로필 스냅샷 저장 실패: %s", e)
 
 
 @router.get("/api/profile/status")
@@ -53,10 +73,52 @@ async def export_profile():
     )
 
 
+_DB_UNAVAILABLE_DETAIL = "프로필 히스토리 기능을 일시적으로 사용할 수 없습니다."
+
+
+@router.get("/api/profile/versions")
+async def list_profile_version_history():
+    """프로필 스냅샷 목록(최신순) — id/시점만. 내용은 상세 조회(GET .../{id})에서.
+    DB 장애 시 빈 목록 대신 503 — 그래야 "이전 버전 없음"과 구분된다."""
+    if not is_healthy():
+        raise HTTPException(status_code=503, detail=_DB_UNAVAILABLE_DETAIL)
+    return list_profile_versions()
+
+
+@router.get("/api/profile/versions/{version_id}")
+async def get_profile_version_detail(version_id: int):
+    """특정 시점 프로필 스냅샷 전체(현재 `GET /api/profile`과 같은 형태)."""
+    if not is_healthy():
+        raise HTTPException(status_code=503, detail=_DB_UNAVAILABLE_DETAIL)
+    v = get_profile_version(version_id)
+    if not v:
+        raise HTTPException(status_code=404, detail="해당 버전을 찾을 수 없습니다.")
+    post = frontmatter.loads(v["content"])
+    fm = CandidateProfile(**post.metadata)
+    record = CandidateRecord(frontmatter=fm, body=post.content)
+    return {**record.model_dump(), "note": v["note"]}
+
+
+@router.patch("/api/profile/versions/{version_id}")
+async def update_profile_version_note_endpoint(version_id: int, req: ProfileVersionNoteRequest):
+    note = (req.note.strip() or None) if req.note else None
+    if not update_profile_version_note(version_id, note):
+        raise HTTPException(status_code=404, detail="해당 버전을 찾을 수 없습니다.")
+    return {"status": "ok", "note": note}
+
+
+@router.delete("/api/profile/versions/{version_id}")
+async def delete_profile_version_endpoint(version_id: int):
+    if not delete_profile_version(version_id):
+        raise HTTPException(status_code=404, detail="해당 버전을 찾을 수 없습니다.")
+    return {"status": "deleted"}
+
+
 @router.put("/api/profile")
 async def update_profile(req: ProfileUpdateRequest):
     record = storage.write_profile(req.frontmatter, req.body)
     logger.info("프로필 수동 업데이트 완료")
+    _snapshot_profile()
     # RAG_INCLUDE_PROFILE=true면 프로필도 임베딩 대상 — 훅이 없으면 gap 도구가 옛 프로필
     # 임베딩을 계속 쓴다(Codex 4차 리뷰로 발견, 2026-08-03). RAG 꺼져 있으면 no-op.
     trigger_reindex_background()
@@ -64,7 +126,7 @@ async def update_profile(req: ProfileUpdateRequest):
 
 
 @router.post("/api/profile/upload")
-async def upload_profile(files: list[UploadFile] = File(...), extra_note: str = Form(""), max_tokens: int = Form(8192)):
+async def upload_profile(files: list[UploadFile] = File(...), extra_note: str = Form(""), max_tokens: int = Form(8192), version_note: str = Form("")):
     """PDF 업로드 → pdfplumber 추출 → High 티어 LLM → candidate_profile.md 생성."""
     max_tokens = min(max_tokens, 32768)
     if len(files) > _MAX_UPLOAD_FILES:
@@ -149,5 +211,6 @@ async def upload_profile(files: list[UploadFile] = File(...), extra_note: str = 
     fm = CandidateProfile(**result, source_files=filenames)
     record = storage.write_profile(fm, body)
     logger.info("프로필 저장 완료: %s", settings.candidate_profile_path)
+    _snapshot_profile(version_note)
     trigger_reindex_background()
     return record

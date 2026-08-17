@@ -20,6 +20,7 @@ import auth
 from config import ensure_dirs
 from routers import companies, profile, qa, rag
 from routers import settings as settings_router
+from services.app_db import init_db
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -28,6 +29,10 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     ensure_dirs()
+    # 프로필 히스토리는 핵심 기능이 아니다 - init_db()는 내부에서 실패를 흡수하고
+    # is_healthy()에 남긴다(app_db.py). DB 손상/권한 문제로 회사 CRUD 같은 핵심
+    # 기능까지 막히면 안 되기 때문 - 실패해도 앱은 정상 시작한다.
+    init_db()
     task = asyncio.create_task(companies.weekly_summary_loop())
     yield
     task.cancel()
