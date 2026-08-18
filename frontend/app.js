@@ -1391,9 +1391,12 @@ async function initSettings() {
   applyModelCache(p, currentSettings[`${p}_high_model`], currentSettings[`${p}_light_model`]);
   initModelTierHover();
 
-  // 추가 설명 복원
-  const extraNoteEl = document.getElementById('profile-extra-note');
-  if (extraNoteEl) extraNoteEl.value = localStorage.getItem('profile-extra-note') || '';
+  // 추가 설명 복원 (서버 저장값 — 마지막 업로드 때 입력한 내용이 다음 업로드에도 남음)
+  try {
+    const noteData = await api('/profile/note');
+    const extraNoteEl = document.getElementById('profile-extra-note');
+    if (extraNoteEl) extraNoteEl.value = noteData.text || '';
+  } catch (e) { console.error('프로필 추가 설명 로딩 실패:', e); }
 
   ['claude-high-model', 'claude-light-model', 'openai-high-model', 'openai-light-model', 'gemini-high-model', 'gemini-light-model'].forEach(id => {
     const el = document.getElementById(id);
