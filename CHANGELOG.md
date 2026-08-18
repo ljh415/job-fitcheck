@@ -1,5 +1,28 @@
 # Changelog
 
+## v1.4.4 — RAG 실사용 준비 중 발견된 5건 수정 (2026-08-18)
+
+prod에서 RAG를 처음 켜고 실사용 화면 캡처를 준비하던 중 발견된 문제들.
+
+**`.env.example`**
+- `RAG_POSTGRES_DB`/`USER`/`PASSWORD`/`PORT`가 이미 `config.py` 기본값과 동일한데 빈 칸처럼 나열돼 있어 안 채워도 되는 걸 채우게 유도하던 문제 — 주석 처리, `RAG_POSTGRES_HOST`(비어있음 자체가 RAG on/off 스위치)만 필수로 남김
+
+**`RAG_GUIDE.md`**
+- 이미 실행 중이던 앱에 RAG를 나중에 켜면 `api` 컨테이너 재생성으로 `nginx`가 stale해지는 기존 이슈가 재현되는데, 이 안내가 누락돼 있던 것 추가(`docker compose restart nginx`)
+
+**`backend/rag/postgres/chunks.py`**
+- 프로필 청킹 시 frontmatter(`education`/`experience_roles`/`skills`/`source_files`/`summary`/`updated_at` 등 구조화 메타데이터)를 그대로 청크로 잘라 "근거 발췌문"에 노출하던 문제 — `python-frontmatter`로 body만 분리해 청킹 대상으로 삼도록 수정
+
+**`backend/rag/gap.py`**
+- `PROFILE_TOP_K` 5→3 — 프로필이 짧으면 사실상 전체가 다 나올 만큼 과다 노출되던 문제 완화(Python 기준 5개/4951자 → 3개/2855자)
+
+**`frontend/`**
+- RAG 화면 "자연어로 질문하기" 채팅 패널이 고정 480px 박스에 갇혀 창 크기를 못 쓰던 문제 — nav 실제 높이(모바일에서 줄바꿈되면 가변)를 JS로 측정해 CSS 변수로 넘기고, 뷰포트 하단까지 채우되 메시지 목록만 내부 스크롤되도록 수정
+
+**검증**
+- 실 프로필로 재색인 후 frontmatter 미노출·발췌문 분량 감소를 코드로 직접 확인(dev+prod 동일 결과)
+- Playwright로 데스크톱(1400x900)·모바일(390x844, nav 줄바꿈) 양쪽에서 페이지 자체는 안 스크롤되고 메시지 15개 채운 상태에서 내부 스크롤만 동작하는 것 확인
+
 ## v1.4.3 — 프로필 이전 버전 상세 페이지 높이 제약 제거 (2026-08-17)
 
 **`frontend/index.html`**
