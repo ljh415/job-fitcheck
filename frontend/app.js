@@ -1664,7 +1664,7 @@ async function uploadProfile() {
   for (const file of input.files) formData.append('files', file);
   const extraNote = document.getElementById('profile-extra-note')?.value.trim() || '';
   if (extraNote) formData.append('extra_note', extraNote);
-  const maxTokens = parseInt(document.getElementById('profile-max-tokens')?.value || '8192', 10);
+  const maxTokens = parseInt(document.getElementById('profile-max-tokens')?.value || '16384', 10);
   formData.append('max_tokens', String(maxTokens));
   const versionNote = document.getElementById('profile-upload-version-note')?.value.trim() || '';
   if (versionNote) formData.append('version_note', versionNote);

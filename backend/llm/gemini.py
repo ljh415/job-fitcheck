@@ -220,47 +220,63 @@ class GeminiProvider(LLMProvider):
         reasoning_effort: str | None = None,  # ponytail: OpenAI 전용, Gemini는 미사용. ABC 시그니처 일치용
     ) -> str:
         parts = self._to_parts(content) if content is not None else [types.Part.from_text(text=user)]
-        config = types.GenerateContentConfig(
-            system_instruction=system,
-            max_output_tokens=max_tokens,
-        )
-        last_exc: Exception | None = None
-        for attempt in range(3):
-            try:
-                response = await self._client.aio.models.generate_content(
-                    model=model,
-                    contents=[types.Content(role="user", parts=parts)],
-                    config=config,
-                )
-                break
-            except Exception as e:
-                last_exc = e
-                max_attempts, wait = self._retry_plan(e, attempt)
-                if self._is_retryable(e) and attempt < max_attempts:
-                    kind = "429(요청 한도 초과)" if self._is_quota_exceeded(e) else "일시 오류"
-                    logger.warning(
-                        "Gemini %s 재시도 %d/%d (%d초 대기)", kind, attempt + 1, max_attempts, wait
-                    )
-                    await asyncio.sleep(wait)
-                else:
-                    self._raise(e)
-        else:
-            self._raise(last_exc)
-
-        if response.usage_metadata:
-            candidates = response.candidates or []
-            if candidates and getattr(candidates[0].finish_reason, "name", None) == "MAX_TOKENS":
-                logger.warning(
-                    "[%s] 응답이 max_tokens(%d)에 의해 잘렸습니다. 내용이 불완전할 수 있습니다.",
-                    operation, max_tokens,
-                )
-            usage_tracker.append_usage(
-                operation=operation,
-                model=model,
-                input_tokens=response.usage_metadata.prompt_token_count or 0,
-                output_tokens=response.usage_metadata.candidates_token_count or 0,
+        current_max_tokens = max_tokens
+        # 잘린 응답을 그대로 반환하는 대신, max_tokens를 2배로 늘려 한 번 더 시도한다
+        # (32768 도달 시 더 늘려도 소용없으니 중단). 2026-08-18 실사용 중 프로필 본문이
+        # 잘려 저장된 사례 발견 — 사용자가 직접 재시도하지 않아도 되게 함.
+        for truncation_attempt in range(2):
+            config = types.GenerateContentConfig(
+                system_instruction=system,
+                max_output_tokens=current_max_tokens,
             )
-        return response.text or ""
+            last_exc: Exception | None = None
+            for attempt in range(3):
+                try:
+                    response = await self._client.aio.models.generate_content(
+                        model=model,
+                        contents=[types.Content(role="user", parts=parts)],
+                        config=config,
+                    )
+                    break
+                except Exception as e:
+                    last_exc = e
+                    max_attempts, wait = self._retry_plan(e, attempt)
+                    if self._is_retryable(e) and attempt < max_attempts:
+                        kind = "429(요청 한도 초과)" if self._is_quota_exceeded(e) else "일시 오류"
+                        logger.warning(
+                            "Gemini %s 재시도 %d/%d (%d초 대기)", kind, attempt + 1, max_attempts, wait
+                        )
+                        await asyncio.sleep(wait)
+                    else:
+                        self._raise(e)
+            else:
+                self._raise(last_exc)
+
+            was_truncated = False
+            if response.usage_metadata:
+                candidates = response.candidates or []
+                was_truncated = bool(candidates) and getattr(candidates[0].finish_reason, "name", None) == "MAX_TOKENS"
+                usage_tracker.append_usage(
+                    operation=operation,
+                    model=model,
+                    input_tokens=response.usage_metadata.prompt_token_count or 0,
+                    output_tokens=response.usage_metadata.candidates_token_count or 0,
+                )
+            if was_truncated and truncation_attempt == 0 and current_max_tokens < 32768:
+                retry_max_tokens = min(current_max_tokens * 2, 32768)
+                logger.info(
+                    "[%s] max_tokens(%d)에 잘림 — %d로 늘려 재시도",
+                    operation, current_max_tokens, retry_max_tokens,
+                )
+                current_max_tokens = retry_max_tokens
+                continue
+            if was_truncated:
+                logger.warning(
+                    "[%s] 응답이 max_tokens(%d)에 의해 잘렸습니다(재시도 후에도 부족). 내용이 불완전할 수 있습니다.",
+                    operation, current_max_tokens,
+                )
+            return response.text or ""
+        return ""
 
     async def run_agent(
         self,
