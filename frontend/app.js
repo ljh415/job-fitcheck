@@ -923,7 +923,10 @@ async function refillCompany() {
   try {
     await api(`/companies/${encodeURIComponent(currentSlug)}/refill`, { method: 'POST', body: '{}' });
     showToast('전체 재분석 완료!');
-    await loadDetail(currentSlug);
+    // initDetail은 await 안 함 — 여기서 실패해도(존재하지 않는 loadDetail을 부르던
+    // 버그가 있었음, 2026-08-18 발견) 재분석 자체는 이미 성공했으니 아래 catch에서
+    // "재분석 실패"로 잘못 표시되면 안 됨(refitCompany()와 동일 패턴)
+    initDetail(currentSlug);
   } catch (e) {
     showToast('재분석 실패: ' + e.message, 'error');
   } finally {
