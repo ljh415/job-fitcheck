@@ -132,7 +132,7 @@ async def update_profile(req: ProfileUpdateRequest):
 
 
 @router.post("/api/profile/upload")
-async def upload_profile(files: list[UploadFile] = File(...), extra_note: str = Form(""), max_tokens: int = Form(8192), version_note: str = Form("")):
+async def upload_profile(files: list[UploadFile] = File(...), extra_note: str = Form(""), max_tokens: int = Form(16384), version_note: str = Form("")):
     """PDF 업로드 → pdfplumber 추출 → High 티어 LLM → candidate_profile.md 생성."""
     max_tokens = min(max_tokens, 32768)
     if len(files) > _MAX_UPLOAD_FILES:

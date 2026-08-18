@@ -136,39 +136,54 @@ class OpenAIProvider(LLMProvider):
         reasoning_kwarg = _reasoning_effort_kwarg(model, reasoning_effort)
         if reasoning_kwarg:
             max_tokens = max(max_tokens, 8192)
-        try:
-            response = await self._client.chat.completions.create(
-                model=model,
-                **_max_tokens_kwarg(model, max_tokens),
-                **reasoning_kwarg,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": msg_content},  # type: ignore[arg-type]
-                ],
-            )
-        except openai_lib.AuthenticationError:
-            raise LLMAPIError("LLM API 인증 실패 — 설정에서 OpenAI API 키를 확인해주세요.", 401)
-        except openai_lib.RateLimitError:
-            raise LLMAPIError("LLM API 요청 한도 초과 — 잠시 후 다시 시도해주세요.", 429)
-        except openai_lib.APIStatusError as e:
-            raise LLMAPIError(f"LLM 서비스 오류 ({e.status_code}) — 잠시 후 다시 시도해주세요.", 503)
-        except openai_lib.APIConnectionError:
-            raise LLMAPIError("LLM 서비스 연결 실패 — 네트워크 상태를 확인해주세요.", 503)
-        if response.usage:
-            usage_tracker.append_usage(
-                operation=operation,
-                model=model,
-                input_tokens=response.usage.prompt_tokens,
-                output_tokens=response.usage.completion_tokens,
-            )
-        finish_reason = response.choices[0].finish_reason
-        if finish_reason == "length":
-            import logging as _logging
-            _logging.getLogger(__name__).warning(
-                "[%s] 응답이 max_tokens(%d)에 의해 잘렸습니다 (출력 %d토큰). 내용이 불완전할 수 있습니다.",
-                operation, max_tokens, response.usage.completion_tokens if response.usage else -1,
-            )
-        return response.choices[0].message.content or ""
+        import logging as _logging
+        logger = _logging.getLogger(__name__)
+        current_max_tokens = max_tokens
+        # 잘린 응답을 그대로 반환하는 대신, max_tokens를 2배로 늘려 한 번 더 시도한다
+        # (32768 도달 시 더 늘려도 소용없으니 중단). 2026-08-18 실사용 중 프로필 본문이
+        # 잘려 저장된 사례 발견 — 사용자가 직접 재시도하지 않아도 되게 함.
+        for attempt in range(2):
+            try:
+                response = await self._client.chat.completions.create(
+                    model=model,
+                    **_max_tokens_kwarg(model, current_max_tokens),
+                    **reasoning_kwarg,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": msg_content},  # type: ignore[arg-type]
+                    ],
+                )
+            except openai_lib.AuthenticationError:
+                raise LLMAPIError("LLM API 인증 실패 — 설정에서 OpenAI API 키를 확인해주세요.", 401)
+            except openai_lib.RateLimitError:
+                raise LLMAPIError("LLM API 요청 한도 초과 — 잠시 후 다시 시도해주세요.", 429)
+            except openai_lib.APIStatusError as e:
+                raise LLMAPIError(f"LLM 서비스 오류 ({e.status_code}) — 잠시 후 다시 시도해주세요.", 503)
+            except openai_lib.APIConnectionError:
+                raise LLMAPIError("LLM 서비스 연결 실패 — 네트워크 상태를 확인해주세요.", 503)
+            if response.usage:
+                usage_tracker.append_usage(
+                    operation=operation,
+                    model=model,
+                    input_tokens=response.usage.prompt_tokens,
+                    output_tokens=response.usage.completion_tokens,
+                )
+            finish_reason = response.choices[0].finish_reason
+            if finish_reason == "length" and attempt == 0 and current_max_tokens < 32768:
+                retry_max_tokens = min(current_max_tokens * 2, 32768)
+                logger.info(
+                    "[%s] max_tokens(%d)에 잘림 — %d로 늘려 재시도",
+                    operation, current_max_tokens, retry_max_tokens,
+                )
+                current_max_tokens = retry_max_tokens
+                continue
+            if finish_reason == "length":
+                logger.warning(
+                    "[%s] 응답이 max_tokens(%d)에 의해 잘렸습니다(재시도 후에도 부족, 출력 %d토큰). 내용이 불완전할 수 있습니다.",
+                    operation, current_max_tokens, response.usage.completion_tokens if response.usage else -1,
+                )
+            return response.choices[0].message.content or ""
+        return ""
 
     async def run_agent(
         self,

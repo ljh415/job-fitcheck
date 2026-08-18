@@ -87,37 +87,52 @@ class AnthropicProvider(LLMProvider):
         reasoning_effort: str | None = None,  # ponytail: OpenAI 전용, Anthropic은 미사용. ABC 시그니처 일치용
     ) -> str:
         msg_content: str | list = content if content is not None else user
-        try:
-            response = await self._client.messages.create(
+        import logging as _logging
+        logger = _logging.getLogger(__name__)
+        current_max_tokens = max_tokens
+        # 잘린 응답을 그대로 반환하는 대신, max_tokens를 2배로 늘려 한 번 더 시도한다
+        # (32768 도달 시 더 늘려도 소용없으니 중단). 2026-08-18 실사용 중 프로필 본문이
+        # 잘려 저장된 사례 발견 — 사용자가 직접 재시도하지 않아도 되게 함.
+        for attempt in range(2):
+            try:
+                response = await self._client.messages.create(
+                    model=model,
+                    max_tokens=current_max_tokens,
+                    system=system,
+                    messages=[{"role": "user", "content": msg_content}],  # type: ignore[arg-type]
+                )
+            except anthropic.AuthenticationError:
+                raise LLMAPIError("LLM API 인증 실패 — 설정에서 Anthropic API 키를 확인해주세요.", 401)
+            except anthropic.RateLimitError:
+                raise LLMAPIError("LLM API 요청 한도 초과 — 잠시 후 다시 시도해주세요.", 429)
+            except anthropic.APIStatusError as e:
+                raise LLMAPIError(f"LLM 서비스 오류 ({e.status_code}) — 잠시 후 다시 시도해주세요.", 503)
+            except anthropic.APIConnectionError:
+                raise LLMAPIError("LLM 서비스 연결 실패 — 네트워크 상태를 확인해주세요.", 503)
+            usage_tracker.append_usage(
+                operation=operation,
                 model=model,
-                max_tokens=max_tokens,
-                system=system,
-                messages=[{"role": "user", "content": msg_content}],  # type: ignore[arg-type]
+                input_tokens=response.usage.input_tokens,
+                output_tokens=response.usage.output_tokens,
             )
-        except anthropic.AuthenticationError:
-            raise LLMAPIError("LLM API 인증 실패 — 설정에서 Anthropic API 키를 확인해주세요.", 401)
-        except anthropic.RateLimitError:
-            raise LLMAPIError("LLM API 요청 한도 초과 — 잠시 후 다시 시도해주세요.", 429)
-        except anthropic.APIStatusError as e:
-            raise LLMAPIError(f"LLM 서비스 오류 ({e.status_code}) — 잠시 후 다시 시도해주세요.", 503)
-        except anthropic.APIConnectionError:
-            raise LLMAPIError("LLM 서비스 연결 실패 — 네트워크 상태를 확인해주세요.", 503)
-        usage_tracker.append_usage(
-            operation=operation,
-            model=model,
-            input_tokens=response.usage.input_tokens,
-            output_tokens=response.usage.output_tokens,
-        )
-        stop_reason = response.stop_reason
-        if stop_reason == "max_tokens":
-            import logging as _logging
-            _logging.getLogger(__name__).warning(
-                "[%s] 응답이 max_tokens(%d)에 의해 잘렸습니다 (출력 %d토큰). 내용이 불완전할 수 있습니다.",
-                operation, max_tokens, response.usage.output_tokens,
-            )
-        for block in response.content:
-            if hasattr(block, "text"):
-                return block.text  # type: ignore[union-attr]
+            stop_reason = response.stop_reason
+            if stop_reason == "max_tokens" and attempt == 0 and current_max_tokens < 32768:
+                retry_max_tokens = min(current_max_tokens * 2, 32768)
+                logger.info(
+                    "[%s] max_tokens(%d)에 잘림 — %d로 늘려 재시도",
+                    operation, current_max_tokens, retry_max_tokens,
+                )
+                current_max_tokens = retry_max_tokens
+                continue
+            if stop_reason == "max_tokens":
+                logger.warning(
+                    "[%s] 응답이 max_tokens(%d)에 의해 잘렸습니다(재시도 후에도 부족, 출력 %d토큰). 내용이 불완전할 수 있습니다.",
+                    operation, current_max_tokens, response.usage.output_tokens,
+                )
+            for block in response.content:
+                if hasattr(block, "text"):
+                    return block.text  # type: ignore[union-attr]
+            return ""
         return ""
 
     async def run_agent(
