@@ -2274,6 +2274,13 @@ async function saveRagSettings() {
   }
 }
 
+let _ragNavHeightListenerAttached = false;
+
+function updateRagNavHeight() {
+  const nav = document.querySelector('.navbar');
+  if (nav) document.documentElement.style.setProperty('--rag-nav-h', `${nav.offsetHeight}px`);
+}
+
 function initRag() {
   document.getElementById('rag-gap-section').classList.toggle('hidden', !ragIncludeProfile);
   document.getElementById('rag-gap-disabled-note').classList.toggle('hidden', ragIncludeProfile);
@@ -2281,6 +2288,13 @@ function initRag() {
   ragCleanupPendingMessages();
   ragRenderChatDropdown();
   ragSwitchChat(ragGetCurrentChatId());
+
+  // nav 실제 높이(모바일에서 줄바꿈되면 가변)를 측정해 .rag-view의 높이 계산에 반영
+  updateRagNavHeight();
+  if (!_ragNavHeightListenerAttached) {
+    window.addEventListener('resize', updateRagNavHeight);
+    _ragNavHeightListenerAttached = true;
+  }
 }
 
 function handleRagKeydown(e) {

@@ -5,7 +5,10 @@
 다시 설계한다.
 """
 import hashlib
+import tempfile
+from pathlib import Path
 
+import frontmatter
 import psycopg
 
 from config import settings
@@ -21,8 +24,10 @@ def _text_hash(text: str) -> str:
 def populate_candidate_profile_chunks(conn: psycopg.Connection) -> tuple[bool, int]:
     """document_chunk에 후보자 프로필(source_type='candidate_profile') 청크를 채운다.
     반환값: (내용이 바뀌어 다시 만들었는지, 전체 청크 수)."""
-    raw_text = settings.candidate_profile_path.read_text(encoding="utf-8")
-    new_chunks = chunk_text(raw_text)
+    # frontmatter(education/skills 등 구조화 메타데이터)는 서술형 근거가 아니라 그대로 청킹하면
+    # "발췌문"에 필드 나열만 노출되는 노이즈가 되므로, body만 청킹 대상으로 삼는다.
+    body_text = frontmatter.load(str(settings.candidate_profile_path)).content
+    new_chunks = chunk_text(body_text)
     new_hashes = [_text_hash(c.text) for c in new_chunks]
 
     existing_hashes = [
@@ -137,3 +142,31 @@ def prune_deleted_postings(conn: psycopg.Connection) -> int:
     )
     conn.commit()
     return len(stale_slugs)
+
+
+if __name__ == "__main__":
+    # DB 연결 없이, populate_candidate_profile_chunks()가 frontmatter를 실제로 빼고
+    # body만 청킹 대상으로 넘기는지만 검증한다.
+    sample = frontmatter.Post(
+        content="실무 경험 문단입니다. " * 20,
+        skills=["Python", "PyTorch"],
+        experience_years=5,
+        summary="요약 필드입니다",
+    )
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = Path(tmpdir) / "profile.md"
+        frontmatter.dump(sample, str(path))
+
+        loaded = frontmatter.load(str(path))
+        assert "skills:" not in loaded.content
+        assert "experience_years:" not in loaded.content
+        assert "summary:" not in loaded.content
+        assert "실무 경험 문단입니다" in loaded.content
+
+        chunks = chunk_text(loaded.content)
+        joined = "\n".join(c.text for c in chunks)
+        assert "skills:" not in joined
+        assert "Python" not in joined  # frontmatter 필드값이라 body에 없어야 함
+        assert "실무 경험 문단입니다" in joined
+
+    print("OK: frontmatter가 청킹 대상에서 제외됨")

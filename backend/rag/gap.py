@@ -15,7 +15,7 @@ from rag.embed.base import EmbeddingProvider
 from rag.retrieval import ensure_fts5, fts5_literal, search_chunks
 from rag.skills import TRACKED_SKILLS
 
-PROFILE_TOP_K = 5
+PROFILE_TOP_K = 3  # 5는 프로필이 짧으면 사실상 전체가 다 나올 만큼 과다 노출됨(2026-08-18 발견)
 DEMAND_CANDIDATE_MAX = 25  # LLM 판정에 넘길 후보 공고 상한(비용·프롬프트 크기 제어)
 DEMAND_EMBED_TOP_K = 40    # 임베딩 검색 청크 수(공고 단위로 접기 전)
 DEMAND_FTS5_TOP_K = 20     # FTS5 검색 청크 수

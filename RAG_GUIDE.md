@@ -21,6 +21,8 @@ docker compose --profile rag up --build
 
 임베딩은 `GOOGLE_API_KEY`(메인 앱에서 이미 설정한 키)를 그대로 재사용하므로 별도 키가 필요 없습니다. 켜져 있으면 상단 네비게이션에 **🤖 RAG** 버튼이 나타납니다.
 
+> **이미 실행 중이던 앱에 나중에 RAG를 켜는 경우, `nginx`도 재시작해야 합니다** — 위 명령으로 `api` 컨테이너가 재생성되는데, `nginx`는 그대로 떠 있으면 새 `api`를 못 찾는 경우가 있습니다. `docker compose --profile rag up --build` 실행 후 `docker compose restart nginx`를 한 번 더 실행하세요.
+
 > **최초 실행 시 반드시 재색인을 한 번 해야 합니다** — 버튼이 보이는 것과 실제로 검색이 되는 것은 다릅니다. 새로 띄운 Postgres는 비어있는 상태라, 로그인 → 🤖 RAG → **"🔄 재색인"** 버튼을 눌러 완료될 때까지 기다린 뒤에 질문하세요(회사 등록 상황에 따라 몇 초~몇 분 걸릴 수 있습니다). 이 단계를 건너뛰면 질문에 오류가 납니다.
 
 > **Docker 없이 `uv`로 직접 실행하는 경로는 지원하지 않습니다** — Postgres를 별도로 준비해야 해서, `run/start-uv.command`/`.bat` 경로에서는 RAG 버튼이 계속 안 보입니다. RAG까지 쓰려면 Docker 방식으로 실행해주세요([GETTING_STARTED.md](GETTING_STARTED.md)의 "Docker로 실행하고 싶다면" 참고).
