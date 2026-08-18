@@ -1,5 +1,25 @@
 # Changelog
 
+## v1.4.5 — 프로필 추가 설명을 서버에 저장해 다음 업로드에도 남게 함 (2026-08-18)
+
+프로필 업로드 폼의 "추가 설명"이 브라우저 localStorage에만 저장돼 다른 기기·브라우저나 캐시 삭제 시 사라지던 문제(사용자 제보) — `eval_criteria`와 같은 패턴으로 서버 파일에 저장하도록 변경.
+
+**`backend/storage.py`**
+- `read_candidate_note()`/`write_candidate_note()` 신규 — `data/candidate_note.md`에 원자적으로 저장
+
+**`backend/routers/profile.py`**
+- 업로드 시 입력한 추가 설명을 자동 저장(LLM 프롬프트용으로 이스케이프하기 전 원본을 저장 — 저장용과 프롬프트 삽입용을 분리)
+- `GET /api/profile/note` 신규 — 업로드 폼에 기본값으로 채워줄 마지막 입력값 조회
+
+**`frontend/`**
+- localStorage 기반 복원 로직 제거, 서버에서 불러와 textarea를 채우도록 변경
+
+**`backend/export.py`**
+- 전체 백업 ZIP에 `candidate_note.md` 포함
+
+**검증**
+- 저장→조회→빈 값 초기화까지 실측, Playwright로 설정 화면 textarea에 서버 값이 실제로 채워지는 것 확인, prod 반영 후 재확인
+
 ## v1.4.4 — RAG 실사용 준비 중 발견된 5건 수정 (2026-08-18)
 
 prod에서 RAG를 처음 켜고 실사용 화면 캡처를 준비하던 중 발견된 문제들.
