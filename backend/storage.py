@@ -238,3 +238,22 @@ def write_eval_criteria(text: str) -> None:
     tmp = path.with_suffix(".tmp")
     tmp.write_text(text, encoding="utf-8")
     os.replace(tmp, path)
+
+
+# ── 프로필 추가 설명 ────────────────────────────────────────────────────────────
+
+def read_candidate_note() -> str:
+    """프로필 업로드 시 입력하는 추가 설명 텍스트를 반환한다. 파일이 없으면 빈 문자열."""
+    path = settings.data_dir / "candidate_note.md"
+    if not path.exists():
+        return ""
+    return path.read_text(encoding="utf-8")
+
+
+def write_candidate_note(text: str) -> None:
+    """프로필 추가 설명을 파일에 저장한다(다음 업로드 때도 기본값으로 남게)."""
+    settings.data_dir.mkdir(parents=True, exist_ok=True)
+    path = settings.data_dir / "candidate_note.md"
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)

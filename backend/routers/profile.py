@@ -51,6 +51,12 @@ async def profile_status():
     return {"exists": storage.profile_exists()}
 
 
+@router.get("/api/profile/note")
+async def get_candidate_note():
+    """업로드 폼의 '추가 설명'에 기본값으로 채워줄, 마지막으로 입력한 값."""
+    return {"text": storage.read_candidate_note()}
+
+
 @router.get("/api/profile")
 async def get_profile():
     record = storage.read_profile()
@@ -163,6 +169,7 @@ async def upload_profile(files: list[UploadFile] = File(...), extra_note: str = 
         )
     logger.info("PDF 텍스트 추출 완료: %d자", len(pdf_text))
     pdf_text = prompts.escape_tag_chars(pdf_text)
+    raw_extra_note = extra_note  # 저장용 원본 — 다음 업로드 때 기본값으로 남겨줄 값(이스케이프 전)
     extra_note = prompts.escape_tag_chars(extra_note)
 
     # provider/모델뿐 아니라 reasoning_effort도 1·2단계 사이에 안 바뀌도록 스냅샷을 떠서 재사용한다.
@@ -211,6 +218,7 @@ async def upload_profile(files: list[UploadFile] = File(...), extra_note: str = 
     fm = CandidateProfile(**result, source_files=filenames)
     record = storage.write_profile(fm, body)
     logger.info("프로필 저장 완료: %s", settings.candidate_profile_path)
+    storage.write_candidate_note(raw_extra_note)
     _snapshot_profile(version_note)
     trigger_reindex_background()
     return record
