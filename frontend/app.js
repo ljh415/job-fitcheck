@@ -993,10 +993,16 @@ async function sendQA() {
     const fullText = await streamQA(makeFetch, assistantBubble);
     if (fullText) {
       qaHistory[currentSlug].push({ role: 'assistant', text: fullText });
-      saveQAHistory();
+    } else {
+      // 응답 실패 시 방금 넣은 질문을 롤백 — 안 그러면 답 없는 질문이 히스토리에
+      // 계속 남아 다음 질문부터 문맥이 끊긴 채로 이어짐(실사용 중 발견, 2026-08-19)
+      qaHistory[currentSlug].pop();
     }
+    saveQAHistory();
   } catch (e) {
     assistantBubble.textContent = `오류: ${e.message}`;
+    qaHistory[currentSlug].pop();
+    saveQAHistory();
   }
 }
 
@@ -1021,8 +1027,10 @@ async function sendCompareQA() {
   try {
     const fullText = await streamQA(makeFetch, assistantBubble);
     if (fullText) compareQaHistory.push({ role: 'assistant', text: fullText });
+    else compareQaHistory.pop(); // 응답 실패 시 방금 넣은 질문 롤백(sendQA()와 동일 이유)
   } catch (e) {
     assistantBubble.textContent = `오류: ${e.message}`;
+    compareQaHistory.pop();
   }
 }
 
