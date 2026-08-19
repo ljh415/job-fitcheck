@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.4.8 — Codex 리뷰(v1.4.7) 발견 3건 수정 (2026-08-19)
+
+v1.4.4~v1.4.7 범위로 요청한 Codex 코드 리뷰에서 중간 2건·낮음 1건 발견, 전부 인정하고 수정.
+
+**`backend/llm/gemini.py`**
+- `finish_reason`(잘림) 판정이 `usage_metadata` 존재 여부 안에 갇혀 있어서, `usage_metadata=None`인 응답(SDK상 정상적으로 발생 가능)에서는 `MAX_TOKENS`로 잘렸어도 재시도를 안 하고 잘린 채로 반환하던 문제 — 판정을 usage 조건 밖으로 분리(`append_usage()`만 usage 있을 때 기록). 기본 provider가 Gemini라 실사용 경로에 직접 영향
+
+**`backend/routers/profile.py`**
+- `write_candidate_note()` 실패(예: 디스크 오류)가 예외 처리 없이 그대로 올라가서, 이미 성공한 프로필 저장 응답이 500으로 뒤집히고 뒤이은 스냅샷·RAG 재색인 훅까지 건너뛰던 문제 — `OSError`만 좁게 잡아 경고 로그만 남기고 핵심 흐름은 계속 진행하도록 수정(`_snapshot_profile()`과 동일 원칙을 놓쳤던 것)
+
+**`RAG_GUIDE.md`**
+- v1.4.3 이전부터 `RAG_INCLUDE_PROFILE=true`를 쓰던 기존 사용자는 업그레이드만으로 frontmatter 제외 규칙이 적용 안 된다는 안내 추가(재색인 1회 필요, 데이터 손상은 없음)
+
+**검증**
+- mock으로 Gemini `usage_metadata=None` 케이스에서도 재시도되는 것 확인
+- Codex와 동일한 방식(`candidate_note.md`를 디렉터리로 만듦)으로 재현, `IsADirectoryError`(`OSError` 하위클래스)가 새 예외 처리에 정확히 잡히는 것 확인
+
 ## v1.4.7 — 전체 재분석 후 화면 새로고침 버그 수정 (2026-08-18)
 
 실사용 중 "전체 재분석"이 성공했는데도 "재분석 실패"로 잘못 표시되고, 화면(평가 이력·이전 버전)도 갱신 안 되던 문제 발견(사용자 제보).
