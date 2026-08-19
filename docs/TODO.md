@@ -195,7 +195,8 @@ private 저장소를 지인 대상 셀프호스팅 공개로 전환하기 위한
 - ✅ 기본 provider를 Claude→Gemini로 변경(`backend/config.py`) — 무료 티어로 바로 체험 가능, Claude는 "추천" 옵션으로 재배치(`.env.example`/`CLAUDE.md`/`README.md`/`GETTING_STARTED.md` 전부 반영)
 - ✅ 저장소 루트 정리 — `Dockerfile`/`nginx.conf` → `docker/`, 설치·실행 스크립트 → `run/` (docker-compose.yml 경로 갱신 후 실제 재빌드로 검증 완료)
 - ✅ `GETTING_STARTED.md` 스크린샷 9장 반영 완료 (2026-07-20) — 실제 캡처본으로 교체, Windows 보안/방화벽 안내 추가, 마크다운 렌더링 버그 수정. `v1.1.4`~`v1.2.0` 태그도 전부 origin push 완료
-- ⬜ **다음에 할 일** (사용자 액션): (1) 실제로 GitHub 저장소를 private→public 전환, (2) 지인들에게 링크 공유
+- ✅ GitHub 저장소 private→public 전환 완료(2026-08-19, API로 `"private": false` 확인)
+- ⬜ **다음에 할 일** (사용자 액션): 지인들에게 링크 공유
 
 ## 알려진 이슈 / 기술 부채
 
