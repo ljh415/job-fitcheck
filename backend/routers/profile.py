@@ -218,7 +218,13 @@ async def upload_profile(files: list[UploadFile] = File(...), extra_note: str = 
     fm = CandidateProfile(**result, source_files=filenames)
     record = storage.write_profile(fm, body)
     logger.info("프로필 저장 완료: %s", settings.candidate_profile_path)
-    storage.write_candidate_note(raw_extra_note)
+    try:
+        storage.write_candidate_note(raw_extra_note)
+    except OSError as e:
+        # 편의 기능(다음 업로드 기본값)이라 실패해도 핵심 프로필 저장 자체에는 영향 주지
+        # 않는다 — 여기서 예외가 그대로 올라가면 이미 저장된 프로필 응답이 500으로
+        # 뒤집히고 뒤이은 스냅샷·재색인 훅도 안 도는 문제가 있었음(Codex 리뷰로 발견, 2026-08-18).
+        logger.warning("프로필 추가 설명 저장 실패(핵심 프로필 저장에는 영향 없음): %s", e)
     _snapshot_profile(version_note)
     trigger_reindex_background()
     return record

@@ -252,10 +252,12 @@ class GeminiProvider(LLMProvider):
             else:
                 self._raise(last_exc)
 
-            was_truncated = False
+            # finish_reason 판정은 usage_metadata 유무와 무관하게 항상 수행한다 — usage_metadata가
+            # None인 응답(SDK상 정상적으로 발생 가능)에서도 MAX_TOKENS 잘림을 놓치면 안 됨
+            # (Codex 리뷰로 발견, 2026-08-18). append_usage()만 usage가 있을 때 기록한다.
+            candidates = response.candidates or []
+            was_truncated = bool(candidates) and getattr(candidates[0].finish_reason, "name", None) == "MAX_TOKENS"
             if response.usage_metadata:
-                candidates = response.candidates or []
-                was_truncated = bool(candidates) and getattr(candidates[0].finish_reason, "name", None) == "MAX_TOKENS"
                 usage_tracker.append_usage(
                     operation=operation,
                     model=model,
