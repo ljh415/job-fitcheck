@@ -18,6 +18,23 @@ from .base import LLMAPIError, LLMProvider
 logger = logging.getLogger(__name__)
 
 
+def _raise_status_error(e: anthropic.APIStatusError) -> None:
+    """APIStatusError를 사용자 친화적 메시지로 변환해 raise한다.
+    크레딧/빌링 소진(400, "credit balance" 문구)은 "잠시 후 다시 시도"가 아니라
+    명확히 다른 조치(충전)가 필요하므로 별도 메시지로 분기한다(2026-08-21 발견 —
+    RateLimitError만 따로 처리하고 나머지 APIStatusError를 뭉뚱그려서, 크레딧 소진
+    시에도 "잠시 후 다시 시도해주세요"라는 틀린 안내가 나가고 있었음)."""
+    body = e.body if isinstance(e.body, dict) else {}
+    error_info = body.get("error") if isinstance(body, dict) else None
+    error_msg = error_info.get("message", "") if isinstance(error_info, dict) else ""
+    if "credit balance" in error_msg.lower():
+        raise LLMAPIError(
+            "Anthropic 크레딧이 모두 소진되었습니다 — Anthropic 콘솔(console.anthropic.com)에서 결제/크레딧을 충전해주세요.",
+            402,
+        )
+    raise LLMAPIError(f"LLM 서비스 오류 ({e.status_code}) — 잠시 후 다시 시도해주세요.", 503)
+
+
 class AnthropicProvider(LLMProvider):
 
     def __init__(self) -> None:
@@ -56,7 +73,7 @@ class AnthropicProvider(LLMProvider):
         except anthropic.RateLimitError:
             raise LLMAPIError("LLM API 요청 한도 초과 — 잠시 후 다시 시도해주세요.", 429)
         except anthropic.APIStatusError as e:
-            raise LLMAPIError(f"LLM 서비스 오류 ({e.status_code}) — 잠시 후 다시 시도해주세요.", 503)
+            _raise_status_error(e)
         except anthropic.APIConnectionError:
             raise LLMAPIError("LLM 서비스 연결 실패 — 네트워크 상태를 확인해주세요.", 503)
         usage_tracker.append_usage(
@@ -106,7 +123,7 @@ class AnthropicProvider(LLMProvider):
             except anthropic.RateLimitError:
                 raise LLMAPIError("LLM API 요청 한도 초과 — 잠시 후 다시 시도해주세요.", 429)
             except anthropic.APIStatusError as e:
-                raise LLMAPIError(f"LLM 서비스 오류 ({e.status_code}) — 잠시 후 다시 시도해주세요.", 503)
+                _raise_status_error(e)
             except anthropic.APIConnectionError:
                 raise LLMAPIError("LLM 서비스 연결 실패 — 네트워크 상태를 확인해주세요.", 503)
             usage_tracker.append_usage(
@@ -170,7 +187,7 @@ class AnthropicProvider(LLMProvider):
             except anthropic.RateLimitError:
                 raise LLMAPIError("LLM API 요청 한도 초과 — 잠시 후 다시 시도해주세요.", 429)
             except anthropic.APIStatusError as e:
-                raise LLMAPIError(f"LLM 서비스 오류 ({e.status_code}) — 잠시 후 다시 시도해주세요.", 503)
+                _raise_status_error(e)
             except anthropic.APIConnectionError:
                 raise LLMAPIError("LLM 서비스 연결 실패 — 네트워크 상태를 확인해주세요.", 503)
 
@@ -250,6 +267,31 @@ class AnthropicProvider(LLMProvider):
         except anthropic.RateLimitError:
             raise LLMAPIError("LLM API 요청 한도 초과 — 잠시 후 다시 시도해주세요.", 429)
         except anthropic.APIStatusError as e:
-            raise LLMAPIError(f"LLM 서비스 오류 ({e.status_code}) — 잠시 후 다시 시도해주세요.", 503)
+            _raise_status_error(e)
         except anthropic.APIConnectionError:
             raise LLMAPIError("LLM 서비스 연결 실패 — 네트워크 상태를 확인해주세요.", 503)
+
+
+if __name__ == "__main__":
+    from types import SimpleNamespace
+
+    credit_error = SimpleNamespace(
+        status_code=400,
+        body={"error": {"message": "Your credit balance is too low to access the Anthropic API."}},
+    )
+    try:
+        _raise_status_error(credit_error)  # type: ignore[arg-type]
+        assert False, "예외가 발생했어야 함"
+    except LLMAPIError as e:
+        assert e.status_code == 402, e.status_code
+        assert "크레딧" in str(e), str(e)
+
+    other_error = SimpleNamespace(status_code=500, body={"error": {"message": "internal error"}})
+    try:
+        _raise_status_error(other_error)  # type: ignore[arg-type]
+        assert False, "예외가 발생했어야 함"
+    except LLMAPIError as e:
+        assert e.status_code == 503, e.status_code
+        assert "500" in str(e), str(e)
+
+    print("OK: 크레딧 소진 400 -> 402 전용 메시지, 그 외는 기존 503 메시지 유지")
