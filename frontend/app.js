@@ -2453,13 +2453,18 @@ function ragRenderThread(messages) {
   resultEl.scrollTop = resultEl.scrollHeight;
 }
 
+const RAG_PENDING_STALE_MS = 2 * 60 * 1000; // 이보다 오래된 pending만 좀비로 간주
+
 function ragCleanupPendingMessages() {
   // 응답 기다리던 중 새로고침 등으로 요청이 끊기면 pending 항목이 영원히 안 끝난다 — 로드 시 정리.
+  // 단, 방금 질문 보내고 목록 등 다른 화면 갔다가 응답 오기 전에 돌아온 경우까지 지우면 안 되므로
+  // (실사용 중 발견, 2026-08-21) 생성된 지 RAG_PENDING_STALE_MS 이상 지난 것만 좀비로 판단한다.
   const chats = ragLoadChats();
+  const now = Date.now();
   let changed = false;
   for (const id of Object.keys(chats)) {
     const before = chats[id].messages.length;
-    chats[id].messages = chats[id].messages.filter(m => !m.pending);
+    chats[id].messages = chats[id].messages.filter(m => !m.pending || (now - (m.createdAt || 0)) < RAG_PENDING_STALE_MS);
     if (chats[id].messages.length !== before) changed = true;
   }
   if (changed) ragSaveChats(chats);
@@ -2489,7 +2494,7 @@ async function runRagAsk(event) {
   // 대기하는 동안 사용자가 새 채팅을 만들거나 다른 채팅을 지우면 그 변경이 통째로 덮어써졌다
   // (Codex 리뷰로 발견 + DOM/localStorage mock 격리 재현, 2026-08-12).
   const entryId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const entry = { id: entryId, question, data: null, pending: true };
+  const entry = { id: entryId, question, data: null, pending: true, createdAt: Date.now() };
   chat.messages.push(entry);
   if (!chat.title) chat.title = question.slice(0, 24) + (question.length > 24 ? '…' : '');
   ragSaveChats(chats);
