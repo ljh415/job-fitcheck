@@ -8,8 +8,31 @@ import prompts
 import storage
 from llm.router import high_provider
 from models import MultiQARequest, QAMessage, QARequest
+from services.app_db import list_fit_history
 
 router = APIRouter()
+
+
+def _fit_history_summary(slug: str) -> str:
+    """이 회사의 시점별 적합도 점수 변화 요약. QnA는 현재 스냅샷만 컨텍스트로 받다 보니
+    "이전엔 몇 점이었는지"를 답할 근거가 아예 없었음(실사용 중 발견, 2026-08-19) — 회사
+    상세 화면에도 이미 쓰는 fit_history를 그대로 재사용해 채워준다. 이력 DB 조회 실패는
+    QnA 핵심 기능(질문 응답)을 막으면 안 되므로 조용히 빈 문자열로 넘어간다."""
+    try:
+        entries = list_fit_history(slug)
+    except Exception:
+        return ""
+    if len(entries) < 2:
+        return ""  # 평가가 한 번뿐이면 "변화"랄 게 없어 굳이 안 보여줌
+    entries = sorted(entries, key=lambda e: e["id"])
+    lines = []
+    prev_score = None
+    for e in entries:
+        score = e["fit_score"]
+        delta = f" ({'+' if score - prev_score >= 0 else ''}{score - prev_score})" if prev_score is not None else ""
+        lines.append(f"- {e['created_at']}: {score}점 {e['fit_label']}{delta}")
+        prev_score = score
+    return "## 적합도 평가 이력 (시점별 점수 변화)\n" + "\n".join(lines) + "\n\n"
 
 
 def _make_sse(gen):
@@ -57,7 +80,11 @@ async def company_qa(slug: str, req: QARequest):
     profile_text = storage.read_profile_text() or "후보자 프로필 없음"
     company_context = f"{record.frontmatter.model_dump_json(indent=2)}\n\n{record.body}"
 
-    context_part = f"## 후보자 프로필\n{profile_text}\n\n## 회사 정보\n{company_context}\n\n"
+    context_part = (
+        f"## 후보자 프로필\n{profile_text}\n\n"
+        f"## 회사 정보\n{company_context}\n\n"
+        f"{_fit_history_summary(slug)}"
+    )
     provider, model = high_provider()
     gen = provider.stream(
         system=prompts.QA_SYSTEM,
@@ -75,9 +102,11 @@ async def multi_company_qa(req: MultiQARequest):
     for slug in req.slugs:
         record = storage.read_company(slug)
         if record:
+            history_summary = _fit_history_summary(slug)
             contexts.append(
                 f"=== {record.frontmatter.display_name} ===\n"
                 f"{record.frontmatter.model_dump_json(indent=2)}\n\n{record.body}"
+                + (f"\n\n{history_summary}" if history_summary else "")
             )
     if not contexts:
         raise HTTPException(status_code=404, detail="선택한 회사를 찾을 수 없습니다.")
