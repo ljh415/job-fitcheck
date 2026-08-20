@@ -2453,7 +2453,10 @@ function ragRenderThread(messages) {
   resultEl.scrollTop = resultEl.scrollHeight;
 }
 
-const RAG_PENDING_STALE_MS = 2 * 60 * 1000; // 이보다 오래된 pending만 좀비로 간주
+// nginx `/api/` 라우트의 proxy_read_timeout이 300초라 RAG 요청도 최장 300초까지 정상
+// 소요될 수 있다 — 2분(120초)으로 잡았다가 정상 처리 중인 요청까지 지우는 문제가
+// 있었음(2026-08-21, Codex 리뷰로 발견). 300초보다 넉넉히 크게 10분으로 설정.
+const RAG_PENDING_STALE_MS = 10 * 60 * 1000; // 이보다 오래된 pending만 좀비로 간주
 
 function ragCleanupPendingMessages() {
   // 응답 기다리던 중 새로고침 등으로 요청이 끊기면 pending 항목이 영원히 안 끝난다 — 로드 시 정리.

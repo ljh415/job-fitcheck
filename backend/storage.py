@@ -227,21 +227,30 @@ def read_profile_text() -> str | None:
 # 그대로 노출한다. LLM이 "제외하라"는 지시를 지키길 기대하는 대신, 적합도 평가
 # 프롬프트를 만들 때 코드로 통째로 잘라내는 방식 — 확률이 아니라 기계적으로 보장.
 
-_SCORE_EXCLUDED_SECTION_RE = re.compile(r'\[점수 제외\]\s*(.*?)(?=\n\[.+?\]|\Z)', re.DOTALL)
+# \s*로 헤더 뒤 공백을 먼저 소비하면, 내용이 비어있을 때(헤더 바로 뒤에 다음 섹션이
+# 오는 경우) 다음 헤더 앞의 개행까지 먹어버려서 lookahead 경계가 깨지는 버그가 있었음
+# (2026-08-21, Codex 리뷰로 발견 — "빈 마커에서 제외 경계가 깨짐"). 공백을 미리 안
+# 먹고 캡처 그룹 자체에 맡긴 뒤 strip()하는 방식, ^/lookahead도 줄 시작 기준으로 고정.
+_SCORE_EXCLUDED_SECTION_RE = re.compile(r'^\[점수 제외\](.*?)(?=^\[.+?\]|\Z)', re.DOTALL | re.MULTILINE)
 _SCORE_EXCLUDED_MARKER_RE = re.compile(
     r'<!--\s*score-excluded-start\s*-->.*?<!--\s*score-excluded-end\s*-->', re.DOTALL
 )
 
 
 def extract_score_excluded_section(extra_note: str) -> tuple[str, str]:
-    """추가 설명 원문에서 [점수 제외] 섹션을 분리한다.
-    반환: (그 섹션이 빠진 나머지 텍스트, 분리된 섹션 내용 — 없으면 빈 문자열)"""
-    m = _SCORE_EXCLUDED_SECTION_RE.search(extra_note)
-    if not m:
+    """추가 설명 원문에서 [점수 제외] 섹션을 전부 분리한다.
+    search()로 첫 번째만 찾으면, 실수로 [점수 제외]를 두 번 쓴 경우 두 번째 이후가
+    그대로 새서 점수 산정에 들어가는 문제가 있었음(2026-08-21, Codex 리뷰로 발견 —
+    finditer()로 전부 찾아 전부 제거하도록 수정).
+    반환: (그 섹션들이 빠진 나머지 텍스트, 분리된 섹션 내용을 합친 것 — 없으면 빈 문자열)"""
+    matches = list(_SCORE_EXCLUDED_SECTION_RE.finditer(extra_note))
+    if not matches:
         return extra_note, ""
-    excluded = m.group(1).strip()
-    remaining = (extra_note[:m.start()] + extra_note[m.end():]).strip()
-    return remaining, excluded
+    excluded_parts = [p for m in matches if (p := m.group(1).strip())]
+    remaining = extra_note
+    for m in reversed(matches):  # 뒤에서부터 제거해야 앞쪽 매치의 인덱스가 안 밀림
+        remaining = remaining[:m.start()] + remaining[m.end():]
+    return remaining.strip(), "\n\n".join(excluded_parts)
 
 
 def wrap_score_excluded(content: str) -> str:
@@ -311,4 +320,16 @@ if __name__ == "__main__":
     remaining2, excluded2 = extract_score_excluded_section("그냥 자유 텍스트, 섹션 없음")
     assert excluded2 == "" and remaining2 == "그냥 자유 텍스트, 섹션 없음"
 
-    print("OK: [점수 제외] 섹션 분리·마커 부착·제거 정상 동작")
+    # 중복 마커(2026-08-21 Codex 리뷰로 발견 — 첫 번째만 잡던 문제)
+    dup_note = "[점수 제외]\n첫번째\n\n[기타 추가 내용]\n중간\n\n[점수 제외]\n두번째"
+    remaining3, excluded3 = extract_score_excluded_section(dup_note)
+    assert "첫번째" not in remaining3 and "두번째" not in remaining3, remaining3
+    assert "첫번째" in excluded3 and "두번째" in excluded3, excluded3
+
+    # 빈 마커(내용 없이 헤더만)
+    empty_note = "[점수 제외]\n\n[기타 추가 내용]\n본문"
+    remaining4, excluded4 = extract_score_excluded_section(empty_note)
+    assert excluded4 == "", repr(excluded4)
+    assert wrap_score_excluded(excluded4) == ""  # 빈 내용은 마커 자체를 안 붙임
+
+    print("OK: [점수 제외] 섹션 분리(중복·빈 마커 포함)·마커 부착·제거 정상 동작")
