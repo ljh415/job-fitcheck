@@ -352,7 +352,8 @@
       </div>
       <p class="profile-guide">
         프로필 분석 시 아래 항목이 자동 추출됩니다. 이력서에 명시되지 않은 항목은 <strong>추가 설명</strong>란에 직접 입력해주세요.<br>
-        <span class="profile-guide-fields">희망 근무지 · 희망 고용형태 · 희망 최소 연봉 · 총 경력 연수 · 선호 직무 역할</span>
+        <span class="profile-guide-fields">희망 근무지 · 희망 고용형태 · 희망 최소 연봉 · 총 경력 연수 · 선호 직무 역할</span><br>
+        추가 설명은 <code>[기본정보]</code> · <code>[점수 제외]</code> · <code>[기타 추가 내용]</code> 세 섹션으로 나뉜 틀이 기본으로 채워집니다. <code>[점수 제외]</code>에 적은 내용은 적합도 평가 점수에는 반영되지 않고, Q&A 상담에서만 참고됩니다.
       </p>
       <div id="profile-status-msg"></div>
       <div id="profile-preview" class="markdown-body profile-preview-area"></div>
@@ -380,7 +381,7 @@
           <div id="pdf-dropzone-label">📂 클릭하거나 PDF를 여기에 드래그하세요 (복수 가능)</div>
           <input type="file" id="pdf-input" accept=".pdf" multiple style="display:none" onchange="updateDropzoneLabel()" />
         </div>
-        <textarea id="profile-extra-note" rows="3" placeholder="추가 설명 (선택) — 예: 백엔드 전문이며 MLOps 경험 있음. 풀스택보다 AI 인프라 역할 선호." style="margin-top:10px;width:100%;font-size:13px;color:#374151;resize:vertical;box-sizing:border-box"></textarea>
+        <textarea id="profile-extra-note" rows="10" placeholder="추가 설명 (선택) — 예: 백엔드 전문이며 MLOps 경험 있음. 풀스택보다 AI 인프라 역할 선호." style="margin-top:10px;width:100%;font-size:13px;resize:vertical;box-sizing:border-box"></textarea>
         <input type="text" id="profile-upload-version-note" placeholder="이번 업로드에 대한 메모 (선택, 예: 최신 이력서로 갱신)" style="margin-top:10px;width:100%;font-size:13px;box-sizing:border-box" />
         <div class="profile-upload-footer">
           <label class="upload-option-label" title="프로필 본문 생성 시 최대 출력 토큰 수. 이력서·포트폴리오가 길수록 높게 설정하세요.">

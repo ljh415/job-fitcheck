@@ -221,6 +221,42 @@ def read_profile_text() -> str | None:
     return f"---\n{fm_text}\n---\n\n{record.body}"
 
 
+# ── 점수 미반영(QnA 전용) 참고 내용 ────────────────────────────────────────────────
+# 프로필 "추가 설명" 입력 시 [점수 제외] 섹션으로 표시한 내용은 적합도 평가 프롬프트엔
+# 안 보내고(LLM이 우대사항 근거로 써버리는 문제가 있었음, 2026-08-20 발견) QnA엔
+# 그대로 노출한다. LLM이 "제외하라"는 지시를 지키길 기대하는 대신, 적합도 평가
+# 프롬프트를 만들 때 코드로 통째로 잘라내는 방식 — 확률이 아니라 기계적으로 보장.
+
+_SCORE_EXCLUDED_SECTION_RE = re.compile(r'\[점수 제외\]\s*(.*?)(?=\n\[.+?\]|\Z)', re.DOTALL)
+_SCORE_EXCLUDED_MARKER_RE = re.compile(
+    r'<!--\s*score-excluded-start\s*-->.*?<!--\s*score-excluded-end\s*-->', re.DOTALL
+)
+
+
+def extract_score_excluded_section(extra_note: str) -> tuple[str, str]:
+    """추가 설명 원문에서 [점수 제외] 섹션을 분리한다.
+    반환: (그 섹션이 빠진 나머지 텍스트, 분리된 섹션 내용 — 없으면 빈 문자열)"""
+    m = _SCORE_EXCLUDED_SECTION_RE.search(extra_note)
+    if not m:
+        return extra_note, ""
+    excluded = m.group(1).strip()
+    remaining = (extra_note[:m.start()] + extra_note[m.end():]).strip()
+    return remaining, excluded
+
+
+def wrap_score_excluded(content: str) -> str:
+    """분리해둔 [점수 제외] 내용을 프로필 본문 끝에 붙일 때 쓰는 내부 마커로 감싼다."""
+    if not content:
+        return ""
+    return f"\n\n<!-- score-excluded-start -->\n{content}\n<!-- score-excluded-end -->\n"
+
+
+def strip_scoring_excluded(profile_text: str) -> str:
+    """적합도 평가 프롬프트 조립 시에만 호출 — 마커 구간을 통째로 제거한다.
+    QnA(read_profile_text() 그대로 사용)는 이 함수를 거치지 않아 영향 없음."""
+    return _SCORE_EXCLUDED_MARKER_RE.sub('', profile_text).strip()
+
+
 # ── 평가 기준 ──────────────────────────────────────────────────────────────────
 
 def read_eval_criteria() -> str:
@@ -257,3 +293,22 @@ def write_candidate_note(text: str) -> None:
     tmp = path.with_suffix(".tmp")
     tmp.write_text(text, encoding="utf-8")
     os.replace(tmp, path)
+
+
+if __name__ == "__main__":
+    note = "[기본정보]\n- 희망 근무지 : 서울\n\n[점수 제외]\n티오리 계약직 3개월\nSageMaker 사용\n\n[기타 추가 내용]\n기타 내용"
+    remaining, excluded = extract_score_excluded_section(note)
+    assert "티오리" not in remaining, remaining
+    assert "[기본정보]" in remaining and "[기타 추가 내용]" in remaining, remaining
+    assert excluded == "티오리 계약직 3개월\nSageMaker 사용", repr(excluded)
+
+    body = "프로필 본문입니다." + wrap_score_excluded(excluded)
+    assert "티오리" in body
+    stripped = strip_scoring_excluded(body)
+    assert "티오리" not in stripped
+    assert stripped == "프로필 본문입니다."
+
+    remaining2, excluded2 = extract_score_excluded_section("그냥 자유 텍스트, 섹션 없음")
+    assert excluded2 == "" and remaining2 == "그냥 자유 텍스트, 섹션 없음"
+
+    print("OK: [점수 제외] 섹션 분리·마커 부착·제거 정상 동작")

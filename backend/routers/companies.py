@@ -641,7 +641,9 @@ async def _process_company(
     if storage.profile_exists():
         high, high_model = high_from_snapshot(snap)
         logger.info("[4/4] 적합도 평가 시작 (model=%s)", high_model)
-        profile_text = storage.read_profile_text() or ""
+        # [점수 제외] 섹션(QnA 전용 참고 내용)은 적합도 평가엔 안 보여줌 — LLM 판단이
+        # 아니라 코드로 제거(2026-08-20, backend/storage.py 참고)
+        profile_text = storage.strip_scoring_excluded(storage.read_profile_text() or "")
         # 이 프로필을 실제로 읽은 시점의 스냅샷 id를 고정 — LLM 호출이 끝날 때까지
         # 기다렸다 조회하면 그 사이 프로필이 갱신된 경우 엉뚱한 버전과 연결된다.
         profile_version_id_at_eval = _resolve_profile_version_id_for_eval()
@@ -961,7 +963,8 @@ async def refit_company(slug: str):
     high, high_model = high_from_snapshot(snap)
     logger.info("[refit] 적합도 재산정 시작 (slug=%s, model=%s)", slug, high_model)
 
-    profile_text = storage.read_profile_text() or ""
+    # [점수 제외] 섹션(QnA 전용 참고 내용)은 적합도 평가엔 안 보여줌 — 코드로 제거
+    profile_text = storage.strip_scoring_excluded(storage.read_profile_text() or "")
     # 이 프로필을 실제로 읽은 시점의 스냅샷 id를 고정 (이유는 _resolve_profile_version_id_for_eval 참고)
     profile_version_id_at_eval = _resolve_profile_version_id_for_eval()
     raw_text = prompts.escape_tag_chars(storage.read_raw_text(slug) or record.body)

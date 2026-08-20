@@ -170,7 +170,12 @@ async def upload_profile(files: list[UploadFile] = File(...), extra_note: str = 
     logger.info("PDF 텍스트 추출 완료: %d자", len(pdf_text))
     pdf_text = prompts.escape_tag_chars(pdf_text)
     raw_extra_note = extra_note  # 저장용 원본 — 다음 업로드 때 기본값으로 남겨줄 값(이스케이프 전)
+    # [점수 제외] 섹션은 프로필 생성 LLM에도 안 보내고, 생성된 본문 뒤에 코드로 그대로
+    # 붙인다 — LLM이 "제외해서 써라"를 안 지킬 수 있어서(2026-08-20 발견), 애초에
+    # 적합도 평가 프롬프트가 볼 수 없는 형태로 분리해서 관리한다.
+    extra_note, score_excluded = storage.extract_score_excluded_section(extra_note)
     extra_note = prompts.escape_tag_chars(extra_note)
+    score_excluded = prompts.escape_tag_chars(score_excluded)
 
     # provider/모델뿐 아니라 reasoning_effort도 1·2단계 사이에 안 바뀌도록 스냅샷을 떠서 재사용한다.
     snap = capture_snapshot()
@@ -214,6 +219,7 @@ async def upload_profile(files: list[UploadFile] = File(...), extra_note: str = 
     except LLMAPIError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e))
     logger.info("프로필 본문 생성 완료: %d자", len(body))
+    body += storage.wrap_score_excluded(score_excluded)
 
     fm = CandidateProfile(**result, source_files=filenames)
     record = storage.write_profile(fm, body)
