@@ -1403,12 +1403,12 @@ async function initSettings() {
   initModelTierHover();
 
   // 추가 설명 복원 (서버 저장값 — 마지막 업로드 때 입력한 내용이 다음 업로드에도 남음)
-  // 한 번도 입력한 적 없으면(빈 값) 섹션 구분 틀을 기본값으로 채워준다.
-  const EXTRA_NOTE_TEMPLATE = '[기본정보]\n- 희망 근무지 : \n- 희망 고용형태 : \n- 희망 최소 연봉 : \n- 총 경력 연수 : \n- 선호 직무 역할 : \n\n[점수 제외]\n\n\n[기타 추가 내용]\n';
+  // 한 번도 입력한 적 없으면 비워둔다 — 안내는 placeholder 속성(미리보기 힌트)이 담당,
+  // 실제 값에 틀을 채워넣으면 이미 입력한 것처럼 보여서 혼동을 줌(2026-08-20 지적).
   try {
     const noteData = await api('/profile/note');
     const extraNoteEl = document.getElementById('profile-extra-note');
-    if (extraNoteEl) extraNoteEl.value = noteData.text || EXTRA_NOTE_TEMPLATE;
+    if (extraNoteEl) extraNoteEl.value = noteData.text || '';
   } catch (e) { console.error('프로필 추가 설명 로딩 실패:', e); }
 
   ['claude-high-model', 'claude-light-model', 'openai-high-model', 'openai-light-model', 'gemini-high-model', 'gemini-light-model'].forEach(id => {
