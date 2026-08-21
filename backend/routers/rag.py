@@ -20,8 +20,10 @@ RAG는 opt-in 기능이다 — `settings.rag_postgres_host`가 비어 있으면 
 `["google"]`뿐이다.
 """
 import asyncio
+import json
+import logging
 import threading
-from typing import Literal
+from datetime import datetime
 
 import httpx
 import psycopg
@@ -45,8 +47,18 @@ from rag.postgres.agent import answer_query_agent
 from rag.postgres.db import get_connection
 from rag.postgres.gap import assess_gap
 from rag.postgres import reindex as rag_reindex
+# app_db는 채팅 이력용 SQLite(data/app.db) — 이 파일이 이미 쓰는 rag.postgres.db.get_connection()
+# (RAG 벡터용 Postgres)과 완전히 다른 DB라 이름 충돌을 피하고 구분이 되도록 모듈째로 임포트해서
+# app_db.xxx()로 호출한다.
+from services import app_db
 
 router = APIRouter(prefix="/api/rag")
+logger = logging.getLogger(__name__)
+
+# 진행 중인 RAG 생성 태스크 참조 보관 — qa.py의 _active_qa_tasks와 같은 이유
+# (asyncio 문서 권고: 참조를 안 들고 있으면 이벤트 루프가 GC 시점에 실행 중인 태스크를
+# 조용히 없애버릴 수 있다).
+_active_rag_tasks: set[asyncio.Task] = set()
 
 
 def _require_rag_enabled() -> None:
@@ -139,17 +151,30 @@ class GapCheckRequest(BaseModel):
     skill: str
 
 
-class AskMessage(BaseModel):
-    role: Literal["user", "assistant"]
-    content: str = Field(max_length=20_000)
-
-
 class AskRequest(BaseModel):
-    # 메인 앱 QARequest(models.py)와 같은 방어값 — 예전엔 history가 무제한 list[dict]라 role/길이
-    # 검증이 전혀 없었다(Codex 리뷰로 발견, 2026-07-29). 긴 대화는 결국 Anthropic API의 context
-    # 한도를 넘어 영구 실패하고, 잘못된 role/content는 외부 API 400이 503으로 오인 처리됐다.
+    """chat_id 채팅방에 질문을 추가한다. history는 클라이언트가 안 보낸다 — 서버가
+    rag_messages에서 직접 조회(최근 20턴, status='done'만)해서 조립한다(QnA와 동일한 이유,
+    docs/chat-history-server-storage/PLAN.md 참고)."""
     question: str = Field(max_length=2_000)
-    history: list[AskMessage] = Field(default_factory=list, max_length=40)
+    chat_id: str
+
+
+class RagMigrationMessage(BaseModel):
+    question: str = Field(max_length=2_000)
+    data: dict | None = None
+    pending: bool = False
+
+
+class RagMigrationChat(BaseModel):
+    title: str | None = None
+    created_at_ms: int
+    messages: list[RagMigrationMessage] = Field(default_factory=list)
+
+
+class RagChatMigrationRequest(BaseModel):
+    """localStorage의 job-fitcheck-rag-chats 전체({chatId: {title, createdAt, messages}})를
+    한 번에 보낼 때 쓰는 형태 그대로 받는다."""
+    chats: dict[str, RagMigrationChat]
 
 
 @router.post("/gap-check", dependencies=[Depends(_require_rag_enabled), Depends(_require_profile_enabled)])
@@ -339,17 +364,23 @@ async def reindex():
     return {"status": "ok", "provider": provider}
 
 
-@router.post("/ask", dependencies=[Depends(_require_rag_enabled)])
-async def ask(req: AskRequest):
-    """대화형 근거 기반 RAG 진입점 — 자연어 질문을 Agent(tool-use)로 답한다(2026-07-28, Phase 1~4의
-    "질문 분류→고정 함수 실행" 구조를 대체). 질문이 애매하거나 여러 능력을 조합해야 답할 수 있을 때
-    완전히 무관한 답을 내놓는 구조적 결함이 실측으로 확인돼(`docs/rag-project-plans/00_meta/HISTORY.md`
-    2026-07-28 항목), LLM이 도구를 스스로 골라 쓰며 답하는 구조로 전환. conn/embed_provider 생성·정리·
-    예외 처리는 gap_check()와 동일한 패턴(Codex 리뷰로 다듬어진 부분이라 그대로 유지). DB
-    연결·임베딩 생성은 동기라 asyncio.to_thread로 개별 감싸고(gap_check()와 같은 이유),
-    answer_query_agent() 자체는 진짜 비동기라 이 uvicorn 이벤트 루프에 그대로 둔다 — 한 번은
-    함수 전체를 별도 이벤트 루프(asyncio.run)에서 돌렸었는데, 캐시된 비동기 LLM 클라이언트가
-    요청마다 다른 루프에서 재사용되는 문제가 있어(Codex 4차 리뷰로 발견, 2026-08-03) 되돌렸다."""
+def _history_from_rag_rows(rows: list[dict]) -> list[dict]:
+    """rag_messages 조회 결과(한 행=질문+답변 data JSON)를 answer_query_agent()가 받는
+    {role, content} 번갈아 나오는 형태로 펼친다."""
+    result: list[dict] = []
+    for r in rows:
+        result.append({"role": "user", "content": r["question"]})
+        data = json.loads(r["data"]) if r["data"] else {}
+        result.append({"role": "assistant", "content": data.get("answer", "")})
+    return result
+
+
+async def _run_rag_generation(message_id: int, chat_id: str, question: str) -> dict:
+    """대화형 근거 기반 RAG 실행 — 요청/응답 코루틴과 분리된 독립 태스크로 돌린다. QnA의
+    _run_qa_generation()과 같은 이유(docs/chat-history-server-storage/PLAN.md "LLM 호출을
+    HTTP 요청 생명주기와 분리" 참고) — 클라이언트가 연결을 끊어도 이 태스크는 계속 실행되어
+    DB에 결과를 남긴다. conn/embed_provider 생성·정리·예외 처리는 기존 ask()/gap_check()와
+    동일한 패턴 그대로 유지(Codex 리뷰로 다듬어진 부분)."""
     provider = resolve_rag_embedding_provider()
     conn = None
     embed_provider = None
@@ -358,9 +389,103 @@ async def ask(req: AskRequest):
         embed_provider = await asyncio.to_thread(
             GoogleEmbeddingProvider if provider == "google" else LocalEmbeddingProvider
         )
-        history = [m.model_dump() for m in req.history]
-        result = await answer_query_agent(conn, req.question, embed_provider, history=history)
+        history = _history_from_rag_rows(app_db.list_rag_context(chat_id))
+        result = await answer_query_agent(conn, question, embed_provider, history=history)
         result["provider"] = provider
+        app_db.mark_rag_message_done(message_id, json.dumps(result, ensure_ascii=False))
+        return result
+    except Exception as e:
+        app_db.mark_rag_message_failed(message_id, str(e))
+        raise
+    finally:
+        close = getattr(embed_provider, "close", None)
+        if close:
+            try:
+                await asyncio.to_thread(close)
+            except Exception:
+                pass
+        if conn is not None:
+            await asyncio.to_thread(conn.close)
+
+
+@router.get("/chats", dependencies=[Depends(_require_rag_enabled)])
+async def list_chats():
+    """채팅방 목록(드롭다운용) — 최신순."""
+    return {"chats": app_db.list_rag_chats()}
+
+
+@router.get("/chats/{chat_id}", dependencies=[Depends(_require_rag_enabled)])
+async def get_chat_messages(chat_id: str):
+    """특정 방의 메시지 전체(pending·failed 포함) — 페이지 로드 시 이걸로 채팅 화면을
+    복원한다(localStorage 대체). data는 DB엔 JSON 문자열로 저장돼있는데 그대로 돌려주면
+    응답 전체가 JSON 직렬화될 때 이중 인코딩된 문자열이 되므로, 여기서 미리 파싱해
+    중첩 객체로 내려준다(ask()가 반환하는 result와 같은 모양으로 맞춤)."""
+    if not app_db.get_rag_chat(chat_id):
+        raise HTTPException(404, "채팅방을 찾을 수 없습니다.")
+    messages = app_db.list_rag_messages(chat_id)
+    for m in messages:
+        m["data"] = json.loads(m["data"]) if m["data"] else None
+    return {"messages": messages}
+
+
+@router.post("/chats", dependencies=[Depends(_require_rag_enabled)])
+async def create_chat():
+    """새 채팅방 생성 — id는 서버가 발급(기존 프론트 'chat-<timestamp>' 형식과 동일하게
+    맞춰서 마이그레이션으로 넘어온 옛 방 id와 형태를 통일)."""
+    chat_id = f"chat-{int(datetime.now().timestamp() * 1000)}"
+    app_db.create_rag_chat(chat_id)
+    return app_db.get_rag_chat(chat_id)
+
+
+@router.delete("/chats/{chat_id}", dependencies=[Depends(_require_rag_enabled)])
+async def delete_chat(chat_id: str):
+    """채팅방 삭제 — rag_messages는 FK(ON DELETE CASCADE)로 자동 정리된다."""
+    if not app_db.delete_rag_chat(chat_id):
+        raise HTTPException(404, "채팅방을 찾을 수 없습니다.")
+    return {"status": "ok"}
+
+
+@router.post("/migrate-chats", dependencies=[Depends(_require_rag_enabled)])
+async def migrate_chats(req: RagChatMigrationRequest):
+    """localStorage job-fitcheck-rag-chats 전체를 1회성으로 서버 저장(rag_chats/rag_messages)
+    으로 옮긴다. pending:true로 남아있던 미완성 메시지는 건너뛴다(QnA migrate-qa와 동일한
+    원칙 — 짝 안 맞는/미완성 항목은 스킵)."""
+    inserted = 0
+    for chat_id, chat in req.chats.items():
+        if app_db.get_rag_chat(chat_id):
+            continue  # 이미 마이그레이션된 방(재시도 등) — 중복 삽입 방지
+        created_at = datetime.fromtimestamp(chat.created_at_ms / 1000).isoformat(timespec="seconds")
+        app_db.create_rag_chat(chat_id, title=chat.title, created_at=created_at)
+        for m in chat.messages:
+            if m.pending or not m.data:
+                continue
+            message_id = app_db.insert_pending_rag_message(chat_id, m.question)
+            app_db.mark_rag_message_done(message_id, json.dumps(m.data, ensure_ascii=False))
+            inserted += 1
+    return {"inserted": inserted}
+
+
+@router.post("/ask", dependencies=[Depends(_require_rag_enabled)])
+async def ask(req: AskRequest):
+    """대화형 근거 기반 RAG 진입점 — 자연어 질문을 Agent(tool-use)로 답한다(2026-07-28, Phase 1~4의
+    "질문 분류→고정 함수 실행" 구조를 대체). 질문이 애매하거나 여러 능력을 조합해야 답할 수 있을 때
+    완전히 무관한 답을 내놓는 구조적 결함이 실측으로 확인돼(`docs/rag-project-plans/00_meta/HISTORY.md`
+    2026-07-28 항목), LLM이 도구를 스스로 골라 쓰며 답하는 구조로 전환. 실제 생성은
+    _run_rag_generation()에 위임 — 독립 태스크로 돌려서 클라이언트 연결 끊김과 무관하게 끝까지
+    실행되게 한다(위 "LLM 호출을 HTTP 요청 생명주기와 분리" 참고). 이 함수는 pending 삽입 →
+    태스크 생성 → 결과 대기 → 예외를 기존과 동일한 HTTPException으로 변환하는 역할만 한다."""
+    if not app_db.get_rag_chat(req.chat_id):
+        raise HTTPException(404, "채팅방을 찾을 수 없습니다.")
+    app_db.set_rag_chat_title_if_empty(
+        req.chat_id, req.question[:24] + ("…" if len(req.question) > 24 else "")
+    )
+    message_id = app_db.insert_pending_rag_message(req.chat_id, req.question)
+    task = asyncio.create_task(_run_rag_generation(message_id, req.chat_id, req.question))
+    _active_rag_tasks.add(task)
+    task.add_done_callback(_active_rag_tasks.discard)
+    try:
+        result = await task
+        result["message_id"] = message_id
         return result
     except LLMAPIError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e))
@@ -372,12 +497,3 @@ async def ask(req: AskRequest):
         raise HTTPException(503, f"Google 임베딩 API 오류: {e}")
     except psycopg.OperationalError as e:
         raise HTTPException(503, "DB 연결 오류 — 잠시 후 다시 시도하세요")
-    finally:
-        close = getattr(embed_provider, "close", None)
-        if close:
-            try:
-                await asyncio.to_thread(close)
-            except Exception:
-                pass
-        if conn is not None:
-            await asyncio.to_thread(conn.close)

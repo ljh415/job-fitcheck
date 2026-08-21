@@ -25,6 +25,11 @@ _healthy = True  # init_db()가 실패하면 False로 남는다 — 조회 API�
 def get_connection():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
+    # rag_messages.chat_id가 rag_chats(id)를 FK(ON DELETE CASCADE)로 참조한다 — SQLite는
+    # 연결마다 매번 다시 켜야 강제된다(DB 파일에 영속되는 설정이 아님). 기존 테이블
+    # (profile_versions/fit_history)엔 FK가 전혀 없어서 켜도 기존 동작이 깨질 위험은 없다
+    # (2026-08-21, Codex 의견도 동일 — docs/chat-history-server-storage/PLAN.md 참고).
+    conn.execute("PRAGMA foreign_keys = ON")
     try:
         yield conn
     finally:
@@ -89,10 +94,33 @@ def init_db() -> None:
                 CREATE INDEX IF NOT EXISTS idx_qa_messages_slug
                 ON qa_messages(company_slug, id)
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS rag_chats (
+                    id         TEXT PRIMARY KEY,
+                    title      TEXT,
+                    created_at TEXT NOT NULL
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS rag_messages (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    chat_id      TEXT NOT NULL REFERENCES rag_chats(id) ON DELETE CASCADE,
+                    question     TEXT NOT NULL,
+                    data         TEXT,
+                    status       TEXT NOT NULL DEFAULT 'pending',
+                    error        TEXT,
+                    created_at   TEXT NOT NULL
+                )
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_rag_messages_chat
+                ON rag_messages(chat_id, id)
+            """)
             conn.commit()
         _backfill_profile_version()
         _backfill_fit_history()
         _fail_stale_qa_pending()
+        _fail_stale_rag_pending()
         _healthy = True
     except Exception as e:
         logger.error("프로필 히스토리 DB 초기화 실패 - 이 기능만 비활성화됩니다: %s", e)
@@ -175,6 +203,17 @@ def _fail_stale_qa_pending() -> None:
     with get_connection() as conn:
         conn.execute(
             "UPDATE qa_messages SET status = 'failed', "
+            "error = '서버 재시작으로 응답을 받지 못했습니다' WHERE status = 'pending'"
+        )
+        conn.commit()
+
+
+def _fail_stale_rag_pending() -> None:
+    """_fail_stale_qa_pending()과 동일한 이유·동일한 방식 — RAG도 좀비 pending은 서버 시작
+    시점 일괄 정리로 확정적으로 처리한다."""
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE rag_messages SET status = 'failed', "
             "error = '서버 재시작으로 응답을 받지 못했습니다' WHERE status = 'pending'"
         )
         conn.commit()
@@ -349,6 +388,106 @@ def list_qa_context(company_slug: str, limit: int = 20) -> list[dict]:
             "SELECT question, answer FROM qa_messages "
             "WHERE company_slug = ? AND status = 'done' ORDER BY id DESC LIMIT ?",
             (company_slug, limit),
+        ).fetchall()
+        return [dict(r) for r in reversed(rows)]
+
+
+def create_rag_chat(chat_id: str, title: str | None = None, created_at: str | None = None) -> None:
+    """새 채팅방 생성. `created_at`을 지정하면(마이그레이션으로 넘어온 옛 createdAt 보존)
+    그 값을, 없으면 지금 시각을 쓴다."""
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT INTO rag_chats (id, title, created_at) VALUES (?, ?, ?)",
+            (chat_id, title, created_at or datetime.now().isoformat(timespec="seconds")),
+        )
+        conn.commit()
+
+
+def list_rag_chats() -> list[dict]:
+    """채팅방 목록 — 최신순(드롭다운용)."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT id, title, created_at FROM rag_chats ORDER BY created_at DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_rag_chat(chat_id: str) -> dict | None:
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT id, title, created_at FROM rag_chats WHERE id = ?", (chat_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def set_rag_chat_title_if_empty(chat_id: str, title: str) -> None:
+    """제목이 아직 없는 채팅방에만 첫 질문 앞부분으로 제목을 채운다(기존 프론트
+    `frontend/app.js`의 `if (!chat.title) chat.title = question.slice(0, 24) + ...`와
+    동일 규칙, 서버로 이전)."""
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE rag_chats SET title = ? WHERE id = ? AND (title IS NULL OR title = '')",
+            (title, chat_id),
+        )
+        conn.commit()
+
+
+def delete_rag_chat(chat_id: str) -> bool:
+    """채팅방 삭제 — 소속 `rag_messages`는 FK(`ON DELETE CASCADE`)로 DB가 자동 정리한다."""
+    with get_connection() as conn:
+        cur = conn.execute("DELETE FROM rag_chats WHERE id = ?", (chat_id,))
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def insert_pending_rag_message(chat_id: str, question: str) -> int:
+    with get_connection() as conn:
+        cur = conn.execute(
+            "INSERT INTO rag_messages (chat_id, question, status, created_at) "
+            "VALUES (?, ?, 'pending', ?)",
+            (chat_id, question, datetime.now().isoformat(timespec="seconds")),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+
+def mark_rag_message_done(message_id: int, data_json: str) -> None:
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE rag_messages SET status = 'done', data = ? WHERE id = ?",
+            (data_json, message_id),
+        )
+        conn.commit()
+
+
+def mark_rag_message_failed(message_id: int, error: str) -> None:
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE rag_messages SET status = 'failed', error = ? WHERE id = ?",
+            (error, message_id),
+        )
+        conn.commit()
+
+
+def list_rag_messages(chat_id: str) -> list[dict]:
+    """이 채팅방의 메시지 전체(pending/failed 포함) — 오래된 순."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT id, question, data, status, error, created_at FROM rag_messages "
+            "WHERE chat_id = ? ORDER BY id ASC",
+            (chat_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def list_rag_context(chat_id: str, limit: int = 20) -> list[dict]:
+    """LLM 컨텍스트 조립용 — `list_qa_context()`와 동일한 이유로 limit=20(20턴=40메시지,
+    기존 프론트 `.slice(-40)`과 같은 분량)."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT question, data FROM rag_messages "
+            "WHERE chat_id = ? AND status = 'done' ORDER BY id DESC LIMIT ?",
+            (chat_id, limit),
         ).fetchall()
         return [dict(r) for r in reversed(rows)]
 
@@ -540,5 +679,50 @@ if __name__ == "__main__":
         # done/failed로 이미 끝난 행은 재시작해도 안 건드려야 한다
         after_restart = list_qa_history("테스트회사__직무")
         assert after_restart[0]["status"] == "done"  # mid1
+
+        # rag_chats/rag_messages: 채팅방 생성 → pending → done/failed, 컨텍스트 조회
+        create_rag_chat("chat-1", created_at="2026-08-22T00:00:00")
+        assert get_rag_chat("chat-1")["title"] is None
+        set_rag_chat_title_if_empty("chat-1", "첫 질문 요약")
+        assert get_rag_chat("chat-1")["title"] == "첫 질문 요약"
+        set_rag_chat_title_if_empty("chat-1", "덮어쓰면 안 됨")  # 이미 제목 있으면 무시
+        assert get_rag_chat("chat-1")["title"] == "첫 질문 요약"
+        assert get_rag_chat("없는챗") is None
+
+        rmid1 = insert_pending_rag_message("chat-1", "이 회사 강점은?")
+        assert [m["status"] for m in list_rag_messages("chat-1")] == ["pending"]
+        mark_rag_message_done(rmid1, '{"answer": "강점입니다", "tool_calls": [], "provider": "google"}')
+        assert list_rag_messages("chat-1")[0]["status"] == "done"
+
+        rmid2 = insert_pending_rag_message("chat-1", "연봉은?")
+        mark_rag_message_failed(rmid2, "LLM 서비스 오류")
+        failed_rag = [m for m in list_rag_messages("chat-1") if m["id"] == rmid2][0]
+        assert failed_rag["status"] == "failed"
+        assert failed_rag["data"] is None
+
+        rag_context = list_rag_context("chat-1")
+        assert len(rag_context) == 1  # done인 rmid1만, pending/failed 제외
+        assert rag_context[0]["question"] == "이 회사 강점은?"
+
+        # FK CASCADE: 채팅방을 지우면 소속 메시지도 자동으로 같이 지워져야 한다
+        assert delete_rag_chat("chat-1") is True
+        with get_connection() as conn:
+            remaining = conn.execute(
+                "SELECT COUNT(*) AS c FROM rag_messages WHERE chat_id = 'chat-1'"
+            ).fetchone()
+            assert remaining["c"] == 0, "ON DELETE CASCADE가 동작 안 함 — 고아 메시지 남음"
+        assert get_rag_chat("chat-1") is None
+        assert delete_rag_chat("chat-1") is False  # 이미 삭제됨
+
+        # 좀비 pending도 QnA와 동일하게 서버 재시작 시점에 failed로 전환돼야 한다
+        create_rag_chat("chat-2")
+        zombie_rag_id = insert_pending_rag_message("chat-2", "재시작 전 질문")
+        init_db()
+        zombie_rag = [m for m in list_rag_messages("chat-2") if m["id"] == zombie_rag_id][0]
+        assert zombie_rag["status"] == "failed"
+        assert zombie_rag["error"] == "서버 재시작으로 응답을 받지 못했습니다"
+
+        chats = list_rag_chats()
+        assert {c["id"] for c in chats} == {"chat-2"}  # chat-1은 위에서 삭제됨
 
     print("app_db self-check 통과")
