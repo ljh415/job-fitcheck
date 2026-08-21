@@ -876,14 +876,18 @@ async function saveCompany(event) {
   };
   const body = get('body');
 
+  // 요청 시점의 slug를 고정 — API 호출이 끝나기 전에 사용자가 다른 화면으로 이동하면
+  // currentSlug가 null이나 다른 값으로 바뀌어, 뒤늦게 도착한 응답이 initDetail(null) 등
+  // 엉뚱한 slug로 화면 갱신을 시도해 가짜 "로딩 실패" 에러가 뜨는 문제가 있었음
+  // (실사용 중 발견, 2026-08-21). 저장/재분석/재평가/동기화 4곳 전부 같은 패턴.
+  const slug = currentSlug;
   try {
-    await api(`/companies/${encodeURIComponent(currentSlug)}`, {
+    await api(`/companies/${encodeURIComponent(slug)}`, {
       method: 'PUT',
       body: JSON.stringify({ frontmatter: fm, body }),
     });
     alert('저장되었습니다.');
-    switchTab('info');
-    initDetail(currentSlug);
+    if (currentSlug === slug) { switchTab('info'); initDetail(slug); }
   } catch (e) {
     alert('저장 실패: ' + e.message);
   }
@@ -920,13 +924,14 @@ async function refillCompany() {
   if (!confirm('원문 기반으로 전체 재분석합니다. 기존 분석 내용이 덮어씌워집니다. 계속할까요?')) return;
   const btn = document.querySelector('#refit-dropdown-wrap .export-dropdown-btn');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ 재분석 중...'; }
+  const slug = currentSlug;  // 요청 시점 고정 — 이유는 saveCompany() 주석 참고
   try {
-    await api(`/companies/${encodeURIComponent(currentSlug)}/refill`, { method: 'POST', body: '{}' });
+    await api(`/companies/${encodeURIComponent(slug)}/refill`, { method: 'POST', body: '{}' });
     showToast('전체 재분석 완료!');
     // initDetail은 await 안 함 — 여기서 실패해도(존재하지 않는 loadDetail을 부르던
     // 버그가 있었음, 2026-08-18 발견) 재분석 자체는 이미 성공했으니 아래 catch에서
     // "재분석 실패"로 잘못 표시되면 안 됨(refitCompany()와 동일 패턴)
-    initDetail(currentSlug);
+    if (currentSlug === slug) initDetail(slug);
   } catch (e) {
     showToast('재분석 실패: ' + e.message, 'error');
   } finally {
@@ -938,10 +943,11 @@ async function refitCompany() {
   document.getElementById('refit-dropdown-panel')?.classList.add('hidden');
   const btn = document.querySelector('#refit-dropdown-wrap .export-dropdown-btn');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ 재평가 중...'; }
+  const slug = currentSlug;
   try {
-    await api(`/companies/${encodeURIComponent(currentSlug)}/refit`, { method: 'POST', body: '{}' });
+    await api(`/companies/${encodeURIComponent(slug)}/refit`, { method: 'POST', body: '{}' });
     showToast('적합도 재평가 완료!');
-    initDetail(currentSlug);
+    if (currentSlug === slug) initDetail(slug);
   } catch (e) {
     showToast('재평가 실패: ' + e.message, 'error');
   } finally {
@@ -956,13 +962,13 @@ async function syncWanted() {
     alert('원티드 URL만 지원합니다. (wanted.co.kr)');
     return;
   }
+  const slug = currentSlug;
   try {
     const body = sourceUrl ? JSON.stringify({ source_url: sourceUrl }) : '{}';
-    const result = await api(`/companies/${encodeURIComponent(currentSlug)}/sync-wanted`, { method: 'POST', body });
+    const result = await api(`/companies/${encodeURIComponent(slug)}/sync-wanted`, { method: 'POST', body });
     const updated = Object.keys(result.updated || {}).join(', ');
     alert(`원티드 동기화 완료!\n업데이트된 항목: ${updated || '없음'}`);
-    initDetail(currentSlug);
-    switchTab('edit');
+    if (currentSlug === slug) { initDetail(slug); switchTab('edit'); }
   } catch (e) {
     alert('동기화 실패: ' + e.message);
   }
