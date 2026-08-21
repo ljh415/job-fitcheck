@@ -33,6 +33,7 @@ from routers.rag import trigger_reindex_background
 from services.app_db import (
     create_fit_history_entry,
     delete_fit_history_for_slug,
+    delete_qa_history_for_slug,
     get_fit_history_entry,
     get_profile_version,
     is_healthy,
@@ -433,6 +434,12 @@ async def delete_company(slug: str):
         delete_fit_history_for_slug(slug)
     except Exception as e:
         logger.warning("삭제된 회사의 평가 이력 정리 실패 (slug=%s): %s", slug, e)
+    try:
+        # QnA 대화 기록도 같은 이유로 정리 — fit_history엔 있던 이 정리 로직이 QnA
+        # 서버 저장 전환(v1.5.0) 당시 빠졌던 걸 뒤늦게 발견해 추가(2026-08-22).
+        delete_qa_history_for_slug(slug)
+    except Exception as e:
+        logger.warning("삭제된 회사의 QnA 대화 기록 정리 실패 (slug=%s): %s", slug, e)
     # RAG(opt-in) 자동 재색인 — 삭제된 공고의 고아 임베딩을 prune_deleted_postings()가 정리하도록.
     trigger_reindex_background()
     return {"status": "deleted"}
