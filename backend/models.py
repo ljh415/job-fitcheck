@@ -151,14 +151,22 @@ class QAMessage(BaseModel):
 
 
 class QARequest(BaseModel):
+    """단일 회사 QnA 요청. history는 안 받는다 — 서버가 qa_messages에서 직접 조회해
+    컨텍스트를 조립한다(다중 회사 비교 QnA는 순수 메모리 상태라 범위 밖, MultiQARequest는
+    그대로 history를 받음)."""
     question: str = Field(max_length=2_000)
-    history: list[QAMessage] = Field(default_factory=list, max_length=40)
 
 
 class MultiQARequest(BaseModel):
     slugs: list[str] = Field(max_length=5)
     question: str = Field(max_length=2_000)
     history: list[QAMessage] = Field(default_factory=list, max_length=40)
+
+
+class QAMigrationRequest(BaseModel):
+    """localStorage의 qaHistory({slug: [{role,text},...]}) 전체를 1회성으로 서버에 옮길 때
+    보내는 형태 그대로."""
+    history: dict[str, list[QAMessage]]
 
 
 class SettingsResponse(BaseModel):

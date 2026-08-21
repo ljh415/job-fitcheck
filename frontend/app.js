@@ -65,10 +65,24 @@ let _currentRecord = null;
 let ragEnabled = false;
 let ragConfiguredProviders = [];
 let ragIncludeProfile = false;
-const qaHistory = JSON.parse(localStorage.getItem('job-fitcheck-qa') || '{}');
-function saveQAHistory() {
-  try { localStorage.setItem('job-fitcheck-qa', JSON.stringify(qaHistory)); }
-  catch (e) { console.warn('QA 히스토리 저장 실패(용량 초과):', e); }
+// QnA 히스토리는 서버(qa_messages)가 진실 공급원 — 로컬 상태로 안 들고 있는다.
+// localStorage의 옛 qaHistory는 1회성 마이그레이션 소스로만 씀(migrateQAHistoryIfNeeded 참고).
+async function migrateQAHistoryIfNeeded() {
+  if (localStorage.getItem('job-fitcheck-qa-migrated') === '1') return;
+  const raw = localStorage.getItem('job-fitcheck-qa');
+  const history = raw ? JSON.parse(raw) : {};
+  if (Object.keys(history).length === 0) {
+    localStorage.setItem('job-fitcheck-qa-migrated', '1');
+    return;
+  }
+  try {
+    await api('/companies/migrate-qa', { method: 'POST', body: JSON.stringify({ history }) });
+    localStorage.setItem('job-fitcheck-qa-migrated', '1');
+  } catch (e) {
+    // 실패하면 플래그를 안 세워서 다음 로드 때 재시도 — 실패한 채로 표시만 남기면
+    // 이 기기의 옛 대화가 영영 안 옮겨진다.
+    console.warn('QnA 히스토리 마이그레이션 실패, 다음 로드 때 재시도:', e);
+  }
 }
 
 function localDateString(d = new Date()) {
@@ -819,11 +833,30 @@ function renderQAHeader(record) {
     </div>`;
 }
 
-function renderQAHistory(slug) {
+async function renderQAHistory(slug) {
   const container = document.getElementById('qa-messages');
   if (!container) return;
   container.innerHTML = '';
-  (qaHistory[slug] || []).forEach(({ role, text }) => appendBubble('qa-messages', text, role));
+  let messages;
+  try {
+    ({ messages } = await api(`/companies/${encodeURIComponent(slug)}/qa/history`));
+  } catch (e) {
+    console.error('QnA 히스토리 로딩 실패:', e);
+    return;
+  }
+  // 응답 오는 동안 다른 회사로 이동했으면 그리지 않는다(오늘 다른 곳에서도 고친 것과
+  // 같은 레이스 가드 — currentSlug를 다시 읽어 비교).
+  if (currentSlug !== slug) return;
+  messages.forEach(m => {
+    appendBubble('qa-messages', m.question, 'user');
+    if (m.status === 'done') {
+      appendBubble('qa-messages', m.answer, 'assistant');
+    } else if (m.status === 'pending') {
+      appendBubble('qa-messages', '답변을 생성하고 있습니다. 최대 30~40초 정도 걸릴 수 있습니다...', 'assistant');
+    } else {
+      appendBubble('qa-messages', `오류: ${m.error || '응답 실패'}`, 'assistant');
+    }
+  });
 }
 
 function fillEditForm(fm, body) {
@@ -980,34 +1013,23 @@ async function sendQA() {
   if (!question) return;
   input.value = '';
 
-  if (!qaHistory[currentSlug]) qaHistory[currentSlug] = [];
-  const history = qaHistory[currentSlug].slice(-40);
-  qaHistory[currentSlug].push({ role: 'user', text: question });
-  saveQAHistory();
+  // 서버가 진실 공급원이라 로컬 배열에 push/pop할 필요가 없다 — pending 삽입과
+  // done/failed 마킹을 서버가 다 처리한다(backend/routers/qa.py의 company_qa()).
+  const slug = currentSlug;
   appendBubble('qa-messages', question, 'user');
   const assistantBubble = appendBubble('qa-messages', '', 'assistant');
 
   const token = localStorage.getItem(TOKEN_KEY);
-  const makeFetch = () => fetch(`/api/companies/${encodeURIComponent(currentSlug)}/qa`, {
+  const makeFetch = () => fetch(`/api/companies/${encodeURIComponent(slug)}/qa`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(token ? { 'Authorization': `Bearer ${token}` } : {}) },
-    body: JSON.stringify({ question, history }),
+    body: JSON.stringify({ question }),
   });
 
   try {
-    const fullText = await streamQA(makeFetch, assistantBubble);
-    if (fullText) {
-      qaHistory[currentSlug].push({ role: 'assistant', text: fullText });
-    } else {
-      // 응답 실패 시 방금 넣은 질문을 롤백 — 안 그러면 답 없는 질문이 히스토리에
-      // 계속 남아 다음 질문부터 문맥이 끊긴 채로 이어짐(실사용 중 발견, 2026-08-19)
-      qaHistory[currentSlug].pop();
-    }
-    saveQAHistory();
+    await streamQA(makeFetch, assistantBubble);
   } catch (e) {
     assistantBubble.textContent = `오류: ${e.message}`;
-    qaHistory[currentSlug].pop();
-    saveQAHistory();
   }
 }
 
@@ -1098,7 +1120,11 @@ async function consumeSSE(res, bubble) {
         const payload = line.slice(5).trim();
         if (payload === '[DONE]') return fullText;
         try {
-          const { text, error } = JSON.parse(payload);
+          const { text, error, message_id } = JSON.parse(payload);
+          // company_qa()가 스트리밍 첫 이벤트로 message_id를 보낸다(text/error 없음) —
+          // 지금은 화면에서 안 쓰지만, text가 undefined인 채로 fullText에 이어붙으면
+          // "undefined" 문자열이 답변 앞에 섞여 들어간다.
+          if (message_id !== undefined) continue;
           if (error) { bubble.textContent = `오류: ${error}`; break; }
           fullText += text;
           bubble.innerHTML = parseMarkdown(fullText);
@@ -2570,6 +2596,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     render();
     return;
   }
+  migrateQAHistoryIfNeeded();  // fire-and-forget — 렌더링을 막을 이유 없음
   const { view, slug } = parseUrl();
   // /compare를 직접 접근했을 때 compareTargets가 없으면 대시보드로
   if (view === 'compare' && compareTargets.length === 0) {

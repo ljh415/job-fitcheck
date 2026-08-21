@@ -36,6 +36,7 @@ docs/profile-history/
 docs/jobplanet-matching/
 docs/profile-history-followup/
 docs/rag-setup-improvements/
+docs/chat-history-server-storage/
 
 # 데이터 (개인 정보 포함)
 data/
