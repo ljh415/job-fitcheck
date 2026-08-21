@@ -2328,13 +2328,15 @@ function updateRagNavHeight() {
   if (nav) document.documentElement.style.setProperty('--rag-nav-h', `${nav.offsetHeight}px`);
 }
 
-function initRag() {
+async function initRag() {
   document.getElementById('rag-gap-section').classList.toggle('hidden', !ragIncludeProfile);
   document.getElementById('rag-gap-disabled-note').classList.toggle('hidden', ragIncludeProfile);
   document.getElementById('rag-question-input').addEventListener('keydown', handleRagKeydown);
-  ragCleanupPendingMessages();
-  ragRenderChatDropdown();
-  ragSwitchChat(ragGetCurrentChatId());
+  // 좀비 pending 정리(ragCleanupPendingMessages)는 더 이상 필요 없다 — 서버가 진실
+  // 공급원이라 pending은 서버 재시작 시점에만 확정적으로 정리되고(app_db.py의
+  // _fail_stale_rag_pending), 클라이언트가 시간 추측으로 지울 이유가 없다.
+  await ragRenderChatDropdown();
+  await ragSwitchChat(ragGetCurrentChatId());
 
   // nav 실제 높이(모바일에서 줄바꿈되면 가변)를 측정해 .rag-view의 높이 계산에 반영
   updateRagNavHeight();
@@ -2427,81 +2429,98 @@ function renderRagGapCard(data) {
 }
 
 /* ── RAG 채팅(멀티세션, Agent) ────────────────────────────────────── */
-function ragLoadChats() { return JSON.parse(localStorage.getItem(RAG_CHATS_KEY) || '{}'); }
-function ragSaveChats(chats) { localStorage.setItem(RAG_CHATS_KEY, JSON.stringify(chats)); }
+// 채팅 데이터(방 목록·메시지)는 서버(rag_chats/rag_messages)가 진실 공급원 — 로컬에는
+// "지금 어느 방을 보고 있는지"만(UI 상태, 데이터 아님) 남긴다.
 function ragGetCurrentChatId() { return localStorage.getItem(RAG_CURRENT_CHAT_KEY); }
 function ragSetCurrentChatId(id) { localStorage.setItem(RAG_CURRENT_CHAT_KEY, id); }
 
-function createNewRagChat() {
-  const chats = ragLoadChats();
-  const id = `chat-${Date.now()}`;
-  chats[id] = { title: null, createdAt: Date.now(), messages: [] };
-  ragSaveChats(chats);
-  ragSetCurrentChatId(id);
+// localStorage의 옛 job-fitcheck-rag-chats는 1회성 마이그레이션 소스로만 씀
+// (migrateRagChatsIfNeeded 참고).
+async function migrateRagChatsIfNeeded() {
+  if (localStorage.getItem('job-fitcheck-rag-chats-migrated') === '1') return;
+  const raw = localStorage.getItem(RAG_CHATS_KEY);
+  const oldChats = raw ? JSON.parse(raw) : {};
+  if (Object.keys(oldChats).length === 0) {
+    localStorage.setItem('job-fitcheck-rag-chats-migrated', '1');
+    return;
+  }
+  const chats = {};
+  for (const [id, chat] of Object.entries(oldChats)) {
+    chats[id] = {
+      title: chat.title || null,
+      created_at_ms: chat.createdAt,
+      messages: (chat.messages || []).map(m => ({ question: m.question, data: m.data, pending: !!m.pending })),
+    };
+  }
+  try {
+    await api('/rag/migrate-chats', { method: 'POST', body: JSON.stringify({ chats }) });
+    localStorage.setItem('job-fitcheck-rag-chats-migrated', '1');
+  } catch (e) {
+    console.warn('RAG 채팅 마이그레이션 실패, 다음 로드 때 재시도:', e);
+  }
+}
+
+async function createNewRagChat() {
+  const chat = await api('/rag/chats', { method: 'POST' });
+  ragSetCurrentChatId(chat.id);
   document.getElementById('rag-question-input').value = '';
-  ragRenderChatDropdown();
+  await ragRenderChatDropdown();
   ragRenderThread([]);
 }
 
-function deleteCurrentRagChat() {
-  const chats = ragLoadChats();
+async function deleteCurrentRagChat() {
   const currentId = ragGetCurrentChatId();
-  if (!currentId || !chats[currentId]) return;
+  if (!currentId) return;
   if (!confirm('이 채팅을 삭제하시겠습니까?')) return;
-  delete chats[currentId];
-  ragSaveChats(chats);
+  await api(`/rag/chats/${encodeURIComponent(currentId)}`, { method: 'DELETE' });
   localStorage.removeItem(RAG_CURRENT_CHAT_KEY);
-  ragRenderChatDropdown();
-  ragSwitchChat(ragGetCurrentChatId());
+  await ragRenderChatDropdown();
+  await ragSwitchChat(ragGetCurrentChatId());
 }
 
-function ragRenderChatDropdown() {
-  const chats = ragLoadChats();
+async function ragRenderChatDropdown() {
+  const { chats } = await api('/rag/chats');
   const select = document.getElementById('rag-chat-select');
-  let ids = Object.keys(chats).sort((a, b) => chats[b].createdAt - chats[a].createdAt);
-  if (ids.length === 0) { createNewRagChat(); return; }
+  if (!select) return;
+  if (chats.length === 0) { await createNewRagChat(); return; }
   let current = ragGetCurrentChatId();
-  if (!current || !chats[current]) { current = ids[0]; ragSetCurrentChatId(current); }
-  select.innerHTML = ids.map(id => {
-    const title = chats[id].title || '(새 채팅)';
-    return `<option value="${id}" ${id === current ? 'selected' : ''}>${escHtml(title)}</option>`;
+  if (!current || !chats.some(c => c.id === current)) {
+    current = chats[0].id;
+    ragSetCurrentChatId(current);
+  }
+  select.innerHTML = chats.map(c => {
+    const title = c.title || '(새 채팅)';
+    return `<option value="${c.id}" ${c.id === current ? 'selected' : ''}>${escHtml(title)}</option>`;
   }).join('');
 }
 
-function ragSwitchChat(chatId) {
+async function ragSwitchChat(chatId) {
   ragSetCurrentChatId(chatId);
-  const chats = ragLoadChats();
-  ragRenderThread((chats[chatId] && chats[chatId].messages) || []);
+  if (!chatId) return;
+  try {
+    const { messages } = await api(`/rag/chats/${encodeURIComponent(chatId)}`);
+    // 조회하는 동안 사용자가 다른 방으로 옮겨갔으면 엉뚱한 화면에 덮어쓰지 않는다
+    // (오늘 다른 곳에서도 고친 것과 같은 레이스 가드).
+    if (ragGetCurrentChatId() === chatId) ragRenderThread(messages);
+  } catch (e) {
+    console.error('RAG 채팅 로딩 실패:', e);
+  }
 }
 
 function ragRenderThread(messages) {
   const resultEl = document.getElementById('rag-ask-result');
   if (!resultEl) return;
-  resultEl.innerHTML = messages.map(m => `
+  resultEl.innerHTML = messages.map(m => {
+    let body;
+    if (m.status === 'pending') body = '답변을 생성하고 있습니다. 최대 30~40초 정도 걸릴 수 있습니다...';
+    else if (m.status === 'failed') body = `<div class="rag-error">오류: ${escHtml(m.error || '응답 실패')}</div>`;
+    else body = renderRagAskAnswer(m.data);
+    return `
     <div class="qa-bubble user">${escHtml(m.question)}</div>
-    <div class="qa-bubble assistant">${m.pending ? '답변을 생성하고 있습니다. 최대 30~40초 정도 걸릴 수 있습니다...' : renderRagAskAnswer(m.data)}</div>
-  `).join('');
+    <div class="qa-bubble assistant">${body}</div>
+  `;
+  }).join('');
   resultEl.scrollTop = resultEl.scrollHeight;
-}
-
-// nginx `/api/` 라우트의 proxy_read_timeout이 300초라 RAG 요청도 최장 300초까지 정상
-// 소요될 수 있다 — 2분(120초)으로 잡았다가 정상 처리 중인 요청까지 지우는 문제가
-// 있었음(2026-08-21, Codex 리뷰로 발견). 300초보다 넉넉히 크게 10분으로 설정.
-const RAG_PENDING_STALE_MS = 10 * 60 * 1000; // 이보다 오래된 pending만 좀비로 간주
-
-function ragCleanupPendingMessages() {
-  // 응답 기다리던 중 새로고침 등으로 요청이 끊기면 pending 항목이 영원히 안 끝난다 — 로드 시 정리.
-  // 단, 방금 질문 보내고 목록 등 다른 화면 갔다가 응답 오기 전에 돌아온 경우까지 지우면 안 되므로
-  // (실사용 중 발견, 2026-08-21) 생성된 지 RAG_PENDING_STALE_MS 이상 지난 것만 좀비로 판단한다.
-  const chats = ragLoadChats();
-  const now = Date.now();
-  let changed = false;
-  for (const id of Object.keys(chats)) {
-    const before = chats[id].messages.length;
-    chats[id].messages = chats[id].messages.filter(m => !m.pending || (now - (m.createdAt || 0)) < RAG_PENDING_STALE_MS);
-    if (chats[id].messages.length !== before) changed = true;
-  }
-  if (changed) ragSaveChats(chats);
 }
 
 async function runRagAsk(event) {
@@ -2511,63 +2530,30 @@ async function runRagAsk(event) {
   if (!question) return;
 
   const chatId = ragGetCurrentChatId();  // 응답 도착 시 사용자가 다른 채팅으로 옮겨가 있어도
-  const chats = ragLoadChats();          // 엉뚱한 화면에 덮어쓰지 않기 위해 요청 시점에 고정
-  const chat = chats[chatId];
-  if (!chat) return;
+  if (!chatId) return;                   // 엉뚱한 화면에 덮어쓰지 않기 위해 요청 시점에 고정
 
-  let history = [];
-  for (const m of chat.messages) {
-    if (m.pending) continue;
-    history.push({ role: 'user', content: m.question });
-    history.push({ role: 'assistant', content: (m.data && m.data.answer) || '' });
-  }
-  history = history.slice(-40);  // 백엔드 AskRequest.history 상한(40)과 동일하게 자름
-
-  // id를 부여해야 응답 도착 시 최신 저장 상태에서 이 항목을 다시 찾아 그 자리만 갱신할 수 있다
-  // — 안 그러면(예전 방식) 응답 시점에 요청 시작 때 붙잡아둔 chats 전체를 그대로 다시 저장해서,
-  // 대기하는 동안 사용자가 새 채팅을 만들거나 다른 채팅을 지우면 그 변경이 통째로 덮어써졌다
-  // (Codex 리뷰로 발견 + DOM/localStorage mock 격리 재현, 2026-08-12).
-  const entryId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const entry = { id: entryId, question, data: null, pending: true, createdAt: Date.now() };
-  chat.messages.push(entry);
-  if (!chat.title) chat.title = question.slice(0, 24) + (question.length > 24 ? '…' : '');
-  ragSaveChats(chats);
-  ragRenderChatDropdown();
   document.getElementById('rag-question-input').value = '';
   btn.disabled = true;
   btn.textContent = '전송 중...';
-  if (ragGetCurrentChatId() === chatId) ragRenderThread(chat.messages);
 
-  // 응답/에러 처리 공통: 요청 시작 시점 스냅샷(chats/chat) 대신 최신 상태를 다시 읽어서
-  // 이 채팅이 그새 삭제됐으면 조용히 포기하고(되살리지 않음), 남아있으면 해당 메시지만 찾아
-  // 갱신한다 — 그 사이 생긴 다른 채팅·삭제는 그대로 보존된다.
-  function applyToLatest(mutate) {
-    const latest = ragLoadChats();
-    const latestChat = latest[chatId];
-    if (!latestChat) return null;  // 대기 중 삭제된 채팅 — 되살리지 않음
-    const idx = latestChat.messages.findIndex(m => m.id === entryId);
-    if (idx === -1) return null;
-    mutate(latestChat, idx);
-    ragSaveChats(latest);
-    return latestChat;
+  // 서버가 pending 행을 이미 저장해두므로(응답 기다리는 동안 화면을 나갔다 와도 GET으로
+  // 최신 상태가 그대로 보임), 여기서는 즉시 보여줄 pending 말풍선만 낙관적으로 붙인다.
+  const resultEl = document.getElementById('rag-ask-result');
+  if (resultEl) {
+    resultEl.innerHTML += `
+      <div class="qa-bubble user">${escHtml(question)}</div>
+      <div class="qa-bubble assistant">답변을 생성하고 있습니다. 최대 30~40초 정도 걸릴 수 있습니다...</div>
+    `;
+    resultEl.scrollTop = resultEl.scrollHeight;
   }
 
   try {
-    const data = await api('/rag/ask', { method: 'POST', body: JSON.stringify({ question, history }) });
-    const latestChat = applyToLatest((c, idx) => {
-      c.messages[idx].data = data;
-      c.messages[idx].pending = false;
-    });
-    if (latestChat && ragGetCurrentChatId() === chatId) ragRenderThread(latestChat.messages);
+    await api('/rag/ask', { method: 'POST', body: JSON.stringify({ question, chat_id: chatId }) });
   } catch (e) {
-    const latestChat = applyToLatest((c, idx) => {
-      c.messages.splice(idx, 1);  // 실패한 pending 질문은 지워서 재시도 가능하게
-    });
-    if (ragGetCurrentChatId() === chatId) {
-      if (latestChat) ragRenderThread(latestChat.messages);
-      document.getElementById('rag-ask-result').innerHTML += `<div class="rag-error">${escHtml(e.message)}</div>`;
-    }
+    // 실패해도 서버에 status='failed'로 남아있으니 별도 처리 없이 아래에서 최신 상태를 다시 조회
   } finally {
+    if (ragGetCurrentChatId() === chatId) await ragSwitchChat(chatId);  // 서버 최신 상태로 갱신
+    await ragRenderChatDropdown();  // 첫 질문이었다면 제목이 방금 채워졌을 수 있음
     btn.disabled = false;
     btn.textContent = '전송';
   }
@@ -2612,6 +2598,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   // 값을 받아와도 nav 버튼 외엔 다시 안 그려서 그 상태로 굳어버린다(코드리뷰 6번, 2026-07-31
   // Playwright로 재현 확인). render() 전에 기다려서 애초에 잘못 그릴 일을 없앤다.
   await checkRagStatus();
+  if (ragEnabled) migrateRagChatsIfNeeded();  // fire-and-forget, RAG 꺼져있으면 503이라 가드
   // RAG가 비활성인 배포에서 토큰을 가진 사용자가 /rag를 직접 열면(새로고침·북마크 등) nav
   // 버튼은 숨어도 뷰 자체는 그려져서, 뭘 눌러도 503만 나는 깨진 화면이 뜬다(코드리뷰 5번,
   // 2026-08-02) — ragEnabled를 알고 난 뒤 대시보드로 돌려보낸다.
