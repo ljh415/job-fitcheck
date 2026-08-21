@@ -1027,7 +1027,10 @@ async function sendQA() {
   });
 
   try {
-    await streamQA(makeFetch, assistantBubble);
+    const fullText = await streamQA(makeFetch, assistantBubble);
+    // fullText가 null이면 연결이 끊긴 것 — 서버는 독립 태스크로 계속 처리 중일 수 있으니
+    // (재시도로 새 질문을 또 보내는 대신) 최신 상태를 서버에서 다시 조회해 반영한다.
+    if (fullText === null && currentSlug === slug) await renderQAHistory(slug);
   } catch (e) {
     assistantBubble.textContent = `오류: ${e.message}`;
   }
@@ -1072,33 +1075,25 @@ function appendBubble(containerId, text, role) {
   return bubble;
 }
 
-const SSE_MAX_RETRIES = 2;
-
 async function streamQA(fetchFn, bubble) {
-  let lastError;
-  for (let attempt = 0; attempt <= SSE_MAX_RETRIES; attempt++) {
-    if (attempt > 0) {
-      bubble.textContent = `연결이 끊겼습니다. 재연결 중... (${attempt}/${SSE_MAX_RETRIES})`;
-      await new Promise(r => setTimeout(r, 1000 * attempt));
+  // 예전엔 연결이 끊기면 같은 질문으로 POST를 최대 2번 자동 재시도했는데, 서버 저장 전환
+  // 이후엔 POST 한 번마다 새 행+새 LLM 호출이 생겨서 재시도가 이력·비용 중복을 만들었다
+  // (Codex 리뷰로 발견, 2026-08-22). 서버가 pending 상태를 이미 들고 있어서(연결이 끊겨도
+  // 독립 태스크가 계속 처리) 재시도 없이 한 번만 시도하고, 실패하면 호출부가 서버 상태를
+  // 다시 조회하도록 한다 — sendQA()의 history 재조회 참고.
+  try {
+    const res = await fetchFn();
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: '서버 오류' }));
+      bubble.textContent = `오류: ${err.detail || '응답 실패'}`;
+      return null;
     }
-    try {
-      const res = await fetchFn();
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: '서버 오류' }));
-        if (res.status === 503 || res.status === 429) {
-          throw new Error(err.detail || `HTTP ${res.status}`);
-        }
-        bubble.textContent = `오류: ${err.detail || '응답 실패'}`;
-        return null;
-      }
-      bubble.textContent = '';
-      return await consumeSSE(res, bubble);
-    } catch (e) {
-      lastError = e;
-    }
+    bubble.textContent = '';
+    return await consumeSSE(res, bubble);
+  } catch (e) {
+    bubble.textContent = '연결이 끊겼습니다.';
+    return null;
   }
-  bubble.textContent = `오류: ${lastError?.message || '연결 실패'}`;
-  return null;
 }
 
 async function consumeSSE(res, bubble) {
@@ -1138,7 +1133,12 @@ async function consumeSSE(res, bubble) {
   } finally {
     if (_activeSSEReader === reader) _activeSSEReader = null;
   }
-  return fullText;
+  // 여기 도달했다는 건 [DONE]을 못 보고 루프가 끝났다는 뜻(연결이 중간에 조용히 끊김,
+  // AbortError로 취소됨 등) — fullText가 비어있지 않아도 완결된 응답이 아니므로 null을
+  // 반환해 "확정 성공"과 구분한다. 예전엔 여기서 fullText를 그대로 반환해서, 부분 텍스트가
+  // 있으면 sendCompareQA()의 `if (fullText) ...`가 잘린 응답을 성공으로 착각해 히스토리에
+  // 그대로 남기는 문제가 있었다(Codex 리뷰 대응 중 발견, 2026-08-22).
+  return null;
 }
 
 /* ── 회사 추가 ────────────────────────────────────────────────────── */
