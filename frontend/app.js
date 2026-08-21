@@ -670,13 +670,11 @@ async function initDetail(slug) {
 }
 
 let _fitHistoryCache = [];
-let _fitHistoryOpen = false;
 
 async function loadFitHistory(slug) {
   const toggleEl = document.getElementById('fit-history-toggle');
   const panelEl = document.getElementById('fit-history-panel');
-  _fitHistoryOpen = false;
-  if (panelEl) panelEl.classList.add('hidden');
+  if (panelEl) { panelEl.classList.add('hidden'); panelEl.innerHTML = ''; }
   if (!toggleEl) return;
   try {
     _fitHistoryCache = await api(`/companies/${encodeURIComponent(slug)}/fit-history`);
@@ -692,20 +690,16 @@ async function loadFitHistory(slug) {
     toggleEl.classList.add('hidden');
     return;
   }
-  toggleEl.textContent = `📋 평가 이력 보기 (${_fitHistoryCache.length}건) ▾`;
+  // 접었다 펼 필요 없이 늘 아래에 열려있게 — 버튼은 스크롤 이동 전용(실사용 피드백, 2026-08-21)
+  toggleEl.textContent = `📋 평가 이력 보기 (${_fitHistoryCache.length}건)`;
   toggleEl.classList.remove('hidden');
+  renderFitHistoryPanel();
+  if (panelEl) panelEl.classList.remove('hidden');
 }
 
-function toggleFitHistory() {
-  if (!_fitHistoryCache.length) return;  // 로딩 실패(⚠) 상태 — 클릭해도 "0건"으로 안 바뀌게
-  const toggleEl = document.getElementById('fit-history-toggle');
+function renderFitHistoryPanel() {
   const panelEl = document.getElementById('fit-history-panel');
   if (!panelEl) return;
-  _fitHistoryOpen = !_fitHistoryOpen;
-  panelEl.classList.toggle('hidden', !_fitHistoryOpen);
-  if (toggleEl) toggleEl.textContent = `📋 평가 이력 보기 (${_fitHistoryCache.length}건) ${_fitHistoryOpen ? '▴' : '▾'}`;
-  if (!_fitHistoryOpen) return;
-
   const rows = _fitHistoryCache.map((h, i) => {
     const prev = _fitHistoryCache[i + 1];  // 최신순이므로 다음 항목이 더 이전 값
     let delta = '';
@@ -733,9 +727,14 @@ function toggleFitHistory() {
       <tbody>${rows}</tbody>
     </table>
   `;
-  // 버튼은 상단(점수 배지 옆)인데 패널은 본문 아래라, 열어도 스크롤 안 하면
-  // 화면엔 아무 변화가 안 보인다(실사용 중 발견, 2026-08-17).
-  panelEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function toggleFitHistory() {
+  if (!_fitHistoryCache.length) return;  // 로딩 실패(⚠) 상태 — 클릭해도 아무 반응 없게
+  // 버튼은 상단(점수 배지 옆)인데 패널은 본문 아래라, 클릭해도 스크롤 안 하면
+  // 화면엔 아무 변화가 안 보인다(실사용 중 발견, 2026-08-17) — 패널은 이제 항상 열려있으므로
+  // 이 함수는 그 자리로 스크롤만 이동시킨다.
+  document.getElementById('fit-history-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function switchTab(name) {
