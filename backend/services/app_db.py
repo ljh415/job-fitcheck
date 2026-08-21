@@ -392,6 +392,18 @@ def list_qa_context(company_slug: str, limit: int = 20) -> list[dict]:
         return [dict(r) for r in reversed(rows)]
 
 
+def delete_qa_history_for_slug(company_slug: str) -> int:
+    """회사 삭제 시 그 slug의 QnA 대화 기록을 전부 지운다. delete_fit_history_for_slug()와
+    같은 이유 — slug는 회사명+직무명으로 결정적 생성되므로, 안 지우면 같은 이름으로
+    재등록했을 때 예전(별개) 지원의 QnA 대화가 새 회사에 다시 붙어버린다(2026-08-22,
+    QnA 마이그레이션 중복 방지를 검토하다 fit_history엔 있던 이 정리 로직이 QnA에는
+    빠져있음을 발견). 반환값은 지워진 행 수."""
+    with get_connection() as conn:
+        cur = conn.execute("DELETE FROM qa_messages WHERE company_slug = ?", (company_slug,))
+        conn.commit()
+        return cur.rowcount
+
+
 def create_rag_chat(chat_id: str, title: str | None = None, created_at: str | None = None) -> None:
     """새 채팅방 생성. `created_at`을 지정하면(마이그레이션으로 넘어온 옛 createdAt 보존)
     그 값을, 없으면 지금 시각을 쓴다."""
@@ -679,6 +691,12 @@ if __name__ == "__main__":
         # done/failed로 이미 끝난 행은 재시작해도 안 건드려야 한다
         after_restart = list_qa_history("테스트회사__직무")
         assert after_restart[0]["status"] == "done"  # mid1
+
+        # 회사 삭제 시 QnA 대화도 같이 지워야 slug 재사용 시 옛 대화가 다시 안 붙는다
+        # (mid1=done, mid2=failed 2건 — status 상관없이 그 slug 전부 지워져야 함)
+        assert delete_qa_history_for_slug("테스트회사__직무") == 2
+        assert list_qa_history("테스트회사__직무") == []
+        assert delete_qa_history_for_slug("테스트회사__직무") == 0  # 이미 없음
 
         # rag_chats/rag_messages: 채팅방 생성 → pending → done/failed, 컨텍스트 조회
         create_rag_chat("chat-1", created_at="2026-08-22T00:00:00")
