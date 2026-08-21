@@ -484,7 +484,13 @@ async def ask(req: AskRequest):
     _active_rag_tasks.add(task)
     task.add_done_callback(_active_rag_tasks.discard)
     try:
-        result = await task
+        # asyncio.Task.cancel()은 문서화된 동작상 "지금 await 중인 Future/Task"에도 취소를
+        # 전파한다 — 그냥 `await task`면 이 요청 코루틴이 취소될 때(클라이언트 연결 끊김 등)
+        # task도 같이 취소돼 pending으로 남을 수 있다. shield로 감싸면 바깥 취소가 이
+        # await 표현식만 끊고 task 자체는 보호돼 끝까지 실행된다(Codex 리뷰로 발견,
+        # 2026-08-22 — 실측 curl/Playwright 테스트에선 재현 안 됐지만 uvicorn이 비-스트리밍
+        # 응답에 취소를 안 거는 현재 동작에 우연히 기댄 것일 수 있어 방어적으로 반영).
+        result = await asyncio.shield(task)
         result["message_id"] = message_id
         return result
     except LLMAPIError as e:
