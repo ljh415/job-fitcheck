@@ -74,9 +74,25 @@ def init_db() -> None:
                 CREATE INDEX IF NOT EXISTS idx_fit_history_slug
                 ON fit_history(company_slug, created_at)
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS qa_messages (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    company_slug TEXT NOT NULL,
+                    question     TEXT NOT NULL,
+                    answer       TEXT,
+                    status       TEXT NOT NULL DEFAULT 'pending',
+                    error        TEXT,
+                    created_at   TEXT NOT NULL
+                )
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_qa_messages_slug
+                ON qa_messages(company_slug, id)
+            """)
             conn.commit()
         _backfill_profile_version()
         _backfill_fit_history()
+        _fail_stale_qa_pending()
         _healthy = True
     except Exception as e:
         logger.error("프로필 히스토리 DB 초기화 실패 - 이 기능만 비활성화됩니다: %s", e)
@@ -148,6 +164,19 @@ def _backfill_fit_history() -> None:
                 "fit_score, fit_label, content) VALUES (?, ?, NULL, ?, ?, ?)",
                 (slug, datetime.now().isoformat(timespec="seconds"), fit_score, fit_label, content),
             )
+        conn.commit()
+
+
+def _fail_stale_qa_pending() -> None:
+    """서버 시작 시점에 남아있는 status='pending' 행은 예외 없이 이전 프로세스가 죽으며
+    (컨테이너 재시작 등) 못 끝낸 요청이다 — 지금 이 프로세스가 막 시작했는데 pending인
+    행이 있다는 것 자체가 증거라서, "몇 분 지났으면"같은 시간 기반 추측이 필요 없다.
+    좀비 pending을 다루는 확정적 방법(docs/chat-history-server-storage/PLAN.md 참고)."""
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE qa_messages SET status = 'failed', "
+            "error = '서버 재시작으로 응답을 받지 못했습니다' WHERE status = 'pending'"
+        )
         conn.commit()
 
 
@@ -266,6 +295,62 @@ def delete_fit_history_for_slug(company_slug: str) -> int:
         cur = conn.execute("DELETE FROM fit_history WHERE company_slug = ?", (company_slug,))
         conn.commit()
         return cur.rowcount
+
+
+def insert_pending_qa(company_slug: str, question: str) -> int:
+    """질문을 status='pending'으로 즉시 저장하고 id(=message_id)를 반환한다. 응답이 오기
+    전에 먼저 호출 — 클라이언트가 화면을 나가도 이 행이 "지금 대기 중"이라는 증거로 남는다."""
+    with get_connection() as conn:
+        cur = conn.execute(
+            "INSERT INTO qa_messages (company_slug, question, status, created_at) "
+            "VALUES (?, ?, 'pending', ?)",
+            (company_slug, question, datetime.now().isoformat(timespec="seconds")),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+
+def mark_qa_done(message_id: int, answer: str) -> None:
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE qa_messages SET status = 'done', answer = ? WHERE id = ?",
+            (answer, message_id),
+        )
+        conn.commit()
+
+
+def mark_qa_failed(message_id: int, error: str) -> None:
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE qa_messages SET status = 'failed', error = ? WHERE id = ?",
+            (error, message_id),
+        )
+        conn.commit()
+
+
+def list_qa_history(company_slug: str) -> list[dict]:
+    """이 회사의 QnA 메시지 전체(pending/failed 포함) — 오래된 순, 페이지 로드 시 채팅
+    화면을 그대로 복원하는 용도."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT id, question, answer, status, error, created_at FROM qa_messages "
+            "WHERE company_slug = ? ORDER BY id ASC",
+            (company_slug,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def list_qa_context(company_slug: str, limit: int = 20) -> list[dict]:
+    """LLM 컨텍스트 조립용 — status='done'인 것만, 최근 limit턴을 오래된 순으로 반환.
+    기존 프론트가 유지하던 분량(메시지 40개=20턴, frontend/app.js의 .slice(-40))과
+    동일하게 맞추려면 limit=20이어야 한다(한 행에 질문+답변이 같이 들어있으므로)."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT question, answer FROM qa_messages "
+            "WHERE company_slug = ? AND status = 'done' ORDER BY id DESC LIMIT ?",
+            (company_slug, limit),
+        ).fetchall()
+        return [dict(r) for r in reversed(rows)]
 
 
 if __name__ == "__main__":
@@ -413,5 +498,47 @@ if __name__ == "__main__":
 
         # 초기화 재호출(idempotent) 확인
         init_db()
+
+        # qa_messages: pending → done/failed 전환, 조회 함수들
+        mid1 = insert_pending_qa("테스트회사__직무", "연봉 협상 여지 있나요?")
+        pending_rows = list_qa_history("테스트회사__직무")
+        assert len(pending_rows) == 1
+        assert pending_rows[0]["status"] == "pending"
+        assert pending_rows[0]["answer"] is None
+
+        mark_qa_done(mid1, "네, 협상 가능합니다.")
+        after_done = list_qa_history("테스트회사__직무")
+        assert after_done[0]["status"] == "done"
+        assert after_done[0]["answer"] == "네, 협상 가능합니다."
+
+        mid2 = insert_pending_qa("테스트회사__직무", "재택 가능한가요?")
+        mark_qa_failed(mid2, "LLM 서비스 오류")
+        failed_row = [r for r in list_qa_history("테스트회사__직무") if r["id"] == mid2][0]
+        assert failed_row["status"] == "failed"
+        assert failed_row["error"] == "LLM 서비스 오류"
+        assert failed_row["answer"] is None
+
+        # list_qa_context: status='done'만, 오래된 순 — failed/pending은 컨텍스트에서 제외
+        context = list_qa_context("테스트회사__직무")
+        assert len(context) == 1  # done인 mid1만
+        assert context[0]["question"] == "연봉 협상 여지 있나요?"
+
+        # cap 확인: limit보다 많으면 최근 것만, 오래된 순으로
+        for i in range(3):
+            mid = insert_pending_qa("cap테스트__직무", f"질문{i}")
+            mark_qa_done(mid, f"답변{i}")
+        capped = list_qa_context("cap테스트__직무", limit=2)
+        assert [c["question"] for c in capped] == ["질문1", "질문2"]  # 오래된 것(질문0) 잘림, 순서 유지
+
+        # 좀비 pending: 남은 pending 행이 있는 상태에서 init_db()를 다시 부르면(=재시작 흉내)
+        # failed로 전환돼야 한다 — "N분 지났으면" 추측 없이, 서버가 막 켜진 시점 자체가 근거
+        zombie_id = insert_pending_qa("좀비테스트__직무", "재시작 전에 물어본 질문")
+        init_db()
+        zombie_row = [r for r in list_qa_history("좀비테스트__직무") if r["id"] == zombie_id][0]
+        assert zombie_row["status"] == "failed"
+        assert zombie_row["error"] == "서버 재시작으로 응답을 받지 못했습니다"
+        # done/failed로 이미 끝난 행은 재시작해도 안 건드려야 한다
+        after_restart = list_qa_history("테스트회사__직무")
+        assert after_restart[0]["status"] == "done"  # mid1
 
     print("app_db self-check 통과")
