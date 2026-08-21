@@ -188,12 +188,17 @@ def _migrate_slug_history(slug: str, messages: list[QAMessage]) -> int:
 @router.post("/api/companies/migrate-qa")
 async def migrate_qa(req: QAMigrationRequest):
     """localStorage qaHistory 전체를 1회성으로 서버 저장(qa_messages)으로 옮긴다. 기기별로
-    각자 다른 이력을 갖고 있으므로 기기마다 한 번씩 호출해야 하고, 서버 쪽 중복 제거는
-    하지 않는다(설계상 겹칠 일이 없음, PLAN.md 참고)."""
+    각자 다른 이력을 갖고 있으므로 기기마다 한 번씩 호출해야 한다.
+    이 슬러그에 이미 메시지가 있으면(과거 마이그레이션 성공 후 클라이언트가 응답만 못 받아
+    완료 플래그를 못 세우고 재호출한 경우 등) 건너뛴다 — RAG migrate-chats의 chat_id 존재
+    검사와 같은 이유(2026-08-22, 원래 "겹칠 일 없음"으로 가정했다가 이 시나리오를 놓쳤음을
+    인정하고 추가)."""
     total = 0
     for slug, messages in req.history.items():
         if not storage.read_company(slug):
             continue  # 이미 삭제된 회사의 옛 이력은 옮기지 않음
+        if list_qa_history(slug):
+            continue  # 이미 메시지가 있는 슬러그는 재이관하지 않음(중복 방지)
         total += _migrate_slug_history(slug, messages)
     return {"inserted": total}
 
