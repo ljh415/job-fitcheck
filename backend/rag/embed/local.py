@@ -6,8 +6,7 @@ SSH 로컬 포트 포워딩 터널을 열고 그 서버를 HTTP로 호출만 한
 
 `model`/`dimensions`는 다른 provider와 달리 클래스 상수로 고정하지 않고 매번 서버의
 `/health` 응답에서 읽어와 EXPECTED_* 값과 대조한다 — 3050Ti 쪽에서 모델을 바꿔
-재시작했는데 dev 서버가 그걸 모른 채 예전 차원으로 계속 저장하는 사고를 막기 위함
-(Codex 리뷰 권고).
+재시작했는데 dev 서버가 그걸 모른 채 예전 차원으로 계속 저장하는 사고를 막기 위함이다.
 """
 import subprocess
 import threading
@@ -19,15 +18,15 @@ from config import settings
 from rag.embed.base import EmbeddingProvider
 
 # TUNNEL_LOCAL_PORT이 클래스 전체에 고정 포트라, 인스턴스 두 개가 동시에 살아있으면 두 번째
-# SSH 터널이 포트 바인딩에 실패해 즉시 죽는다(Codex 리뷰로 발견, 2026-07-29 — 재색인 웹 트리거
-# 도입으로 동시 요청 가능성이 커지며 실제로 재현됨). 상시 공유 터널(gpu_infra_plan.md)로
-# 바꾸는 게 정석이지만, GPU 서버가 없는 대다수 사용자에겐 아예 안 쓰이는 경로라 지금은
-# non-blocking 락으로만 완화한다 — **blocking 락은 쓰지 않는다**: 이 provider 생성은
-# `routers/rag.py`에서 `asyncio.to_thread`로 감싸져 있어(2026-08-03) blocking `acquire()`가
-# 대기해도 uvicorn 이벤트 루프 자체는 안 막힌다. 그래도 즉시 실패를 쓰는 이유는 고정 포트
-# 하나뿐이라 동시에 최대 하나의 인스턴스만 살 수 있는데, 첫 요청은 SSH 터널 연결+헬스체크로
-# 수십 초까지 걸릴 수 있어(`HEALTH_TIMEOUT_SECONDS`) 두 번째 요청을 그동안 무기한 대기시키기보다
-# 바로 실패시켜 사용자가 잠시 후 재시도하게 하는 게 나아서다(Codex 4차 세션 검증, 2026-08-07).
+# SSH 터널이 포트 바인딩에 실패해 즉시 죽는다(재색인 웹 트리거 도입으로 동시 요청 가능성이
+# 커지며 실제로 재현됨). 상시 공유 터널(gpu_infra_plan.md)로 바꾸는 게 정석이지만, GPU
+# 서버가 없는 대다수 사용자에겐 아예 안 쓰이는 경로라 지금은 non-blocking 락으로만 완화한다
+# — **blocking 락은 쓰지 않는다**: 이 provider 생성은 `routers/rag.py`에서
+# `asyncio.to_thread`로 감싸져 있어 blocking `acquire()`가 대기해도 uvicorn 이벤트 루프
+# 자체는 안 막힌다. 그래도 즉시 실패를 쓰는 이유는 고정 포트 하나뿐이라 동시에 최대 하나의
+# 인스턴스만 살 수 있는데, 첫 요청은 SSH 터널 연결+헬스체크로 수십 초까지 걸릴 수 있어
+# (`HEALTH_TIMEOUT_SECONDS`) 두 번째 요청을 그동안 무기한 대기시키기보다 바로 실패시켜
+# 사용자가 잠시 후 재시도하게 하는 게 나아서다.
 _port_lock = threading.Lock()
 
 
@@ -35,9 +34,9 @@ class LocalEmbeddingProvider(EmbeddingProvider):
     provider_name = "local"
 
     # 01c 실험 1~4 참고: gte-multilingual-base(토크나이저 버그) → e5-base(채택) →
-    # BGE-M3(e5-base보다 낮은 점수) → Jina v5-text-small(e5-base·Google보다 높은 점수로 최종 채택,
-    # 2026-07-23). Qwen3 기반 decoder+LoRA라 4GB VRAM에서 배치 크기를 작게(4) 잡아야 함
-    # — inference_server.py를 --batch-size 4로 띄워야 한다.
+    # BGE-M3(e5-base보다 낮은 점수) → Jina v5-text-small(e5-base·Google보다 높은 점수로 최종 채택).
+    # Qwen3 기반 decoder+LoRA라 4GB VRAM에서 배치 크기를 작게(4) 잡아야 함 —
+    # inference_server.py를 --batch-size 4로 띄워야 한다.
     EXPECTED_MODEL = "jinaai/jina-embeddings-v5-text-small"
     EXPECTED_DIMENSIONS = 1024
 
@@ -76,8 +75,7 @@ class LocalEmbeddingProvider(EmbeddingProvider):
             except httpx.HTTPError as e:
                 # _wait_for_health() 통과 후 이 health 재조회가 실패하는 경우(드문 타이밍 이슈) —
                 # 여기서 안 잡으면 터널을 닫지 못한 채(self.close() 미호출) 예외가 새어나가 프로세스가
-                # 고아로 남고, routers/rag.py도 RuntimeError만 잡아서 503 대신 500이 됐다(Codex
-                # 재리뷰로 발견, 2026-07-23).
+                # 고아로 남고, routers/rag.py도 RuntimeError만 잡아서 503 대신 500이 된다.
                 self.close()
                 raise RuntimeError(f"3050Ti 추론 서버 통신 오류: {e}") from e
             except Exception:
@@ -97,9 +95,9 @@ class LocalEmbeddingProvider(EmbeddingProvider):
 
     def close(self) -> None:
         # terminate()/wait()가 TimeoutExpired를 던지면 그 아래 락 해제 코드에 영영 도달 못 해서,
-        # 프로세스 재시작 전까지 이후 모든 local 요청이 "이미 사용 중"으로 영구 실패했다(Codex
-        # 리뷰로 발견, 2026-07-29 — non-blocking 락 도입 직후 실측으로 재현됨). wait 실패 시
-        # kill()로 강제 종료를 한 번 더 시도하되, 그마저 실패해도 락 해제는 finally로 보장한다.
+        # 프로세스 재시작 전까지 이후 모든 local 요청이 "이미 사용 중"으로 영구 실패한다. wait
+        # 실패 시 kill()로 강제 종료를 한 번 더 시도하되, 그마저 실패해도 락 해제는 finally로
+        # 보장한다.
         try:
             self._tunnel.terminate()
             try:
