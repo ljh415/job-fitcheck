@@ -342,10 +342,10 @@ def trigger_reindex_background() -> bool:
 
 @router.post("/reindex", dependencies=[Depends(_require_rag_enabled)])
 async def reindex():
-    """재색인 웹 트리거(2026-07-29). `rag.postgres.reindex.run()`이 지금까지 CLI 전용이라
+    """재색인 웹 트리거 — `rag.postgres.reindex.run()`이 지금까지 CLI 전용이라
     실제 사용자는 트리거할 방법이 없었다. 항상 `resolve_rag_embedding_provider()`가 결정한
-    활성 provider 하나만 재색인한다(2026-07-31, provider별로 따로 고르던 구조를 없애고
-    설정값 하나로 통일 — `/api/rag/settings` 참고). 프로필 포함 여부는
+    활성 provider 하나만 재색인한다(provider별로 따로 고르던 구조를 없애고 설정값 하나로
+    통일 — `/api/rag/settings` 참고). 프로필 포함 여부는
     `settings.rag_include_profile`(기본 false — 이력서 내용이 임베딩 API로 전송되는 걸
     사용자가 명시적으로 켜야 함)을 따른다. run()은 동기 함수(psycopg/httpx 동기 호출)라
     `asyncio.to_thread`로 감싸 이벤트 루프를 막지 않는다 — 출력은 그대로 컨테이너 stdout으로
