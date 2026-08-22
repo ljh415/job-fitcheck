@@ -15,7 +15,7 @@ from rag.embed.base import EmbeddingProvider
 from rag.retrieval import ensure_fts5, fts5_literal, search_chunks
 from rag.skills import TRACKED_SKILLS
 
-PROFILE_TOP_K = 3  # 5는 프로필이 짧으면 사실상 전체가 다 나올 만큼 과다 노출됨(2026-08-18 발견)
+PROFILE_TOP_K = 3  # 5는 프로필이 짧으면 사실상 전체가 다 나올 만큼 과다 노출됨
 DEMAND_CANDIDATE_MAX = 25  # LLM 판정에 넘길 후보 공고 상한(비용·프롬프트 크기 제어)
 DEMAND_EMBED_TOP_K = 40    # 임베딩 검색 청크 수(공고 단위로 접기 전)
 DEMAND_FTS5_TOP_K = 20     # FTS5 검색 청크 수
@@ -105,7 +105,7 @@ JUDGE_CANDIDATES_TOOL_SCHEMA = {
 def _candidate_postings(conn: sqlite3.Connection, skill: str, embed_provider: EmbeddingProvider) -> list[dict]:
     """임베딩 검색 + FTS5 검색으로 후보 공고를 모은다(중복 제거, 최대 DEMAND_CANDIDATE_MAX개).
     두 채널을 같이 쓰는 이유: 임베딩은 이 corpus(비슷한 직군 공고들)에서 유사도 크기로
-    "관련 있음/없음"을 가르지 못한다는 게 실측으로 확인됐고(2026-07-23, Redis/Python 캘리브레이션),
+    "관련 있음/없음"을 가르지 못한다는 게 실측으로 확인됐고(Redis/Python 캘리브레이션),
     FTS5는 반대로 정확한 표현이 아니면 아예 못 찾는다 — 후보를 넉넉히 모으는 역할만 시키고,
     실제 판정은 LLM이 발췌문을 직접 읽고 한다."""
     ensure_fts5(conn)
@@ -118,7 +118,7 @@ def _candidate_postings(conn: sqlite3.Connection, skill: str, embed_provider: Em
     ]
 
     # source_type='posting_raw' 필터 없이 LIMIT부터 걸면 프로필 청크가 상위권을 차지해 진짜
-    # 공고 후보가 밀려날 수 있었다(Codex 재리뷰로 발견, 2026-07-23).
+    # 공고 후보가 밀려날 수 있다.
     fts_rows = conn.execute(
         "SELECT rowid FROM document_chunk_fts WHERE document_chunk_fts MATCH ? AND source_type = 'posting_raw'"
         " ORDER BY bm25(document_chunk_fts) LIMIT ?",
@@ -145,8 +145,8 @@ def _candidate_postings(conn: sqlite3.Connection, skill: str, embed_provider: Em
             return
         candidates[row[0]] = {"posting_id": row[0], "company_name": row[1], "job_title": row[2], "excerpt": text}
 
-    # 임베딩 채널이 먼저 상한을 다 채워버리면 FTS5 결과가 하나도 안 섞이던 문제(Codex 리뷰 발견,
-    # 2026-07-23) — 두 채널을 번갈아 채워서 한쪽이 상한을 독점하지 않게 한다.
+    # 임베딩 채널이 먼저 상한을 다 채워버리면 FTS5 결과가 하나도 안 섞일 수 있다 — 두 채널을
+    # 번갈아 채워서 한쪽이 상한을 독점하지 않게 한다.
     for embed_item, fts_item in itertools.zip_longest(embed_queue, fts_queue):
         if len(candidates) >= DEMAND_CANDIDATE_MAX:
             break
@@ -190,7 +190,7 @@ async def market_demand_hybrid(conn: sqlite3.Connection, skill: str, embed_provi
         reasoning_effort=snap.reasoning_effort,
     )
     # LLM이 후보 범위 밖 번호나 중복 번호를 반환해도 그대로 세면 matched가 candidate_count보다
-    # 커지는 모순이 생길 수 있다(Codex 리뷰로 발견, 2026-07-23) — 유효 범위로 걸러내고 중복 제거.
+    # 커지는 모순이 생길 수 있다 — 유효 범위로 걸러내고 중복 제거.
     valid_numbers = {r["number"] for r in result["relevant"] if 1 <= r["number"] <= len(candidates)}
     matched = len(valid_numbers)
     return {
@@ -205,8 +205,8 @@ async def market_demand_hybrid(conn: sqlite3.Connection, skill: str, embed_provi
 def _recognized_scope(skill: str) -> str | None:
     """공고 검색용으로 이미 사람이 정의해둔 TRACKED_SKILLS 동의어 범위를 판정 LLM에게도
     참고 정보로 전달한다. 이렇게 하면 "이 개념을 얼마나 넓게/좁게 볼지"를 프롬프트에 사례를
-    하드코딩하지 않고도, 이미 있는 데이터로 전달할 수 있다(2026-07-23, IaC/Ansible처럼 개념
-    경계가 애매한 사례에서 판정이 매번 흔들리는 문제를 프롬프트 예시 대신 데이터로 해결)."""
+    하드코딩하지 않고도, 이미 있는 데이터로 전달할 수 있다(IaC/Ansible처럼 개념 경계가
+    애매한 사례에서 판정이 매번 흔들리는 문제를 프롬프트 예시 대신 데이터로 해결)."""
     patterns = TRACKED_SKILLS.get(skill)
     if not patterns:
         return None
@@ -225,8 +225,8 @@ def _has_profile_embeddings(conn: sqlite3.Connection, embed_provider: EmbeddingP
 
 async def assess_gap(conn: sqlite3.Connection, skill: str, embed_provider: EmbeddingProvider) -> dict:
     # 검색 결과 0건이 "실제로 근거 없음"인지 "이 provider로 프로필을 아직 임베딩 안 함"인지
-    # 구분 못 하고 둘 다 LLM에게 "발췌문 없음"으로 넘어가 "근거 없음"으로 오판되는 문제가 있었다
-    # (Codex 리뷰로 발견, 2026-07-23) — 판정 전에 인덱스 존재 자체를 먼저 확인한다.
+    # 구분 못 하고 둘 다 LLM에게 "발췌문 없음"으로 넘어가 "근거 없음"으로 오판될 수 있다 —
+    # 판정 전에 인덱스 존재 자체를 먼저 확인한다.
     if not _has_profile_embeddings(conn, embed_provider):
         raise RuntimeError(
             f"이 provider({embed_provider.provider_name}/{embed_provider.model})로 후보자 프로필이"
