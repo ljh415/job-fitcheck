@@ -2,21 +2,21 @@
 
 Phase 1~4의 "질문을 7종 중 하나로 분류 → 그 유형에 고정된 함수 하나만 실행"(`query_router.py`)
 방식은, 질문이 애매하거나 여러 능력을 조합해야 답할 수 있을 때 완전히 무관한 답을 내놓는 구조적
-결함이 실측으로 확인됐다(2026-07-28, 사용자가 "내가 RAG를 안하면 많이 불리할까?" 질문으로 재현 —
-`single_skill_gap`으로 분류돼 원본 데이터만 던지고 질문 자체엔 답을 안 함).
+결함이 실측으로 확인됐다("내가 RAG를 안하면 많이 불리할까?" 질문이 `single_skill_gap`으로
+분류돼 원본 데이터만 던지고 질문 자체엔 답을 안 하는 식으로 재현).
 
 이 모듈은 그 대신, 기존 함수들(`market_demand_hybrid`/`assess_gap`/`assess_all_gaps`/
 `list_postings`/`judge_topic_postings`/`compare_postings`/`generate_action_plan`/
 `generate_sequenced_plan`)을 도구로 노출하고, LLM이 질문마다 어떤 도구를(몇 개든, 안 쓰든) 쓸지
 스스로 판단해 답하게 한다(ReAct 스타일 tool-use 루프, `llm.base.LLMProvider.run_agent()`).
 
-Claude/Gemini/OpenAI 셋 다 지원한다(2026-07-30 — main이 이미 셋을 위계 없이 동등하게 다루므로,
-Agent도 같은 원칙을 따라야 필수 키(Gemini)만 있는 사용자도 쓸 수 있음. 처음엔 "Claude 먼저 만들고
-나중에 확장"으로 Claude만 구현했었는데, 그 방식대로 main에 이식하면 대다수 사용자가 못 쓰게 돼
-셋 다 먼저 완성함). 임베딩(`embed_provider`)만 빼고, 오케스트레이션(`answer_query_agent()`)과
+Claude/Gemini/OpenAI 셋 다 지원한다 — main이 이미 셋을 위계 없이 동등하게 다루므로,
+Agent도 같은 원칙을 따라야 필수 키(Gemini)만 있는 사용자도 쓸 수 있다("Claude 먼저 만들고
+나중에 확장"으로 Claude만 구현하면, 그 방식대로 main에 이식할 때 대다수 사용자가 못 쓰게
+된다). 임베딩(`embed_provider`)만 빼고, 오케스트레이션(`answer_query_agent()`)과
 도구 내부 판정(`_make_tool_executor()`)은 `llm.router.high_provider()`가 반환하는(=main의
 현재 설정을 따르는) **같은 provider/model 인스턴스 하나**를 공유한다 — 두 곳에 각각 provider를
-따로 하드코딩하면 구조적으로 어긋날 위험이 있어서다(2026-07-29 발견·수정 이후 유지).
+따로 하드코딩하면 구조적으로 어긋날 위험이 있어서다.
 """
 import asyncio
 import json
@@ -139,8 +139,8 @@ PROFILE_TOOL_NAMES = {
 
 def _without_excerpts(gap_result: dict) -> dict:
     """Agent에게 여러 기술을 한 번에 요약해줄 때, 기술마다 딸려오는 이력서 원문 발췌(`excerpts`)를
-    그대로 다 넘기면 입력 토큰이 기술 수만큼 불어난다(2026-07-29 실측: 13개 기술 합산 시 4~9만
-    토큰까지 치솟음). 요약 판단에는 skill/evidence_level/reasoning/market_demand만 있으면 충분하고,
+    그대로 다 넘기면 입력 토큰이 기술 수만큼 불어난다(13개 기술 합산 시 4~9만 토큰까지 치솟음).
+    요약 판단에는 skill/evidence_level/reasoning/market_demand만 있으면 충분하고,
     특정 기술의 발췌문이 필요하면 Agent가 assess_skill_gap(단일 기술)을 별도로 불러 확인하면 된다."""
     return {k: v for k, v in gap_result.items() if k != "excerpts"}
 
@@ -171,7 +171,7 @@ def _make_tool_executor(
     async def get_skill_gap(skill: str) -> dict:
         # get_all_gaps()와 같은 이유 — generate_action_plan_for_skill의 도구 설명이 "이미
         # assess_skill_gap으로 확인한 뒤에 쓰세요"라고 순서를 안내해서, 한 턴 안에 같은 기술로
-        # 둘 다 부르면 assess_gap()(LLM 판정 포함)이 두 번 실행됐다(2026-07-29 발견).
+        # 둘 다 부르면 assess_gap()(LLM 판정 포함)이 두 번 실행된다.
         if skill not in skill_gap_cache:
             skill_gap_cache[skill] = await assess_gap(conn, skill, embed_provider, llm=claude_llm)
         return skill_gap_cache[skill]
@@ -196,10 +196,10 @@ def _make_tool_executor(
             if not topic and not job_role:
                 # topic이 스키마상 required지만 빈 문자열도 통과되는 tool-use 특성상, Claude가
                 # 필터 없이 이 도구를 부르면 judge_topic_postings(topic="")로 떨어져 빈 주제로
-                # LLM 판정을 도는 낭비 호출이 될 수 있다 — 신뢰 경계 입력 검증(2026-07-29 발견).
+                # LLM 판정을 도는 낭비 호출이 될 수 있다 — 신뢰 경계 입력 검증.
                 return {"error": "topic 또는 job_role 중 최소 하나는 필요합니다."}
-            # list_postings()는 동기 DB 쿼리라 to_thread로 감싼다(Codex 4차 리뷰로 발견,
-            # 2026-08-03 — 안 그러면 Agent가 이 도구를 쓸 때마다 이벤트 루프가 막힌다).
+            # list_postings()는 동기 DB 쿼리라 to_thread로 감싼다 — 안 그러면 Agent가 이
+            # 도구를 쓸 때마다 이벤트 루프가 막힌다.
             if topic in TRACKED_SKILLS:
                 postings = await asyncio.to_thread(list_postings, conn, skill=topic, job_title=job_role)
                 return {"postings": postings}
@@ -246,8 +246,7 @@ def _log_agent_call(
     재작성하는 경우라 그 패턴을 쓴다).
 
     `request_id`는 이 요청 동안 발생한 usage_log.jsonl의 LLM 호출들과 나중에 조인해서 비용을
-    보기 위한 연결 키일 뿐이다 — 비용 자체는 여기 안 넣는다(2026-07-29, 두 로그의 목적을
-    안 섞기 위해 사용자가 이 방식으로 확정)."""
+    보기 위한 연결 키일 뿐이다 — 비용 자체는 여기 안 넣는다(두 로그의 목적을 안 섞기 위함)."""
     entry = {
         "ts": datetime.now().isoformat(timespec="seconds"),
         "request_id": request_id,
@@ -259,7 +258,7 @@ def _log_agent_call(
                 "args": tc.get("args"),
                 # 잘라내면 나중에 답변 충실성(도구 결과 vs 최종 답변 대조) 검증 시마다 DB를
                 # 다시 조회해야 해서, 개인용 앱 규모에서 무의미한 절약(디스크 몇 KB)보다 손해가
-                # 컸음(2026-07-29 실측) — 자르지 않고 전체를 남긴다.
+                # 크다 — 자르지 않고 전체를 남긴다.
                 "result_summary": str(tc.get("result")),
             }
             for tc in tool_calls
@@ -303,9 +302,9 @@ async def answer_query_agent(
         )
         return {"answer": result["text"], "tool_calls": result["tool_calls"]}
     finally:
-        # run_agent()가 예외를 던지면(LLMAPIError 등) 기존엔 이 블록까지 못 와서 실패한
-        # 요청이 rag_agent_log.jsonl에 안 남았다 — usage_log.jsonl의 request_id와 조인할
-        # 대상이 없어짐(Codex 리뷰로 발견, 2026-07-29). 성공/실패 둘 다 finally에서 남긴다.
+        # run_agent()가 예외를 던지면(LLMAPIError 등) 이 블록까지 못 오면 실패한 요청이
+        # rag_agent_log.jsonl에 안 남는다 — usage_log.jsonl의 request_id와 조인할 대상이
+        # 없어진다. 성공/실패 둘 다 finally에서 남긴다.
         current_request_id.reset(token)
         _log_agent_call(
             question=question,
