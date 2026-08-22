@@ -355,7 +355,11 @@ def migrate_qa_slug_history(device_id: str, company_slug: str, pairs: list[tuple
     (서로 다른) 이력이 영영 안 옮겨진다. 메시지 삽입과 마이그레이션 기록을 분리된 커밋으로
     하면, 중간에 실패했을 때 "메시지는 없는데 기록은 남아 영구 스킵"되거나 반대로 "재시도
     때마다 중복 삽입"될 수 있어 하나의 트랜잭션으로 묶는다(Codex 리뷰로 발견, 2026-08-22 —
-    docs/chat-history-server-storage/PLAN.md 참고)."""
+    docs/chat-history-server-storage/PLAN.md 참고).
+
+    쌍(question, answer) 단위로 내용이 이미 존재하면 건너뛴다 — v1.5.1 당시(기기 추적
+    테이블이 없던 시절) 이미 성공적으로 옮겨진 기기가 복구 경로로 재호출해도 중복 삽입되지
+    않도록 하기 위함(Codex 2차 리뷰로 발견, 2026-08-22)."""
     with get_connection() as conn:
         already = conn.execute(
             "SELECT 1 FROM qa_migrations WHERE device_id = ? AND company_slug = ?",
@@ -364,18 +368,26 @@ def migrate_qa_slug_history(device_id: str, company_slug: str, pairs: list[tuple
         if already:
             return 0
         now = datetime.now().isoformat(timespec="seconds")
+        inserted = 0
         for question, answer in pairs:
+            exists = conn.execute(
+                "SELECT 1 FROM qa_messages WHERE company_slug = ? AND question = ? AND answer = ?",
+                (company_slug, question, answer),
+            ).fetchone()
+            if exists:
+                continue
             conn.execute(
                 "INSERT INTO qa_messages (company_slug, question, answer, status, created_at) "
                 "VALUES (?, ?, ?, 'done', ?)",
                 (company_slug, question, answer, now),
             )
+            inserted += 1
         conn.execute(
             "INSERT INTO qa_migrations (device_id, company_slug, migrated_at) VALUES (?, ?, ?)",
             (device_id, company_slug, now),
         )
         conn.commit()
-        return len(pairs)
+        return inserted
 
 
 def insert_pending_qa(company_slug: str, question: str) -> int:
@@ -789,6 +801,26 @@ if __name__ == "__main__":
         all_migrated = list_qa_history("마이그레이션테스트__직무")
         assert len(all_migrated) == 3  # 데스크탑 2건 + 모바일 1건, 둘 다 살아있음
         assert any(m["question"] == "모바일 질문1" for m in all_migrated)
+
+        # v1.5.1 복구 경로: qa_migrations 기록이 없는(=기기 추적 테이블이 없던 시절 이미
+        # 성공한) 기기가 같은 내용으로 재호출하면, 내용이 겹치므로 전부 스킵돼야 한다
+        # (안 그러면 복구 트리거가 이미 성공한 기기의 이력을 중복시킨다)
+        retry_legacy_same_content = migrate_qa_slug_history(
+            "device-desktop", "마이그레이션테스트__직무", pairs_a
+        )
+        assert retry_legacy_same_content == 0
+        assert len(list_qa_history("마이그레이션테스트__직무")) == 3  # 중복 안 생김
+
+        # 반대로 새 기기가 일부는 서버에 이미 있는 내용(우연 일치), 일부는 진짜 새 내용을
+        # 보내면 새 것만 들어가야 한다
+        pairs_mixed = [("데스크탑 질문1", "데스크탑 답변1"), ("태블릿 질문1", "태블릿 답변1")]
+        inserted_mixed = migrate_qa_slug_history(
+            "device-tablet", "마이그레이션테스트__직무", pairs_mixed
+        )
+        assert inserted_mixed == 1  # 겹치는 것 스킵, 새 것만 삽입
+        final_migrated = list_qa_history("마이그레이션테스트__직무")
+        assert len(final_migrated) == 4
+        assert any(m["question"] == "태블릿 질문1" for m in final_migrated)
 
         # rag_chats/rag_messages: 채팅방 생성 → pending → done/failed, 컨텍스트 조회
         create_rag_chat("chat-1", created_at="2026-08-22T00:00:00")

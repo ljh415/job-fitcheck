@@ -80,12 +80,19 @@ function getDeviceId() {
   return id;
 }
 
+// job-fitcheck-qa-migrated-v2: v1.5.1(슬러그 단위 스킵) 시절 이미 완료 플래그가 찍혀 다시
+// 호출되지 않던 기기를 위한 1회성 복구 트리거. 기존 완료 키는 그대로 두고 별도로 둔다 —
+// 서버(migrate_qa_slug_history)가 내용 기반으로 중복을 걸러주므로 이미 성공한 기기가 다시
+// 호출해도 안전하다(Codex 2차 리뷰로 발견, 2026-08-22).
 async function migrateQAHistoryIfNeeded() {
-  if (localStorage.getItem('job-fitcheck-qa-migrated') === '1') return;
+  const migrated = localStorage.getItem('job-fitcheck-qa-migrated') === '1';
+  const recovered = localStorage.getItem('job-fitcheck-qa-migrated-v2') === '1';
+  if (migrated && recovered) return;
   const raw = localStorage.getItem('job-fitcheck-qa');
   const history = raw ? JSON.parse(raw) : {};
   if (Object.keys(history).length === 0) {
     localStorage.setItem('job-fitcheck-qa-migrated', '1');
+    localStorage.setItem('job-fitcheck-qa-migrated-v2', '1');
     return;
   }
   try {
@@ -94,6 +101,7 @@ async function migrateQAHistoryIfNeeded() {
       body: JSON.stringify({ device_id: getDeviceId(), history }),
     });
     localStorage.setItem('job-fitcheck-qa-migrated', '1');
+    localStorage.setItem('job-fitcheck-qa-migrated-v2', '1');
   } catch (e) {
     // 실패하면 플래그를 안 세워서 다음 로드 때 재시도 — 실패한 채로 표시만 남기면
     // 이 기기의 옛 대화가 영영 안 옮겨진다.
