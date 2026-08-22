@@ -364,13 +364,20 @@ def migrate_qa_slug_history(device_id: str, company_slug: str, pairs: list[tuple
     여부를 boolean으로만 보면 완전히 같은 질문을 두 번 물어본 정상 이력조차 마이그레이션
     중 하나로 뭉개진다 — 이번 호출에서 새로 넣은 행을 다음 쌍의 "이미 있음" 근거로 다시
     세면 안 되므로, 시작 시점의 기존 개수만 한 번씩 소비한다(Codex 3차 리뷰로 발견,
+    2026-08-22).
+
+    함수 맨 앞에서 BEGIN IMMEDIATE로 쓰기 트랜잭션을 먼저 확보한다 — 안 그러면 서로 다른
+    두 기기가 동시에 같은 슬러그를 복구할 때 둘 다 같은(비어있는) occurrence 스냅샷을
+    읽어서 순차 실행이었다면 스킵됐을 턴을 양쪽 다 삽입해버린다(Codex 4차 리뷰로 발견,
     2026-08-22)."""
     with get_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         already = conn.execute(
             "SELECT 1 FROM qa_migrations WHERE device_id = ? AND company_slug = ?",
             (device_id, company_slug),
         ).fetchone()
         if already:
+            conn.rollback()
             return 0
         now = datetime.now().isoformat(timespec="seconds")
         existing_rows = conn.execute(
@@ -854,6 +861,30 @@ if __name__ == "__main__":
         )
         assert inserted_dup_more == 1  # 기존 1개만큼 스킵, 초과분 1개만 삽입
         assert len(list_qa_history("중복턴테스트2__직무")) == 2
+
+        # 동시성 회귀(Codex 4차 리뷰로 발견, 2026-08-22): 서로 다른 두 기기가 정확히
+        # 동시에 같은 슬러그의 같은 내용을 복구하면, BEGIN IMMEDIATE로 직렬화되지 않을
+        # 경우 둘 다 같은(비어있는) occurrence 스냅샷을 읽어 중복 삽입된다. 순차 실행과
+        # 같은 결과(메시지 1건, marker는 기기별로 각각 2건)가 나와야 한다.
+        import threading
+
+        barrier = threading.Barrier(2)
+        results: dict[str, int] = {}
+
+        def _concurrent_worker(device_id: str) -> None:
+            barrier.wait()
+            results[device_id] = migrate_qa_slug_history(
+                device_id, "동시성테스트__직무", [("동시 질문", "동시 답변")]
+            )
+
+        t1 = threading.Thread(target=_concurrent_worker, args=("device-concurrent-1",))
+        t2 = threading.Thread(target=_concurrent_worker, args=("device-concurrent-2",))
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+        assert sorted(results.values()) == [0, 1]  # 하나만 실제 삽입, 다른 하나는 스킵
+        assert len(list_qa_history("동시성테스트__직무")) == 1  # 중복 안 생김
 
         # rag_chats/rag_messages: 채팅방 생성 → pending → done/failed, 컨텍스트 조회
         create_rag_chat("chat-1", created_at="2026-08-22T00:00:00")
