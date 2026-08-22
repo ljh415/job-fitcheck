@@ -446,6 +446,35 @@ def delete_qa_history_for_slug(company_slug: str) -> int:
         return cur.rowcount
 
 
+def migrate_rag_chat(chat_id: str, title: str | None, created_at: str, entries: list[tuple[str, str]]) -> int:
+    """chat_id 방이 이미 있으면 0을 반환하고 아무것도 안 한다(재이관 방지 — RAG 방 id는
+    기기별로 이미 고유하게 생성되므로 QnA처럼 기기 단위 구분이 따로 필요 없다). 아니면
+    방 생성과 메시지(entries: (질문, data JSON 문자열) 튜플 목록) 전부 삽입을 **한
+    트랜잭션**으로 커밋하고 삽입 건수를 반환한다.
+
+    예전엔 방 생성(create_rag_chat)과 메시지 삽입(insert_pending_rag_message+
+    mark_rag_message_done)이 각각 별도 커밋이라, 방만 만들어진 직후나 메시지 일부만 들어간
+    뒤 서버가 죽으면 재시도해도 "이미 있는 방"으로 판정돼 나머지가 영구 누락됐다(Codex
+    리뷰로 발견, 2026-08-22). 한 트랜잭션으로 묶으면 중간에 실패해도 전부 롤백되어 재시도
+    시 처음부터 다시 시도할 수 있다."""
+    with get_connection() as conn:
+        existing = conn.execute("SELECT 1 FROM rag_chats WHERE id = ?", (chat_id,)).fetchone()
+        if existing:
+            return 0
+        conn.execute(
+            "INSERT INTO rag_chats (id, title, created_at) VALUES (?, ?, ?)",
+            (chat_id, title, created_at),
+        )
+        for question, data_json in entries:
+            conn.execute(
+                "INSERT INTO rag_messages (chat_id, question, data, status, created_at) "
+                "VALUES (?, ?, ?, 'done', ?)",
+                (chat_id, question, data_json, created_at),
+            )
+        conn.commit()
+        return len(entries)
+
+
 def create_rag_chat(chat_id: str, title: str | None = None, created_at: str | None = None) -> None:
     """새 채팅방 생성. `created_at`을 지정하면(마이그레이션으로 넘어온 옛 createdAt 보존)
     그 값을, 없으면 지금 시각을 쓴다."""
@@ -795,6 +824,17 @@ if __name__ == "__main__":
         assert get_rag_chat("chat-1") is None
         assert delete_rag_chat("chat-1") is False  # 이미 삭제됨
 
+        # migrate_rag_chat: 방+메시지를 한 트랜잭션으로, 재시도 시 중복 없이 멱등
+        entries = [("마이그레이션 질문1", '{"answer": "답1"}'), ("마이그레이션 질문2", '{"answer": "답2"}')]
+        inserted = migrate_rag_chat("chat-migrate-1", "옛 채팅", "2026-08-01T00:00:00", entries)
+        assert inserted == 2
+        assert len(list_rag_messages("chat-migrate-1")) == 2
+
+        # 같은 chat_id로 재시도(응답 유실 후 재호출 등)하면 건너뛰어야 함 — 중복 방지
+        retry = migrate_rag_chat("chat-migrate-1", "옛 채팅", "2026-08-01T00:00:00", entries)
+        assert retry == 0
+        assert len(list_rag_messages("chat-migrate-1")) == 2  # 중복 안 생김
+
         # 좀비 pending도 QnA와 동일하게 서버 재시작 시점에 failed로 전환돼야 한다
         create_rag_chat("chat-2")
         zombie_rag_id = insert_pending_rag_message("chat-2", "재시작 전 질문")
@@ -804,6 +844,6 @@ if __name__ == "__main__":
         assert zombie_rag["error"] == "서버 재시작으로 응답을 받지 못했습니다"
 
         chats = list_rag_chats()
-        assert {c["id"] for c in chats} == {"chat-2"}  # chat-1은 위에서 삭제됨
+        assert {c["id"] for c in chats} == {"chat-2", "chat-migrate-1"}  # chat-1은 위에서 삭제됨
 
     print("app_db self-check 통과")

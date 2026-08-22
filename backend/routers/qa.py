@@ -10,10 +10,14 @@ import prompts
 import storage
 from llm.router import high_provider
 from models import MultiQARequest, QAMessage, QAMigrationRequest, QARequest
-from services.app_db import insert_pending_qa, list_fit_history, list_qa_context, list_qa_history, mark_qa_done, mark_qa_failed, migrate_qa_slug_history
+from services.app_db import insert_pending_qa, is_healthy, list_fit_history, list_qa_context, list_qa_history, mark_qa_done, mark_qa_failed, migrate_qa_slug_history
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+# companies.py/profile.py의 fit_history/profile_versions 503 계약과 동일 — DB 장애 시
+# 빈 목록/일반 500 대신 명확한 503으로 구분한다(Codex 리뷰로 발견, 2026-08-22).
+_DB_UNAVAILABLE_DETAIL = "QnA 대화 기록 기능을 일시적으로 사용할 수 없습니다."
 
 # 진행 중인 QnA 생성 태스크 참조 보관 — asyncio 문서 권고대로, 참조를 안 들고 있으면
 # 이벤트 루프가 GC 시점에 실행 중인 태스크를 조용히 없애버릴 수 있다.
@@ -136,6 +140,8 @@ async def qa_history(slug: str):
     복원한다(localStorage 대체)."""
     if not storage.read_company(slug):
         raise HTTPException(status_code=404, detail="회사를 찾을 수 없습니다.")
+    if not is_healthy():
+        raise HTTPException(status_code=503, detail=_DB_UNAVAILABLE_DETAIL)
     return {"messages": list_qa_history(slug)}
 
 
@@ -147,6 +153,8 @@ async def company_qa(slug: str, req: QARequest):
     record = storage.read_company(slug)
     if not record:
         raise HTTPException(status_code=404, detail="회사를 찾을 수 없습니다.")
+    if not is_healthy():
+        raise HTTPException(status_code=503, detail=_DB_UNAVAILABLE_DETAIL)
     profile_text = storage.read_profile_text() or "후보자 프로필 없음"
     company_context = f"{record.frontmatter.model_dump_json(indent=2)}\n\n{record.body}"
 
@@ -192,6 +200,8 @@ async def migrate_qa(req: QAMigrationRequest):
     기기 B의 (서로 다른) 이력이 영영 안 옮겨지는 회귀가 있었다(v1.5.1에서 도입, Codex
     리뷰로 발견해 2026-08-22 수정). 실제 삽입+마이그레이션 기록은
     migrate_qa_slug_history()가 한 트랜잭션으로 처리한다."""
+    if not is_healthy():
+        raise HTTPException(status_code=503, detail=_DB_UNAVAILABLE_DETAIL)
     total = 0
     for slug, messages in req.history.items():
         if not storage.read_company(slug):

@@ -71,6 +71,15 @@ def _require_profile_enabled() -> None:
         raise HTTPException(400, "RAG_INCLUDE_PROFILE이 꺼져 있어 프로필 근거 기반 기능을 사용할 수 없습니다.")
 
 
+def _require_app_db_healthy() -> None:
+    """채팅방/메시지는 RAG의 Postgres가 아니라 data/app.db(SQLite)에 저장한다 —
+    init_db() 실패로 is_healthy()=False면 조회는 빈 목록, 쓰기는 500으로 새서 DB 장애를
+    "이력 없음"과 구분 못 했다(Codex 리뷰로 발견, 2026-08-22). companies.py/profile.py의
+    기존 fit_history/profile_versions 503 계약과 동일하게 맞춘다."""
+    if not app_db.is_healthy():
+        raise HTTPException(503, "채팅 기록 기능을 일시적으로 사용할 수 없습니다.")
+
+
 @router.get("/status")
 async def status():
     """RAG 활성화 여부 조회 — 프론트가 이걸로 RAG 관련 UI를 조건부로 노출한다.
@@ -408,13 +417,13 @@ async def _run_rag_generation(message_id: int, chat_id: str, question: str) -> d
             await asyncio.to_thread(conn.close)
 
 
-@router.get("/chats", dependencies=[Depends(_require_rag_enabled)])
+@router.get("/chats", dependencies=[Depends(_require_rag_enabled), Depends(_require_app_db_healthy)])
 async def list_chats():
     """채팅방 목록(드롭다운용) — 최신순."""
     return {"chats": app_db.list_rag_chats()}
 
 
-@router.get("/chats/{chat_id}", dependencies=[Depends(_require_rag_enabled)])
+@router.get("/chats/{chat_id}", dependencies=[Depends(_require_rag_enabled), Depends(_require_app_db_healthy)])
 async def get_chat_messages(chat_id: str):
     """특정 방의 메시지 전체(pending·failed 포함) — 페이지 로드 시 이걸로 채팅 화면을
     복원한다(localStorage 대체). data는 DB엔 JSON 문자열로 저장돼있는데 그대로 돌려주면
@@ -428,7 +437,7 @@ async def get_chat_messages(chat_id: str):
     return {"messages": messages}
 
 
-@router.post("/chats", dependencies=[Depends(_require_rag_enabled)])
+@router.post("/chats", dependencies=[Depends(_require_rag_enabled), Depends(_require_app_db_healthy)])
 async def create_chat():
     """새 채팅방 생성 — id는 서버가 발급(기존 프론트 'chat-<timestamp>' 형식과 동일하게
     맞춰서 마이그레이션으로 넘어온 옛 방 id와 형태를 통일)."""
@@ -437,7 +446,7 @@ async def create_chat():
     return app_db.get_rag_chat(chat_id)
 
 
-@router.delete("/chats/{chat_id}", dependencies=[Depends(_require_rag_enabled)])
+@router.delete("/chats/{chat_id}", dependencies=[Depends(_require_rag_enabled), Depends(_require_app_db_healthy)])
 async def delete_chat(chat_id: str):
     """채팅방 삭제 — rag_messages는 FK(ON DELETE CASCADE)로 자동 정리된다."""
     if not app_db.delete_rag_chat(chat_id):
@@ -445,27 +454,29 @@ async def delete_chat(chat_id: str):
     return {"status": "ok"}
 
 
-@router.post("/migrate-chats", dependencies=[Depends(_require_rag_enabled)])
+@router.post("/migrate-chats", dependencies=[Depends(_require_rag_enabled), Depends(_require_app_db_healthy)])
 async def migrate_chats(req: RagChatMigrationRequest):
     """localStorage job-fitcheck-rag-chats 전체를 1회성으로 서버 저장(rag_chats/rag_messages)
     으로 옮긴다. pending:true로 남아있던 미완성 메시지는 건너뛴다(QnA migrate-qa와 동일한
-    원칙 — 짝 안 맞는/미완성 항목은 스킵)."""
+    원칙 — 짝 안 맞는/미완성 항목은 스킵). 방 하나의 생성+메시지 전체 삽입은
+    app_db.migrate_rag_chat()이 한 트랜잭션으로 처리 — 중간에 실패해도 그 방 전체가
+    롤백되어 재시도 시 처음부터 다시 시도할 수 있다(방 생성과 메시지 삽입이 각각 별도
+    커밋이라 중간 실패 시 일부만 들어간 채 영구 스킵되던 문제를 Codex 리뷰로 발견해
+    2026-08-22 수정 — 유효한 메시지가 하나도 없는 방은 빈 방으로 만들지 않고 건너뜀)."""
     inserted = 0
     for chat_id, chat in req.chats.items():
-        if app_db.get_rag_chat(chat_id):
-            continue  # 이미 마이그레이션된 방(재시도 등) — 중복 삽입 방지
+        entries = [
+            (m.question, json.dumps(m.data, ensure_ascii=False))
+            for m in chat.messages if not m.pending and m.data
+        ]
+        if not entries:
+            continue
         created_at = datetime.fromtimestamp(chat.created_at_ms / 1000).isoformat(timespec="seconds")
-        app_db.create_rag_chat(chat_id, title=chat.title, created_at=created_at)
-        for m in chat.messages:
-            if m.pending or not m.data:
-                continue
-            message_id = app_db.insert_pending_rag_message(chat_id, m.question)
-            app_db.mark_rag_message_done(message_id, json.dumps(m.data, ensure_ascii=False))
-            inserted += 1
+        inserted += app_db.migrate_rag_chat(chat_id, chat.title, created_at, entries)
     return {"inserted": inserted}
 
 
-@router.post("/ask", dependencies=[Depends(_require_rag_enabled)])
+@router.post("/ask", dependencies=[Depends(_require_rag_enabled), Depends(_require_app_db_healthy)])
 async def ask(req: AskRequest):
     """대화형 근거 기반 RAG 진입점 — 자연어 질문을 Agent(tool-use)로 답한다(2026-07-28, Phase 1~4의
     "질문 분류→고정 함수 실행" 구조를 대체). 질문이 애매하거나 여러 능력을 조합해야 답할 수 있을 때
