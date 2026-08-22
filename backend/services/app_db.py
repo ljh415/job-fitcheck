@@ -6,6 +6,7 @@ RAG를 안 쓰는 사용자도 써야 하는 핵심 기능이라 선택 기능�
 """
 import logging
 import sqlite3
+from collections import Counter
 from contextlib import contextmanager
 from datetime import datetime
 
@@ -357,9 +358,13 @@ def migrate_qa_slug_history(device_id: str, company_slug: str, pairs: list[tuple
     때마다 중복 삽입"될 수 있어 하나의 트랜잭션으로 묶는다(Codex 리뷰로 발견, 2026-08-22 —
     docs/chat-history-server-storage/PLAN.md 참고).
 
-    쌍(question, answer) 단위로 내용이 이미 존재하면 건너뛴다 — v1.5.1 당시(기기 추적
-    테이블이 없던 시절) 이미 성공적으로 옮겨진 기기가 복구 경로로 재호출해도 중복 삽입되지
-    않도록 하기 위함(Codex 2차 리뷰로 발견, 2026-08-22)."""
+    쌍(question, answer)의 occurrence 개수 기준으로 서버에 이미 있던 만큼만 건너뛴다 —
+    v1.5.1 당시(기기 추적 테이블이 없던 시절) 이미 성공적으로 옮겨진 기기가 복구 경로로
+    재호출해도 중복 삽입되지 않도록 하기 위함(Codex 2차 리뷰로 발견, 2026-08-22). 존재
+    여부를 boolean으로만 보면 완전히 같은 질문을 두 번 물어본 정상 이력조차 마이그레이션
+    중 하나로 뭉개진다 — 이번 호출에서 새로 넣은 행을 다음 쌍의 "이미 있음" 근거로 다시
+    세면 안 되므로, 시작 시점의 기존 개수만 한 번씩 소비한다(Codex 3차 리뷰로 발견,
+    2026-08-22)."""
     with get_connection() as conn:
         already = conn.execute(
             "SELECT 1 FROM qa_migrations WHERE device_id = ? AND company_slug = ?",
@@ -368,13 +373,16 @@ def migrate_qa_slug_history(device_id: str, company_slug: str, pairs: list[tuple
         if already:
             return 0
         now = datetime.now().isoformat(timespec="seconds")
+        existing_rows = conn.execute(
+            "SELECT question, answer FROM qa_messages WHERE company_slug = ?",
+            (company_slug,),
+        ).fetchall()
+        remaining = Counter((row["question"], row["answer"]) for row in existing_rows)
         inserted = 0
         for question, answer in pairs:
-            exists = conn.execute(
-                "SELECT 1 FROM qa_messages WHERE company_slug = ? AND question = ? AND answer = ?",
-                (company_slug, question, answer),
-            ).fetchone()
-            if exists:
+            key = (question, answer)
+            if remaining[key] > 0:
+                remaining[key] -= 1
                 continue
             conn.execute(
                 "INSERT INTO qa_messages (company_slug, question, answer, status, created_at) "
@@ -802,11 +810,13 @@ if __name__ == "__main__":
         assert len(all_migrated) == 3  # 데스크탑 2건 + 모바일 1건, 둘 다 살아있음
         assert any(m["question"] == "모바일 질문1" for m in all_migrated)
 
-        # v1.5.1 복구 경로: qa_migrations 기록이 없는(=기기 추적 테이블이 없던 시절 이미
-        # 성공한) 기기가 같은 내용으로 재호출하면, 내용이 겹치므로 전부 스킵돼야 한다
-        # (안 그러면 복구 트리거가 이미 성공한 기기의 이력을 중복시킨다)
+        # v1.5.1 복구 경로: qa_migrations 기록이 아예 없는(=기기 추적 테이블이 없던 시절
+        # 이미 성공한) 새 기기가 같은 내용으로 재호출하면, "already" 단락(같은 device의
+        # 재시도 체크)이 아니라 content 기반 스킵으로 걸러져야 한다 — device_id를 반드시
+        # 처음 쓰는 값으로 해야 이 경로를 제대로 검증한다(Codex 2차 리뷰가 지적한 맹점:
+        # 이미 qa_migrations 표식이 있는 기기를 재사용하면 content 검사 전에 반환돼버림)
         retry_legacy_same_content = migrate_qa_slug_history(
-            "device-desktop", "마이그레이션테스트__직무", pairs_a
+            "device-legacy-untracked", "마이그레이션테스트__직무", pairs_a
         )
         assert retry_legacy_same_content == 0
         assert len(list_qa_history("마이그레이션테스트__직무")) == 3  # 중복 안 생김
@@ -821,6 +831,29 @@ if __name__ == "__main__":
         final_migrated = list_qa_history("마이그레이션테스트__직무")
         assert len(final_migrated) == 4
         assert any(m["question"] == "태블릿 질문1" for m in final_migrated)
+
+        # occurrence 소비 회귀(Codex 3차 리뷰로 발견, 2026-08-22): 완전히 같은 (질문,답변)
+        # 쌍이 로컬 이력에 두 번 있는 정상 케이스 — 서버에 기존 데이터가 없는 슬러그에
+        # 처음 옮길 때도 boolean 존재 체크였다면 두 번째 턴이 "방금 넣은 첫 번째 턴"과
+        # 겹쳐 보여서 유실됐다. 둘 다 들어가야 한다.
+        pairs_dup = [("같은 질문", "같은 답변"), ("같은 질문", "같은 답변")]
+        inserted_dup = migrate_qa_slug_history(
+            "device-dup", "중복턴테스트__직무", pairs_dup
+        )
+        assert inserted_dup == 2  # 둘 다 삽입돼야 함 — occurrence 유실 금지
+        assert len(list_qa_history("중복턴테스트__직무")) == 2
+
+        # 기존 서버 데이터가 정확히 1건, 입력에 같은 내용이 2건이면 기존 1건만큼만
+        # 스킵하고 초과분 1건은 새로 삽입돼야 한다(기존 개수만 한 번씩 소비)
+        inserted_seed = migrate_qa_slug_history(
+            "device-dup-seed", "중복턴테스트2__직무", [("같은 질문", "같은 답변")]
+        )
+        assert inserted_seed == 1
+        inserted_dup_more = migrate_qa_slug_history(
+            "device-dup-2", "중복턴테스트2__직무", pairs_dup
+        )
+        assert inserted_dup_more == 1  # 기존 1개만큼 스킵, 초과분 1개만 삽입
+        assert len(list_qa_history("중복턴테스트2__직무")) == 2
 
         # rag_chats/rag_messages: 채팅방 생성 → pending → done/failed, 컨텍스트 조회
         create_rag_chat("chat-1", created_at="2026-08-22T00:00:00")
