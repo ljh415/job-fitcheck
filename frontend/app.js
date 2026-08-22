@@ -67,17 +67,51 @@ let ragConfiguredProviders = [];
 let ragIncludeProfile = false;
 // QnA 히스토리는 서버(qa_messages)가 진실 공급원 — 로컬 상태로 안 들고 있는다.
 // localStorage의 옛 qaHistory는 1회성 마이그레이션 소스로만 씀(migrateQAHistoryIfNeeded 참고).
+
+// 이 브라우저(기기)를 구분하는 안정적 ID — 최초 1회 생성해 영구 저장. 서버가 "이 슬러그에
+// 메시지가 있는지"가 아니라 "이 기기가 이 슬러그를 이미 옮겼는지"로 멱등 판단하는 데 쓴다
+// (v1.5.1 회귀 수정, 2026-08-22 — 슬러그 기준으로 스킵하면 다른 기기의 이력이 못 옮겨짐).
+function getDeviceId() {
+  let id = localStorage.getItem('job-fitcheck-device-id');
+  if (!id) {
+    // crypto.randomUUID()는 secure context(HTTPS 또는 localhost) 전용이라, 기본
+    // docker-compose처럼 TLS 없이 LAN IP로 접속하면 없다 — device_id는 서버가 그냥
+    // 1~128자 문자열로만 받으므로 UUID 형식일 필요 없이 getRandomValues()로 대체한다
+    // (Codex 4차 리뷰로 발견, 2026-08-22).
+    id = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : randomIdFallback();
+    localStorage.setItem('job-fitcheck-device-id', id);
+  }
+  return id;
+}
+
+function randomIdFallback() {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// job-fitcheck-qa-migrated-v2: v1.5.1(슬러그 단위 스킵) 시절 이미 완료 플래그가 찍혀 다시
+// 호출되지 않던 기기를 위한 1회성 복구 트리거. 기존 완료 키는 그대로 두고 별도로 둔다 —
+// 서버(migrate_qa_slug_history)가 내용 기반으로 중복을 걸러주므로 이미 성공한 기기가 다시
+// 호출해도 안전하다(Codex 2차 리뷰로 발견, 2026-08-22).
 async function migrateQAHistoryIfNeeded() {
-  if (localStorage.getItem('job-fitcheck-qa-migrated') === '1') return;
+  const migrated = localStorage.getItem('job-fitcheck-qa-migrated') === '1';
+  const recovered = localStorage.getItem('job-fitcheck-qa-migrated-v2') === '1';
+  if (migrated && recovered) return;
   const raw = localStorage.getItem('job-fitcheck-qa');
   const history = raw ? JSON.parse(raw) : {};
   if (Object.keys(history).length === 0) {
     localStorage.setItem('job-fitcheck-qa-migrated', '1');
+    localStorage.setItem('job-fitcheck-qa-migrated-v2', '1');
     return;
   }
   try {
-    await api('/companies/migrate-qa', { method: 'POST', body: JSON.stringify({ history }) });
+    await api('/companies/migrate-qa', {
+      method: 'POST',
+      body: JSON.stringify({ device_id: getDeviceId(), history }),
+    });
     localStorage.setItem('job-fitcheck-qa-migrated', '1');
+    localStorage.setItem('job-fitcheck-qa-migrated-v2', '1');
   } catch (e) {
     // 실패하면 플래그를 안 세워서 다음 로드 때 재시도 — 실패한 채로 표시만 남기면
     // 이 기기의 옛 대화가 영영 안 옮겨진다.
@@ -836,17 +870,20 @@ function renderQAHeader(record) {
 async function renderQAHistory(slug) {
   const container = document.getElementById('qa-messages');
   if (!container) return;
-  container.innerHTML = '';
   let messages;
   try {
     ({ messages } = await api(`/companies/${encodeURIComponent(slug)}/qa/history`));
   } catch (e) {
+    // GET 실패 시 기존 화면(예: 방금 표시된 오류 말풍선)을 그대로 둔다 — DB 장애로 GET도
+    // 실패하는 상황에서 컨테이너를 먼저 비우면 사용자가 아무 메시지도 못 본다(Codex 2차
+    // 리뷰로 발견, 2026-08-22).
     console.error('QnA 히스토리 로딩 실패:', e);
     return;
   }
   // 응답 오는 동안 다른 회사로 이동했으면 그리지 않는다(오늘 다른 곳에서도 고친 것과
   // 같은 레이스 가드 — currentSlug를 다시 읽어 비교).
   if (currentSlug !== slug) return;
+  container.innerHTML = '';
   messages.forEach(m => {
     appendBubble('qa-messages', m.question, 'user');
     if (m.status === 'done') {
@@ -1027,7 +1064,10 @@ async function sendQA() {
   });
 
   try {
-    await streamQA(makeFetch, assistantBubble);
+    const fullText = await streamQA(makeFetch, assistantBubble);
+    // fullText가 null이면 연결이 끊긴 것 — 서버는 독립 태스크로 계속 처리 중일 수 있으니
+    // (재시도로 새 질문을 또 보내는 대신) 최신 상태를 서버에서 다시 조회해 반영한다.
+    if (fullText === null && currentSlug === slug) await renderQAHistory(slug);
   } catch (e) {
     assistantBubble.textContent = `오류: ${e.message}`;
   }
@@ -1072,33 +1112,30 @@ function appendBubble(containerId, text, role) {
   return bubble;
 }
 
-const SSE_MAX_RETRIES = 2;
-
 async function streamQA(fetchFn, bubble) {
-  let lastError;
-  for (let attempt = 0; attempt <= SSE_MAX_RETRIES; attempt++) {
-    if (attempt > 0) {
-      bubble.textContent = `연결이 끊겼습니다. 재연결 중... (${attempt}/${SSE_MAX_RETRIES})`;
-      await new Promise(r => setTimeout(r, 1000 * attempt));
+  // 예전엔 연결이 끊기면 같은 질문으로 POST를 최대 2번 자동 재시도했는데, 서버 저장 전환
+  // 이후엔 POST 한 번마다 새 행+새 LLM 호출이 생겨서 재시도가 이력·비용 중복을 만들었다
+  // (Codex 리뷰로 발견, 2026-08-22). 서버가 pending 상태를 이미 들고 있어서(연결이 끊겨도
+  // 독립 태스크가 계속 처리) 재시도 없이 한 번만 시도하고, 실패하면 호출부가 서버 상태를
+  // 다시 조회하도록 한다 — sendQA()의 history 재조회 참고.
+  try {
+    const res = await fetchFn();
+    if (!res.ok) {
+      // non-OK(예: DB 장애로 503)는 서버가 요청을 아예 안 받아준 것 — 이미 말풍선에 오류를
+      // 표시했으니 호출부가 history를 다시 조회할 필요가 없다. undefined를 반환해 연결
+      // 단절(null, 서버가 독립 태스크로 처리 중일 수 있어 재조회가 의미 있음)과 구분한다
+      // (Codex 2차 리뷰로 발견, 2026-08-22 — 재조회가 컨테이너를 비웠다가 같은 장애로
+      // 실패하면 방금 표시한 오류까지 같이 사라짐).
+      const err = await res.json().catch(() => ({ detail: '서버 오류' }));
+      bubble.textContent = `오류: ${err.detail || '응답 실패'}`;
+      return undefined;
     }
-    try {
-      const res = await fetchFn();
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: '서버 오류' }));
-        if (res.status === 503 || res.status === 429) {
-          throw new Error(err.detail || `HTTP ${res.status}`);
-        }
-        bubble.textContent = `오류: ${err.detail || '응답 실패'}`;
-        return null;
-      }
-      bubble.textContent = '';
-      return await consumeSSE(res, bubble);
-    } catch (e) {
-      lastError = e;
-    }
+    bubble.textContent = '';
+    return await consumeSSE(res, bubble);
+  } catch (e) {
+    bubble.textContent = '연결이 끊겼습니다.';
+    return null;
   }
-  bubble.textContent = `오류: ${lastError?.message || '연결 실패'}`;
-  return null;
 }
 
 async function consumeSSE(res, bubble) {
@@ -1138,7 +1175,12 @@ async function consumeSSE(res, bubble) {
   } finally {
     if (_activeSSEReader === reader) _activeSSEReader = null;
   }
-  return fullText;
+  // 여기 도달했다는 건 [DONE]을 못 보고 루프가 끝났다는 뜻(연결이 중간에 조용히 끊김,
+  // AbortError로 취소됨 등) — fullText가 비어있지 않아도 완결된 응답이 아니므로 null을
+  // 반환해 "확정 성공"과 구분한다. 예전엔 여기서 fullText를 그대로 반환해서, 부분 텍스트가
+  // 있으면 sendCompareQA()의 `if (fullText) ...`가 잘린 응답을 성공으로 착각해 히스토리에
+  // 그대로 남기는 문제가 있었다(Codex 리뷰 대응 중 발견, 2026-08-22).
+  return null;
 }
 
 /* ── 회사 추가 ────────────────────────────────────────────────────── */

@@ -10,10 +10,14 @@ import prompts
 import storage
 from llm.router import high_provider
 from models import MultiQARequest, QAMessage, QAMigrationRequest, QARequest
-from services.app_db import insert_pending_qa, list_fit_history, list_qa_context, list_qa_history, mark_qa_done, mark_qa_failed
+from services.app_db import insert_pending_qa, is_healthy, list_fit_history, list_qa_context, list_qa_history, mark_qa_done, mark_qa_failed, migrate_qa_slug_history
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+# companies.py/profile.py의 fit_history/profile_versions 503 계약과 동일 — DB 장애 시
+# 빈 목록/일반 500 대신 명확한 503으로 구분한다(Codex 리뷰로 발견, 2026-08-22).
+_DB_UNAVAILABLE_DETAIL = "QnA 대화 기록 기능을 일시적으로 사용할 수 없습니다."
 
 # 진행 중인 QnA 생성 태스크 참조 보관 — asyncio 문서 권고대로, 참조를 안 들고 있으면
 # 이벤트 루프가 GC 시점에 실행 중인 태스크를 조용히 없애버릴 수 있다.
@@ -136,6 +140,8 @@ async def qa_history(slug: str):
     복원한다(localStorage 대체)."""
     if not storage.read_company(slug):
         raise HTTPException(status_code=404, detail="회사를 찾을 수 없습니다.")
+    if not is_healthy():
+        raise HTTPException(status_code=503, detail=_DB_UNAVAILABLE_DETAIL)
     return {"messages": list_qa_history(slug)}
 
 
@@ -147,6 +153,8 @@ async def company_qa(slug: str, req: QARequest):
     record = storage.read_company(slug)
     if not record:
         raise HTTPException(status_code=404, detail="회사를 찾을 수 없습니다.")
+    if not is_healthy():
+        raise HTTPException(status_code=503, detail=_DB_UNAVAILABLE_DETAIL)
     profile_text = storage.read_profile_text() or "후보자 프로필 없음"
     company_context = f"{record.frontmatter.model_dump_json(indent=2)}\n\n{record.body}"
 
@@ -169,37 +177,39 @@ async def company_qa(slug: str, req: QARequest):
     return _make_sse_from_queue(queue, message_id)
 
 
-def _migrate_slug_history(slug: str, messages: list[QAMessage]) -> int:
-    """user→assistant로 온전히 짝지어진 턴만 status='done'으로 삽입. 과거 버그로 응답
+def _pairs_from_messages(messages: list[QAMessage]) -> list[tuple[str, str]]:
+    """user→assistant로 온전히 짝지어진 턴만 (질문,답변) 튜플로 추출. 과거 버그로 응답
     없이 질문만 남았던 마지막 항목처럼 짝이 안 맞으면 건너뛴다."""
-    count = 0
+    pairs: list[tuple[str, str]] = []
     i = 0
     while i < len(messages) - 1:
         if messages[i].role == "user" and messages[i + 1].role == "assistant":
-            message_id = insert_pending_qa(slug, messages[i].text)
-            mark_qa_done(message_id, messages[i + 1].text)
-            count += 1
+            pairs.append((messages[i].text, messages[i + 1].text))
             i += 2
         else:
             i += 1
-    return count
+    return pairs
 
 
 @router.post("/api/companies/migrate-qa")
 async def migrate_qa(req: QAMigrationRequest):
     """localStorage qaHistory 전체를 1회성으로 서버 저장(qa_messages)으로 옮긴다. 기기별로
     각자 다른 이력을 갖고 있으므로 기기마다 한 번씩 호출해야 한다.
-    이 슬러그에 이미 메시지가 있으면(과거 마이그레이션 성공 후 클라이언트가 응답만 못 받아
-    완료 플래그를 못 세우고 재호출한 경우 등) 건너뛴다 — RAG migrate-chats의 chat_id 존재
-    검사와 같은 이유(2026-08-22, 원래 "겹칠 일 없음"으로 가정했다가 이 시나리오를 놓쳤음을
-    인정하고 추가)."""
+    멱등 판단은 "이 슬러그에 메시지가 있는지"가 아니라 "이 기기(device_id)가 이 슬러그를
+    이미 마이그레이션했는지" 기준이다 — 슬러그 기준으로 스킵하면 기기 A가 먼저 옮긴 회사는
+    기기 B의 (서로 다른) 이력이 영영 안 옮겨지는 회귀가 있었다(v1.5.1에서 도입, Codex
+    리뷰로 발견해 2026-08-22 수정). 실제 삽입+마이그레이션 기록은
+    migrate_qa_slug_history()가 한 트랜잭션으로 처리한다."""
+    if not is_healthy():
+        raise HTTPException(status_code=503, detail=_DB_UNAVAILABLE_DETAIL)
     total = 0
     for slug, messages in req.history.items():
         if not storage.read_company(slug):
             continue  # 이미 삭제된 회사의 옛 이력은 옮기지 않음
-        if list_qa_history(slug):
-            continue  # 이미 메시지가 있는 슬러그는 재이관하지 않음(중복 방지)
-        total += _migrate_slug_history(slug, messages)
+        pairs = _pairs_from_messages(messages)
+        if not pairs:
+            continue
+        total += migrate_qa_slug_history(req.device_id, slug, pairs)
     return {"inserted": total}
 
 

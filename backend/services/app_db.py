@@ -6,6 +6,7 @@ RAG를 안 쓰는 사용자도 써야 하는 핵심 기능이라 선택 기능�
 """
 import logging
 import sqlite3
+from collections import Counter
 from contextlib import contextmanager
 from datetime import datetime
 
@@ -93,6 +94,14 @@ def init_db() -> None:
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_qa_messages_slug
                 ON qa_messages(company_slug, id)
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS qa_migrations (
+                    device_id    TEXT NOT NULL,
+                    company_slug TEXT NOT NULL,
+                    migrated_at  TEXT NOT NULL,
+                    PRIMARY KEY (device_id, company_slug)
+                )
             """)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS rag_chats (
@@ -336,6 +345,66 @@ def delete_fit_history_for_slug(company_slug: str) -> int:
         return cur.rowcount
 
 
+def migrate_qa_slug_history(device_id: str, company_slug: str, pairs: list[tuple[str, str]]) -> int:
+    """이 기기(device_id)가 이 회사(company_slug)를 이미 마이그레이션했으면 0을 반환하고
+    아무것도 안 한다. 아니면 pairs((질문,답변) 튜플 목록) 전부를 status='done'으로 삽입하고
+    qa_migrations에 (device_id, company_slug) 기록까지 **한 트랜잭션**으로 커밋한 뒤 삽입
+    건수를 반환한다.
+
+    "슬러그에 메시지가 이미 있으면 스킵"(v1.5.1)이 아니라 "이 기기가 이 슬러그를 이미
+    옮겼는지"로 판단해야 한다 — 안 그러면 기기 A가 먼저 마이그레이션한 회사는 기기 B의
+    (서로 다른) 이력이 영영 안 옮겨진다. 메시지 삽입과 마이그레이션 기록을 분리된 커밋으로
+    하면, 중간에 실패했을 때 "메시지는 없는데 기록은 남아 영구 스킵"되거나 반대로 "재시도
+    때마다 중복 삽입"될 수 있어 하나의 트랜잭션으로 묶는다(Codex 리뷰로 발견, 2026-08-22 —
+    docs/chat-history-server-storage/PLAN.md 참고).
+
+    쌍(question, answer)의 occurrence 개수 기준으로 서버에 이미 있던 만큼만 건너뛴다 —
+    v1.5.1 당시(기기 추적 테이블이 없던 시절) 이미 성공적으로 옮겨진 기기가 복구 경로로
+    재호출해도 중복 삽입되지 않도록 하기 위함(Codex 2차 리뷰로 발견, 2026-08-22). 존재
+    여부를 boolean으로만 보면 완전히 같은 질문을 두 번 물어본 정상 이력조차 마이그레이션
+    중 하나로 뭉개진다 — 이번 호출에서 새로 넣은 행을 다음 쌍의 "이미 있음" 근거로 다시
+    세면 안 되므로, 시작 시점의 기존 개수만 한 번씩 소비한다(Codex 3차 리뷰로 발견,
+    2026-08-22).
+
+    함수 맨 앞에서 BEGIN IMMEDIATE로 쓰기 트랜잭션을 먼저 확보한다 — 안 그러면 서로 다른
+    두 기기가 동시에 같은 슬러그를 복구할 때 둘 다 같은(비어있는) occurrence 스냅샷을
+    읽어서 순차 실행이었다면 스킵됐을 턴을 양쪽 다 삽입해버린다(Codex 4차 리뷰로 발견,
+    2026-08-22)."""
+    with get_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        already = conn.execute(
+            "SELECT 1 FROM qa_migrations WHERE device_id = ? AND company_slug = ?",
+            (device_id, company_slug),
+        ).fetchone()
+        if already:
+            conn.rollback()
+            return 0
+        now = datetime.now().isoformat(timespec="seconds")
+        existing_rows = conn.execute(
+            "SELECT question, answer FROM qa_messages WHERE company_slug = ?",
+            (company_slug,),
+        ).fetchall()
+        remaining = Counter((row["question"], row["answer"]) for row in existing_rows)
+        inserted = 0
+        for question, answer in pairs:
+            key = (question, answer)
+            if remaining[key] > 0:
+                remaining[key] -= 1
+                continue
+            conn.execute(
+                "INSERT INTO qa_messages (company_slug, question, answer, status, created_at) "
+                "VALUES (?, ?, ?, 'done', ?)",
+                (company_slug, question, answer, now),
+            )
+            inserted += 1
+        conn.execute(
+            "INSERT INTO qa_migrations (device_id, company_slug, migrated_at) VALUES (?, ?, ?)",
+            (device_id, company_slug, now),
+        )
+        conn.commit()
+        return inserted
+
+
 def insert_pending_qa(company_slug: str, question: str) -> int:
     """질문을 status='pending'으로 즉시 저장하고 id(=message_id)를 반환한다. 응답이 오기
     전에 먼저 호출 — 클라이언트가 화면을 나가도 이 행이 "지금 대기 중"이라는 증거로 남는다."""
@@ -402,6 +471,42 @@ def delete_qa_history_for_slug(company_slug: str) -> int:
         cur = conn.execute("DELETE FROM qa_messages WHERE company_slug = ?", (company_slug,))
         conn.commit()
         return cur.rowcount
+
+
+def migrate_rag_chat(chat_id: str, title: str | None, created_at: str, entries: list[tuple[str, str]]) -> int:
+    """chat_id 방이 이미 있으면 0을 반환하고 아무것도 안 한다(재이관 방지 — RAG 방 id는
+    기기별로 이미 고유하게 생성되므로 QnA처럼 기기 단위 구분이 따로 필요 없다). 아니면
+    방 생성과 메시지(entries: (질문, data JSON 문자열) 튜플 목록) 전부 삽입을 **한
+    트랜잭션**으로 커밋하고 삽입 건수를 반환한다.
+
+    예전엔 방 생성(create_rag_chat)과 메시지 삽입(insert_pending_rag_message+
+    mark_rag_message_done)이 각각 별도 커밋이라, 방만 만들어진 직후나 메시지 일부만 들어간
+    뒤 서버가 죽으면 재시도해도 "이미 있는 방"으로 판정돼 나머지가 영구 누락됐다(Codex
+    리뷰로 발견, 2026-08-22). 한 트랜잭션으로 묶으면 중간에 실패해도 전부 롤백되어 재시도
+    시 처음부터 다시 시도할 수 있다.
+
+    방 생성은 SELECT로 먼저 존재를 확인하지 않고 INSERT ... ON CONFLICT(id) DO NOTHING으로
+    원자적으로 처리한다 — 두 기기가 같은 chat_id를 동시에 이관하면 SELECT-후-INSERT는 둘 다
+    "없음"을 보고 진행해 한쪽이 기본키 충돌(IntegrityError)로 500이 났다(Codex 5차 리뷰로
+    발견, 2026-08-22). rowcount==0이면 이미 다른 쪽이 방을 만든 것이므로 멱등하게 0을
+    반환한다."""
+    with get_connection() as conn:
+        cur = conn.execute(
+            "INSERT INTO rag_chats (id, title, created_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(id) DO NOTHING",
+            (chat_id, title, created_at),
+        )
+        if cur.rowcount == 0:
+            conn.rollback()
+            return 0
+        for question, data_json in entries:
+            conn.execute(
+                "INSERT INTO rag_messages (chat_id, question, data, status, created_at) "
+                "VALUES (?, ?, ?, 'done', ?)",
+                (chat_id, question, data_json, created_at),
+            )
+        conn.commit()
+        return len(entries)
 
 
 def create_rag_chat(chat_id: str, title: str | None = None, created_at: str | None = None) -> None:
@@ -698,6 +803,96 @@ if __name__ == "__main__":
         assert list_qa_history("테스트회사__직무") == []
         assert delete_qa_history_for_slug("테스트회사__직무") == 0  # 이미 없음
 
+        # migrate_qa_slug_history: 기기별 멱등 처리 — "슬러그에 메시지 있음"이 아니라
+        # "이 기기가 이 슬러그를 옮긴 적 있음" 기준이어야 한다(v1.5.1 회귀 수정)
+        pairs_a = [("데스크탑 질문1", "데스크탑 답변1"), ("데스크탑 질문2", "데스크탑 답변2")]
+        inserted_a = migrate_qa_slug_history("device-desktop", "마이그레이션테스트__직무", pairs_a)
+        assert inserted_a == 2
+        assert len(list_qa_history("마이그레이션테스트__직무")) == 2
+
+        # 같은 기기가 같은 슬러그를 재호출하면(응답 유실 후 재시도 등) 건너뛰어야 함
+        retry_a = migrate_qa_slug_history("device-desktop", "마이그레이션테스트__직무", pairs_a)
+        assert retry_a == 0
+        assert len(list_qa_history("마이그레이션테스트__직무")) == 2  # 중복 안 생김
+
+        # 다른 기기가 같은 슬러그에 대해 다른 이력을 갖고 있으면, 먼저 옮겨진 게 있어도
+        # 반드시 같이 옮겨져야 한다(v1.5.1은 여기서 스킵해버리던 회귀)
+        pairs_b = [("모바일 질문1", "모바일 답변1")]
+        inserted_b = migrate_qa_slug_history("device-mobile", "마이그레이션테스트__직무", pairs_b)
+        assert inserted_b == 1
+        all_migrated = list_qa_history("마이그레이션테스트__직무")
+        assert len(all_migrated) == 3  # 데스크탑 2건 + 모바일 1건, 둘 다 살아있음
+        assert any(m["question"] == "모바일 질문1" for m in all_migrated)
+
+        # v1.5.1 복구 경로: qa_migrations 기록이 아예 없는(=기기 추적 테이블이 없던 시절
+        # 이미 성공한) 새 기기가 같은 내용으로 재호출하면, "already" 단락(같은 device의
+        # 재시도 체크)이 아니라 content 기반 스킵으로 걸러져야 한다 — device_id를 반드시
+        # 처음 쓰는 값으로 해야 이 경로를 제대로 검증한다(Codex 2차 리뷰가 지적한 맹점:
+        # 이미 qa_migrations 표식이 있는 기기를 재사용하면 content 검사 전에 반환돼버림)
+        retry_legacy_same_content = migrate_qa_slug_history(
+            "device-legacy-untracked", "마이그레이션테스트__직무", pairs_a
+        )
+        assert retry_legacy_same_content == 0
+        assert len(list_qa_history("마이그레이션테스트__직무")) == 3  # 중복 안 생김
+
+        # 반대로 새 기기가 일부는 서버에 이미 있는 내용(우연 일치), 일부는 진짜 새 내용을
+        # 보내면 새 것만 들어가야 한다
+        pairs_mixed = [("데스크탑 질문1", "데스크탑 답변1"), ("태블릿 질문1", "태블릿 답변1")]
+        inserted_mixed = migrate_qa_slug_history(
+            "device-tablet", "마이그레이션테스트__직무", pairs_mixed
+        )
+        assert inserted_mixed == 1  # 겹치는 것 스킵, 새 것만 삽입
+        final_migrated = list_qa_history("마이그레이션테스트__직무")
+        assert len(final_migrated) == 4
+        assert any(m["question"] == "태블릿 질문1" for m in final_migrated)
+
+        # occurrence 소비 회귀(Codex 3차 리뷰로 발견, 2026-08-22): 완전히 같은 (질문,답변)
+        # 쌍이 로컬 이력에 두 번 있는 정상 케이스 — 서버에 기존 데이터가 없는 슬러그에
+        # 처음 옮길 때도 boolean 존재 체크였다면 두 번째 턴이 "방금 넣은 첫 번째 턴"과
+        # 겹쳐 보여서 유실됐다. 둘 다 들어가야 한다.
+        pairs_dup = [("같은 질문", "같은 답변"), ("같은 질문", "같은 답변")]
+        inserted_dup = migrate_qa_slug_history(
+            "device-dup", "중복턴테스트__직무", pairs_dup
+        )
+        assert inserted_dup == 2  # 둘 다 삽입돼야 함 — occurrence 유실 금지
+        assert len(list_qa_history("중복턴테스트__직무")) == 2
+
+        # 기존 서버 데이터가 정확히 1건, 입력에 같은 내용이 2건이면 기존 1건만큼만
+        # 스킵하고 초과분 1건은 새로 삽입돼야 한다(기존 개수만 한 번씩 소비)
+        inserted_seed = migrate_qa_slug_history(
+            "device-dup-seed", "중복턴테스트2__직무", [("같은 질문", "같은 답변")]
+        )
+        assert inserted_seed == 1
+        inserted_dup_more = migrate_qa_slug_history(
+            "device-dup-2", "중복턴테스트2__직무", pairs_dup
+        )
+        assert inserted_dup_more == 1  # 기존 1개만큼 스킵, 초과분 1개만 삽입
+        assert len(list_qa_history("중복턴테스트2__직무")) == 2
+
+        # 동시성 회귀(Codex 4차 리뷰로 발견, 2026-08-22): 서로 다른 두 기기가 정확히
+        # 동시에 같은 슬러그의 같은 내용을 복구하면, BEGIN IMMEDIATE로 직렬화되지 않을
+        # 경우 둘 다 같은(비어있는) occurrence 스냅샷을 읽어 중복 삽입된다. 순차 실행과
+        # 같은 결과(메시지 1건, marker는 기기별로 각각 2건)가 나와야 한다.
+        import threading
+
+        barrier = threading.Barrier(2)
+        results: dict[str, int] = {}
+
+        def _concurrent_worker(device_id: str) -> None:
+            barrier.wait()
+            results[device_id] = migrate_qa_slug_history(
+                device_id, "동시성테스트__직무", [("동시 질문", "동시 답변")]
+            )
+
+        t1 = threading.Thread(target=_concurrent_worker, args=("device-concurrent-1",))
+        t2 = threading.Thread(target=_concurrent_worker, args=("device-concurrent-2",))
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+        assert sorted(results.values()) == [0, 1]  # 하나만 실제 삽입, 다른 하나는 스킵
+        assert len(list_qa_history("동시성테스트__직무")) == 1  # 중복 안 생김
+
         # rag_chats/rag_messages: 채팅방 생성 → pending → done/failed, 컨텍스트 조회
         create_rag_chat("chat-1", created_at="2026-08-22T00:00:00")
         assert get_rag_chat("chat-1")["title"] is None
@@ -732,6 +927,40 @@ if __name__ == "__main__":
         assert get_rag_chat("chat-1") is None
         assert delete_rag_chat("chat-1") is False  # 이미 삭제됨
 
+        # migrate_rag_chat: 방+메시지를 한 트랜잭션으로, 재시도 시 중복 없이 멱등
+        entries = [("마이그레이션 질문1", '{"answer": "답1"}'), ("마이그레이션 질문2", '{"answer": "답2"}')]
+        inserted = migrate_rag_chat("chat-migrate-1", "옛 채팅", "2026-08-01T00:00:00", entries)
+        assert inserted == 2
+        assert len(list_rag_messages("chat-migrate-1")) == 2
+
+        # 같은 chat_id로 재시도(응답 유실 후 재호출 등)하면 건너뛰어야 함 — 중복 방지
+        retry = migrate_rag_chat("chat-migrate-1", "옛 채팅", "2026-08-01T00:00:00", entries)
+        assert retry == 0
+        assert len(list_rag_messages("chat-migrate-1")) == 2  # 중복 안 생김
+
+        # 동시성 회귀(Codex 5차 리뷰로 발견, 2026-08-22): 같은 chat_id를 두 기기가 정확히
+        # 동시에 이관하면, SELECT-후-INSERT였다면 둘 다 "없음"을 보고 진행해 한쪽이 기본키
+        # 충돌(IntegrityError)로 500이 났다. INSERT ... ON CONFLICT DO NOTHING이면 오류
+        # 없이 한쪽만 성공(1)하고 다른 쪽은 멱등하게 0을 반환해야 한다.
+        rag_barrier = threading.Barrier(2)
+        rag_results: dict[str, int] = {}
+
+        def _concurrent_rag_worker(label: str) -> None:
+            rag_barrier.wait()
+            rag_results[label] = migrate_rag_chat(
+                "chat-concurrent", "동시 채팅", "2026-08-22T00:00:00",
+                [("동시 RAG 질문", '{"answer": "동시 답"}')],
+            )
+
+        rt1 = threading.Thread(target=_concurrent_rag_worker, args=("a",))
+        rt2 = threading.Thread(target=_concurrent_rag_worker, args=("b",))
+        rt1.start()
+        rt2.start()
+        rt1.join()
+        rt2.join()
+        assert sorted(rag_results.values()) == [0, 1]
+        assert len(list_rag_messages("chat-concurrent")) == 1  # 중복 안 생김
+
         # 좀비 pending도 QnA와 동일하게 서버 재시작 시점에 failed로 전환돼야 한다
         create_rag_chat("chat-2")
         zombie_rag_id = insert_pending_rag_message("chat-2", "재시작 전 질문")
@@ -741,6 +970,6 @@ if __name__ == "__main__":
         assert zombie_rag["error"] == "서버 재시작으로 응답을 받지 못했습니다"
 
         chats = list_rag_chats()
-        assert {c["id"] for c in chats} == {"chat-2"}  # chat-1은 위에서 삭제됨
+        assert {c["id"] for c in chats} == {"chat-2", "chat-migrate-1", "chat-concurrent"}  # chat-1은 위에서 삭제됨
 
     print("app_db self-check 통과")
