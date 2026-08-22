@@ -16,7 +16,7 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 # companies.py/profile.py의 fit_history/profile_versions 503 계약과 동일 — DB 장애 시
-# 빈 목록/일반 500 대신 명확한 503으로 구분한다(Codex 리뷰로 발견, 2026-08-22).
+# 빈 목록/일반 500 대신 명확한 503으로 구분한다.
 _DB_UNAVAILABLE_DETAIL = "QnA 대화 기록 기능을 일시적으로 사용할 수 없습니다."
 
 # 진행 중인 QnA 생성 태스크 참조 보관 — asyncio 문서 권고대로, 참조를 안 들고 있으면
@@ -26,8 +26,8 @@ _active_qa_tasks: set[asyncio.Task] = set()
 
 def _fit_history_summary(slug: str) -> str:
     """이 회사의 시점별 적합도 점수 변화 요약. QnA는 현재 스냅샷만 컨텍스트로 받다 보니
-    "이전엔 몇 점이었는지"를 답할 근거가 아예 없었음(실사용 중 발견, 2026-08-19) — 회사
-    상세 화면에도 이미 쓰는 fit_history를 그대로 재사용해 채워준다. 이력 DB 조회 실패는
+    "이전엔 몇 점이었는지"를 답할 근거가 아예 없다 — 회사 상세 화면에도 이미 쓰는
+    fit_history를 그대로 재사용해 채워준다. 이력 DB 조회 실패는
     QnA 핵심 기능(질문 응답)을 막으면 안 되므로 조용히 빈 문자열로 넘어간다."""
     try:
         entries = list_fit_history(slug)
@@ -197,8 +197,7 @@ async def migrate_qa(req: QAMigrationRequest):
     각자 다른 이력을 갖고 있으므로 기기마다 한 번씩 호출해야 한다.
     멱등 판단은 "이 슬러그에 메시지가 있는지"가 아니라 "이 기기(device_id)가 이 슬러그를
     이미 마이그레이션했는지" 기준이다 — 슬러그 기준으로 스킵하면 기기 A가 먼저 옮긴 회사는
-    기기 B의 (서로 다른) 이력이 영영 안 옮겨지는 회귀가 있었다(v1.5.1에서 도입, Codex
-    리뷰로 발견해 2026-08-22 수정). 실제 삽입+마이그레이션 기록은
+    기기 B의 (서로 다른) 이력이 영영 안 옮겨진다. 실제 삽입+마이그레이션 기록은
     migrate_qa_slug_history()가 한 트랜잭션으로 처리한다."""
     if not is_healthy():
         raise HTTPException(status_code=503, detail=_DB_UNAVAILABLE_DETAIL)
