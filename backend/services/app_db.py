@@ -483,15 +483,22 @@ def migrate_rag_chat(chat_id: str, title: str | None, created_at: str, entries: 
     mark_rag_message_done)이 각각 별도 커밋이라, 방만 만들어진 직후나 메시지 일부만 들어간
     뒤 서버가 죽으면 재시도해도 "이미 있는 방"으로 판정돼 나머지가 영구 누락됐다(Codex
     리뷰로 발견, 2026-08-22). 한 트랜잭션으로 묶으면 중간에 실패해도 전부 롤백되어 재시도
-    시 처음부터 다시 시도할 수 있다."""
+    시 처음부터 다시 시도할 수 있다.
+
+    방 생성은 SELECT로 먼저 존재를 확인하지 않고 INSERT ... ON CONFLICT(id) DO NOTHING으로
+    원자적으로 처리한다 — 두 기기가 같은 chat_id를 동시에 이관하면 SELECT-후-INSERT는 둘 다
+    "없음"을 보고 진행해 한쪽이 기본키 충돌(IntegrityError)로 500이 났다(Codex 5차 리뷰로
+    발견, 2026-08-22). rowcount==0이면 이미 다른 쪽이 방을 만든 것이므로 멱등하게 0을
+    반환한다."""
     with get_connection() as conn:
-        existing = conn.execute("SELECT 1 FROM rag_chats WHERE id = ?", (chat_id,)).fetchone()
-        if existing:
-            return 0
-        conn.execute(
-            "INSERT INTO rag_chats (id, title, created_at) VALUES (?, ?, ?)",
+        cur = conn.execute(
+            "INSERT INTO rag_chats (id, title, created_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(id) DO NOTHING",
             (chat_id, title, created_at),
         )
+        if cur.rowcount == 0:
+            conn.rollback()
+            return 0
         for question, data_json in entries:
             conn.execute(
                 "INSERT INTO rag_messages (chat_id, question, data, status, created_at) "
@@ -931,6 +938,29 @@ if __name__ == "__main__":
         assert retry == 0
         assert len(list_rag_messages("chat-migrate-1")) == 2  # 중복 안 생김
 
+        # 동시성 회귀(Codex 5차 리뷰로 발견, 2026-08-22): 같은 chat_id를 두 기기가 정확히
+        # 동시에 이관하면, SELECT-후-INSERT였다면 둘 다 "없음"을 보고 진행해 한쪽이 기본키
+        # 충돌(IntegrityError)로 500이 났다. INSERT ... ON CONFLICT DO NOTHING이면 오류
+        # 없이 한쪽만 성공(1)하고 다른 쪽은 멱등하게 0을 반환해야 한다.
+        rag_barrier = threading.Barrier(2)
+        rag_results: dict[str, int] = {}
+
+        def _concurrent_rag_worker(label: str) -> None:
+            rag_barrier.wait()
+            rag_results[label] = migrate_rag_chat(
+                "chat-concurrent", "동시 채팅", "2026-08-22T00:00:00",
+                [("동시 RAG 질문", '{"answer": "동시 답"}')],
+            )
+
+        rt1 = threading.Thread(target=_concurrent_rag_worker, args=("a",))
+        rt2 = threading.Thread(target=_concurrent_rag_worker, args=("b",))
+        rt1.start()
+        rt2.start()
+        rt1.join()
+        rt2.join()
+        assert sorted(rag_results.values()) == [0, 1]
+        assert len(list_rag_messages("chat-concurrent")) == 1  # 중복 안 생김
+
         # 좀비 pending도 QnA와 동일하게 서버 재시작 시점에 failed로 전환돼야 한다
         create_rag_chat("chat-2")
         zombie_rag_id = insert_pending_rag_message("chat-2", "재시작 전 질문")
@@ -940,6 +970,6 @@ if __name__ == "__main__":
         assert zombie_rag["error"] == "서버 재시작으로 응답을 받지 못했습니다"
 
         chats = list_rag_chats()
-        assert {c["id"] for c in chats} == {"chat-2", "chat-migrate-1"}  # chat-1은 위에서 삭제됨
+        assert {c["id"] for c in chats} == {"chat-2", "chat-migrate-1", "chat-concurrent"}  # chat-1은 위에서 삭제됨
 
     print("app_db self-check 통과")
