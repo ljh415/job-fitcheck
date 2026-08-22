@@ -25,8 +25,7 @@ def search_chunks(
 
     `top_k=None`이면 LIMIT 없이 전체를 반환한다 — 이 corpus는 청크가 수백 개 수준이라
     "전체 순위"가 필요한 호출부(예: judge_topic_postings의 method="local" 비교 경로)에서
-    임의의 상한(과거 60)으로 진짜 정답을 놓치는 것보다 전체를 도는 게 낫다(사용자 지적,
-    2026-07-30)."""
+    임의의 상한(과거 60)으로 진짜 정답을 놓치는 것보다 전체를 도는 게 낫다."""
     column = _VECTOR_COLUMN[provider.dimensions]
     qvec = provider.embed_query(query)
     source_filter = " AND dc.source_type = %s" if source_type else ""

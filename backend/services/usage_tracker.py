@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 # Agent 요청 1건 동안의 LLM 호출들을 rag_agent_log.jsonl과 연결하기 위한 상관관계 id.
 # usage_log.jsonl은 여전히 "비용 추적"만 하고, rag_agent_log.jsonl은 여전히 "도구 라우팅/입출력
 # 추적"만 한다 — 두 로그의 목적을 안 섞으면서, request_id로 나중에 조인해서 볼 수만 있게 한다
-# (2026-07-29, 사용자 지침: 비용 필드를 로그에 직접 섞지 말고 연결 키만 추가할 것).
+# (비용 필드를 로그에 직접 섞지 말고 연결 키만 추가).
 current_request_id: ContextVar[str | None] = ContextVar("current_request_id", default=None)
 
 # 모델별 단가 (USD / 1M tokens)
