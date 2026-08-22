@@ -181,8 +181,7 @@ window.addEventListener('popstate', (e) => {
   currentSlug = state.slug || null;
   if (Array.isArray(state.compareTargets)) compareTargets = state.compareTargets;
   selectedSlugs.clear();
-  // RAG가 비활성인데 히스토리에 남아있던 /rag 상태로 뒤로가기 하면 깨진 화면이 뜬다
-  // (코드리뷰 5번, 2026-08-02).
+  // RAG가 비활성인데 히스토리에 남아있던 /rag 상태로 뒤로가기 하면 깨진 화면이 뜬다.
   if (currentView === 'rag' && !ragEnabled) currentView = 'dashboard';
   render();
 });
@@ -737,7 +736,7 @@ async function loadFitHistory(slug) {
     toggleEl.classList.add('hidden');
     return;
   }
-  // 접었다 펼 필요 없이 늘 아래에 열려있게 — 버튼은 스크롤 이동 전용(실사용 피드백, 2026-08-21)
+  // 접었다 펼 필요 없이 늘 아래에 열려있게 — 버튼은 스크롤 이동 전용
   toggleEl.textContent = `📋 평가 이력 보기 (${_fitHistoryCache.length}건)`;
   toggleEl.classList.remove('hidden');
   renderFitHistoryPanel();
@@ -996,8 +995,8 @@ async function refillCompany() {
     await api(`/companies/${encodeURIComponent(slug)}/refill`, { method: 'POST', body: '{}' });
     showToast('전체 재분석 완료!');
     // initDetail은 await 안 함 — 여기서 실패해도(존재하지 않는 loadDetail을 부르던
-    // 버그가 있었음, 2026-08-18 발견) 재분석 자체는 이미 성공했으니 아래 catch에서
-    // "재분석 실패"로 잘못 표시되면 안 됨(refitCompany()와 동일 패턴)
+    // 버그가 있었음) 재분석 자체는 이미 성공했으니 아래 catch에서 "재분석 실패"로
+    // 잘못 표시되면 안 됨(refitCompany()와 동일 패턴)
     if (currentSlug === slug) initDetail(slug);
   } catch (e) {
     showToast('재분석 실패: ' + e.message, 'error');
@@ -1500,7 +1499,7 @@ async function initSettings() {
 
   // 추가 설명 복원 (서버 저장값 — 마지막 업로드 때 입력한 내용이 다음 업로드에도 남음)
   // 한 번도 입력한 적 없으면 비워둔다 — 안내는 placeholder 속성(미리보기 힌트)이 담당,
-  // 실제 값에 틀을 채워넣으면 이미 입력한 것처럼 보여서 혼동을 줌(2026-08-20 지적).
+  // 실제 값에 틀을 채워넣으면 이미 입력한 것처럼 보여서 혼동을 준다.
   try {
     const noteData = await api('/profile/note');
     const extraNoteEl = document.getElementById('profile-extra-note');
@@ -2660,13 +2659,13 @@ window.addEventListener('DOMContentLoaded', async () => {
   }
   // /rag로 직접 진입(새로고침 등)했을 때 render()가 checkRagStatus() 응답보다 먼저 끝나면
   // initRag()가 초기값(ragEnabled=false 등)으로 UI를 그리고, checkRagStatus()는 나중에
-  // 값을 받아와도 nav 버튼 외엔 다시 안 그려서 그 상태로 굳어버린다(코드리뷰 6번, 2026-07-31
-  // Playwright로 재현 확인). render() 전에 기다려서 애초에 잘못 그릴 일을 없앤다.
+  // 값을 받아와도 nav 버튼 외엔 다시 안 그려서 그 상태로 굳어버린다. render() 전에
+  // 기다려서 애초에 잘못 그릴 일을 없앤다.
   await checkRagStatus();
   if (ragEnabled) migrateRagChatsIfNeeded();  // fire-and-forget, RAG 꺼져있으면 503이라 가드
   // RAG가 비활성인 배포에서 토큰을 가진 사용자가 /rag를 직접 열면(새로고침·북마크 등) nav
-  // 버튼은 숨어도 뷰 자체는 그려져서, 뭘 눌러도 503만 나는 깨진 화면이 뜬다(코드리뷰 5번,
-  // 2026-08-02) — ragEnabled를 알고 난 뒤 대시보드로 돌려보낸다.
+  // 버튼은 숨어도 뷰 자체는 그려져서, 뭘 눌러도 503만 나는 깨진 화면이 뜬다 — ragEnabled를
+  // 알고 난 뒤 대시보드로 돌려보낸다.
   if (currentView === 'rag' && !ragEnabled) {
     currentView = 'dashboard';
     history.replaceState({ view: 'dashboard', slug: null, compareTargets: [] }, '', '/');

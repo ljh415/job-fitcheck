@@ -28,8 +28,7 @@ def get_connection():
     conn.row_factory = sqlite3.Row
     # rag_messages.chat_id가 rag_chats(id)를 FK(ON DELETE CASCADE)로 참조한다 — SQLite는
     # 연결마다 매번 다시 켜야 강제된다(DB 파일에 영속되는 설정이 아님). 기존 테이블
-    # (profile_versions/fit_history)엔 FK가 전혀 없어서 켜도 기존 동작이 깨질 위험은 없다
-    # (2026-08-21, Codex 의견도 동일 — docs/chat-history-server-storage/PLAN.md 참고).
+    # (profile_versions/fit_history)엔 FK가 전혀 없어서 켜도 기존 동작이 깨질 위험은 없다.
     conn.execute("PRAGMA foreign_keys = ON")
     try:
         yield conn
@@ -40,8 +39,7 @@ def get_connection():
 def is_healthy() -> bool:
     """init_db()가 성공적으로 끝났는지. False면 조회 API가 빈 목록 대신 503을
     반환해야 한다 — 그렇지 않으면 SELECT는 계속 성공할 수 있어(read-only DB 등)
-    "이력이 원래 없음"과 "DB 장애로 못 채워짐"이 화면에서 구분이 안 된다
-    (Codex 재리뷰 2026-08-17 발견)."""
+    "이력이 원래 없음"과 "DB 장애로 못 채워짐"이 화면에서 구분이 안 된다."""
     return _healthy
 
 
@@ -144,8 +142,7 @@ def _backfill_profile_version() -> None:
     sqlite_sequence(SQLite가 AUTOINCREMENT 최고값을 추적하는 내장 테이블,
     행을 다 지워도 기록은 남음)에 이 테이블 이력이 아예 없을 때만("지금까지
     단 한 번도 INSERT가 없었을 때만") 백필한다. 안 그러면 사용자가 마지막
-    스냅샷을 명시적으로 삭제해도 다음 재시작에 새 id로 조용히 되살아난다
-    (Codex 리뷰 2026-08-17 발견)."""
+    스냅샷을 명시적으로 삭제해도 다음 재시작에 새 id로 조용히 되살아난다."""
     with get_connection() as conn:
         ever_inserted = conn.execute(
             "SELECT 1 FROM sqlite_sequence WHERE name = 'profile_versions'"
@@ -172,12 +169,11 @@ def _backfill_fit_history() -> None:
     있으면 건너뛰므로 init_db() 호출마다(=앱 시작마다) 반복 실행해도 중복 생성되지 않는다.
     회사 파일 하나가 파싱 실패해도(손상된 frontmatter 등) 그 파일만 건너뛰고 나머지는
     계속 진행한다 — 한 파일 때문에 전체가 실패하면 트랜잭션이 커밋 전 롤백돼 정상
-    회사들 이력까지 통째로 안 생긴다(Codex 리뷰 2026-08-17 발견).
+    회사들 이력까지 통째로 안 생긴다.
     단, try/except는 "파일 내용 파싱"만 감싼다 — DB 자체가 read-only/손상이면(SQLite
     호출 실패) 그건 파일 문제가 아니라 인프라 문제라 여기서 삼키지 않고 그대로
     올려보내서 init_db()가 잡아 health flag(is_healthy())로 바꾸게 한다. 안 그러면
-    DB가 통째로 고장나도 "파일 파싱 실패"로 매번 조용히 넘어가 아무도 못 알아챈다
-    (Codex 재리뷰 2026-08-17 발견)."""
+    DB가 통째로 고장나도 "파일 파싱 실패"로 매번 조용히 넘어가 아무도 못 알아챈다."""
     with get_connection() as conn:
         for md_path in sorted(settings.companies_dir.glob("*.md")):
             slug = md_path.stem
@@ -338,7 +334,7 @@ def list_fit_history(company_slug: str) -> list[dict]:
 def delete_fit_history_for_slug(company_slug: str) -> int:
     """회사 삭제 시 그 slug의 평가 이력을 전부 지운다. slug는 회사명+직무명으로 결정적
     생성되므로, 이력을 안 지우면 같은 이름으로 재등록했을 때 예전(별개) 지원의 이력이
-    새 회사에 다시 붙어버린다(Codex 리뷰 2026-08-16 발견) — 반환값은 지워진 행 수."""
+    새 회사에 다시 붙어버린다 — 반환값은 지워진 행 수."""
     with get_connection() as conn:
         cur = conn.execute("DELETE FROM fit_history WHERE company_slug = ?", (company_slug,))
         conn.commit()
@@ -462,9 +458,8 @@ def list_qa_context(company_slug: str, limit: int = 20) -> list[dict]:
 def delete_qa_history_for_slug(company_slug: str) -> int:
     """회사 삭제 시 그 slug의 QnA 대화 기록을 전부 지운다. delete_fit_history_for_slug()와
     같은 이유 — slug는 회사명+직무명으로 결정적 생성되므로, 안 지우면 같은 이름으로
-    재등록했을 때 예전(별개) 지원의 QnA 대화가 새 회사에 다시 붙어버린다(2026-08-22,
-    QnA 마이그레이션 중복 방지를 검토하다 fit_history엔 있던 이 정리 로직이 QnA에는
-    빠져있음을 발견). 반환값은 지워진 행 수."""
+    재등록했을 때 예전(별개) 지원의 QnA 대화가 새 회사에 다시 붙어버린다. 반환값은
+    지워진 행 수."""
     with get_connection() as conn:
         cur = conn.execute("DELETE FROM qa_messages WHERE company_slug = ?", (company_slug,))
         conn.commit()
@@ -673,7 +668,7 @@ if __name__ == "__main__":
 
         # DB 자체가 고장난 경우(예: read-only)는 파일 파싱 실패와 달리 삼키면 안 되고
         # 그대로 예외가 올라가야 한다 — 안 그러면 init_db()가 DB 장애를 감지 못 해서
-        # "정상 0건"처럼 조용히 넘어간다(Codex 재리뷰 2026-08-17 발견)
+        # "정상 0건"처럼 조용히 넘어간다.
         (settings.companies_dir / "읽기전용테스트__직무.md").write_text(
             "---\nfit_score: 70\n---\n본문", encoding="utf-8"
         )
