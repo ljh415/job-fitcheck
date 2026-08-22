@@ -55,8 +55,8 @@ def ensure_fts5(conn: sqlite3.Connection) -> None:
     count(*)/LIKE는 되는데 MATCH만 안 됨) 독립형 테이블로 우회한다.
 
     검색 경로(읽기)에서 호출하므로 여기서는 "없으면 생성"만 한다 — 한때 매 호출마다 무조건
-    재생성했더니 동시 요청에서 SQLite가 `database is locked`를 던지는 문제가 있었다(Codex
-    재리뷰로 발견, 2026-07-23, 재현 스크립트로 확인). 청크가 실제로 바뀌었을 때 테이블을
+    재생성했더니 동시 요청에서 SQLite가 `database is locked`를 던지는 문제가 있었다(재현
+    스크립트로 확인). 청크가 실제로 바뀌었을 때 테이블을
     최신화하는 책임은 `rebuild_fts5()`로 옮기고, 그건 청크를 실제로 바꾸는 `chunks.py`의
     `populate_posting_chunks()`/`populate_candidate_profile_chunks()`에서만 호출한다."""
     (exists,) = conn.execute(
@@ -83,7 +83,7 @@ def rebuild_fts5(conn: sqlite3.Connection) -> None:
 def fts5_literal(text: str) -> str:
     """자유 텍스트를 FTS5 MATCH 구문에 안전하게 넘길 수 있는 순수 문자열 리터럴로 감싼다.
     FTS5는 `"`, `:`, `*`, `AND`/`OR`/`NOT` 등을 쿼리 연산자로 해석하므로, "C++"·"foo:bar"처럼
-    흔한 자유 입력도 그대로 넘기면 SQLite가 문법 에러를 던진다(Codex 리뷰로 발견, 2026-07-23).
+    흔한 자유 입력도 그대로 넘기면 SQLite가 문법 에러를 던진다.
     큰따옴표로 감싸면 그 안은 순수 문자열로 취급되고, 내부의 큰따옴표는 `""`로 이스케이프하면
     리터럴 문자 그 자체로 인식된다(FTS5 공식 문법)."""
     return '"' + text.replace('"', '""') + '"'
@@ -95,8 +95,8 @@ def search_fts5(conn: sqlite3.Connection, keyword: str, top_k: int = 60, source_
 
     source_type으로 필터링하는 이유: 이 테이블엔 공고(posting_raw)뿐 아니라 후보자 프로필
     (candidate_profile) 청크도 같이 들어있다. 필터 없이 LIMIT부터 걸면 프로필 청크가 상위권을
-    차지해 진짜 찾아야 할 공고 후보가 LIMIT 예산 밖으로 밀려날 수 있다(Codex 재리뷰로 발견,
-    2026-07-23 — 실측: 흔한 기술 키워드가 프로필 청크 11개 중 5~6개와도 매치됨)."""
+    차지해 진짜 찾아야 할 공고 후보가 LIMIT 예산 밖으로 밀려날 수 있다(실측: 흔한 기술
+    키워드가 프로필 청크 11개 중 5~6개와도 매치됨)."""
     rows = conn.execute(
         "SELECT bm25(document_chunk_fts), rowid FROM document_chunk_fts"
         " WHERE document_chunk_fts MATCH ? AND source_type = ?"
