@@ -860,17 +860,20 @@ function renderQAHeader(record) {
 async function renderQAHistory(slug) {
   const container = document.getElementById('qa-messages');
   if (!container) return;
-  container.innerHTML = '';
   let messages;
   try {
     ({ messages } = await api(`/companies/${encodeURIComponent(slug)}/qa/history`));
   } catch (e) {
+    // GET 실패 시 기존 화면(예: 방금 표시된 오류 말풍선)을 그대로 둔다 — DB 장애로 GET도
+    // 실패하는 상황에서 컨테이너를 먼저 비우면 사용자가 아무 메시지도 못 본다(Codex 2차
+    // 리뷰로 발견, 2026-08-22).
     console.error('QnA 히스토리 로딩 실패:', e);
     return;
   }
   // 응답 오는 동안 다른 회사로 이동했으면 그리지 않는다(오늘 다른 곳에서도 고친 것과
   // 같은 레이스 가드 — currentSlug를 다시 읽어 비교).
   if (currentSlug !== slug) return;
+  container.innerHTML = '';
   messages.forEach(m => {
     appendBubble('qa-messages', m.question, 'user');
     if (m.status === 'done') {
@@ -1108,9 +1111,14 @@ async function streamQA(fetchFn, bubble) {
   try {
     const res = await fetchFn();
     if (!res.ok) {
+      // non-OK(예: DB 장애로 503)는 서버가 요청을 아예 안 받아준 것 — 이미 말풍선에 오류를
+      // 표시했으니 호출부가 history를 다시 조회할 필요가 없다. undefined를 반환해 연결
+      // 단절(null, 서버가 독립 태스크로 처리 중일 수 있어 재조회가 의미 있음)과 구분한다
+      // (Codex 2차 리뷰로 발견, 2026-08-22 — 재조회가 컨테이너를 비웠다가 같은 장애로
+      // 실패하면 방금 표시한 오류까지 같이 사라짐).
       const err = await res.json().catch(() => ({ detail: '서버 오류' }));
       bubble.textContent = `오류: ${err.detail || '응답 실패'}`;
-      return null;
+      return undefined;
     }
     bubble.textContent = '';
     return await consumeSSE(res, bubble);
