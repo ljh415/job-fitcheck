@@ -1,5 +1,43 @@
 # Changelog
 
+## v1.5.2 — Codex 리뷰 5라운드 대응, v1.5.1 후속 버그 6건 수정 (2026-08-22)
+
+v1.5.1을 Codex 코드 리뷰에 올려 5라운드에 걸쳐 순차로 발견·수정한 버그 6건. 한 브랜치
+(`fix/codex-review-r1-v1.5.2`)에 순서대로 커밋해 매번 merge하지 않고 마지막에 한 번만
+`main`에 merge.
+
+- **v1.5.1 완료 플래그가 있는 기기의 QnA 이력 복구 안 됨** — v1.5.1은 슬러그 단위로 스킵했어서,
+  기기 A가 먼저 옮긴 회사는 기기 B가 시도해도 서버가 건너뛰었는데 클라이언트는 성공 응답만
+  보고 완료 플래그를 저장해버림 → 이후 기기별 멱등 처리로 고쳐도 그 플래그 때문에 재시도
+  자체가 안 걸림. 기존 플래그와 별도로 `job-fitcheck-qa-migrated-v2` 1회성 복구 트리거 추가,
+  서버(`migrate_qa_slug_history`)는 `(question, answer)` 내용 기준으로 이미 있는 턴은
+  건너뛰어 이미 성공한 기기가 재시도해도 중복되지 않도록 함.
+- **QnA POST 503 오류 메시지가 즉시 지워짐** — DB 장애로 질문 POST가 503이면 오류 문구를
+  보여준 뒤 history를 재조회하는데, 그 GET도 같은 장애로 실패하면 컨테이너를 먼저 비운 채라
+  화면이 완전히 빈 채로 남았음. non-OK 응답과 순수 연결 단절을 구분해 non-OK면 재조회를
+  안 하고, `renderQAHistory()`도 GET 성공 후에만 기존 화면을 교체하도록 수정.
+- **QnA 마이그레이션 내용 중복 체크가 boolean이라 정상 반복 턴이 유실됨** — 완전히 같은
+  질문을 두 번 물어본 정상 이력을 처음 옮길 때도, "이미 있음" 여부만 boolean으로 봐서 방금
+  넣은 첫 턴을 두 번째 턴의 중복으로 오판해 유실시킴 → 시작 시점 기존 occurrence 개수를
+  `Counter`로 세고 그만큼만 한 번씩 소비하도록 변경.
+- **HTTP/LAN 접속에서 device ID 생성이 실패해 QnA 복구가 아예 시작 안 됨** — `getDeviceId()`가
+  `crypto.randomUUID()`만 썼는데 이 API는 secure context(HTTPS/localhost) 전용이라, 기본
+  docker-compose(TLS 없음)로 LAN IP 접속 시 없어서 throw → `crypto.getRandomValues()` 기반
+  fallback 추가(secure-context 제약 없음, device_id는 서버가 1~128자 문자열로만 검증해
+  UUID 형식일 필요 없음).
+- **QnA 마이그레이션 동시 실행 시 중복 삽입** — 서로 다른 두 기기가 정확히 동시에 같은
+  회사를 복구하면 둘 다 같은(비어있는) occurrence 스냅샷을 읽어 중복 삽입될 수 있었음 →
+  `migrate_qa_slug_history()` 맨 앞에서 `BEGIN IMMEDIATE`로 쓰기 트랜잭션을 먼저 확보해
+  조회~삽입~완료표식 전체를 직렬화.
+- **RAG 채팅방 동시 마이그레이션 시 500 오류** — 같은 RAG 채팅을 동시에 이관하면 존재 확인
+  직후 두 호출이 모두 "없음"으로 보고 INSERT를 시도해 한쪽이 기본키 충돌(`IntegrityError`)로
+  500이 남 → `INSERT ... ON CONFLICT(id) DO NOTHING` 원자적 처리로 변경, 충돌 시 조용히
+  0(멱등 스킵) 반환.
+
+모든 항목을 self-check(threading 기반 동시성 재현 포함), Node/Python 문법 검사, 그리고
+"수정 전 코드로 같은 테스트를 돌리면 실제로 실패하는지" 대조 검증까지 마친 뒤 커밋. 5라운드에
+걸쳐 매 수정마다 Codex에 재검증을 요청해 새 회귀가 없는지 확인.
+
 ## v1.5.1 — v1.5.0 후속 버그 2건 수정 (2026-08-22)
 
 v1.5.0(QnA·RAG 대화 기록 서버 저장 전환) 배포 직후 검토 중 발견한 버그 2건.
