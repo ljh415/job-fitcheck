@@ -165,7 +165,11 @@ class MultiQARequest(BaseModel):
 
 class QAMigrationRequest(BaseModel):
     """localStorage의 qaHistory({slug: [{role,text},...]}) 전체를 1회성으로 서버에 옮길 때
-    보내는 형태 그대로."""
+    보내는 형태 그대로. device_id는 브라우저가 최초 1회 생성해 영구 저장하는 값(프론트
+    getDeviceId() 참고) — "이 슬러그에 메시지가 있는지"가 아니라 "이 기기가 이 슬러그를
+    이미 옮겼는지" 기준으로 멱등 판단해야 다른 기기의 서로 다른 이력이 안 막힌다(v1.5.1
+    회귀 수정, 2026-08-22)."""
+    device_id: str = Field(min_length=1, max_length=128)
     history: dict[str, list[QAMessage]]
 
 

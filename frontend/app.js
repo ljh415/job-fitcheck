@@ -67,6 +67,19 @@ let ragConfiguredProviders = [];
 let ragIncludeProfile = false;
 // QnA 히스토리는 서버(qa_messages)가 진실 공급원 — 로컬 상태로 안 들고 있는다.
 // localStorage의 옛 qaHistory는 1회성 마이그레이션 소스로만 씀(migrateQAHistoryIfNeeded 참고).
+
+// 이 브라우저(기기)를 구분하는 안정적 ID — 최초 1회 생성해 영구 저장. 서버가 "이 슬러그에
+// 메시지가 있는지"가 아니라 "이 기기가 이 슬러그를 이미 옮겼는지"로 멱등 판단하는 데 쓴다
+// (v1.5.1 회귀 수정, 2026-08-22 — 슬러그 기준으로 스킵하면 다른 기기의 이력이 못 옮겨짐).
+function getDeviceId() {
+  let id = localStorage.getItem('job-fitcheck-device-id');
+  if (!id) {
+    id = crypto.randomUUID();
+    localStorage.setItem('job-fitcheck-device-id', id);
+  }
+  return id;
+}
+
 async function migrateQAHistoryIfNeeded() {
   if (localStorage.getItem('job-fitcheck-qa-migrated') === '1') return;
   const raw = localStorage.getItem('job-fitcheck-qa');
@@ -76,7 +89,10 @@ async function migrateQAHistoryIfNeeded() {
     return;
   }
   try {
-    await api('/companies/migrate-qa', { method: 'POST', body: JSON.stringify({ history }) });
+    await api('/companies/migrate-qa', {
+      method: 'POST',
+      body: JSON.stringify({ device_id: getDeviceId(), history }),
+    });
     localStorage.setItem('job-fitcheck-qa-migrated', '1');
   } catch (e) {
     // 실패하면 플래그를 안 세워서 다음 로드 때 재시도 — 실패한 채로 표시만 남기면

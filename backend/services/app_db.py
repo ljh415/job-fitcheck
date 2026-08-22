@@ -95,6 +95,14 @@ def init_db() -> None:
                 ON qa_messages(company_slug, id)
             """)
             conn.execute("""
+                CREATE TABLE IF NOT EXISTS qa_migrations (
+                    device_id    TEXT NOT NULL,
+                    company_slug TEXT NOT NULL,
+                    migrated_at  TEXT NOT NULL,
+                    PRIMARY KEY (device_id, company_slug)
+                )
+            """)
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS rag_chats (
                     id         TEXT PRIMARY KEY,
                     title      TEXT,
@@ -334,6 +342,40 @@ def delete_fit_history_for_slug(company_slug: str) -> int:
         cur = conn.execute("DELETE FROM fit_history WHERE company_slug = ?", (company_slug,))
         conn.commit()
         return cur.rowcount
+
+
+def migrate_qa_slug_history(device_id: str, company_slug: str, pairs: list[tuple[str, str]]) -> int:
+    """이 기기(device_id)가 이 회사(company_slug)를 이미 마이그레이션했으면 0을 반환하고
+    아무것도 안 한다. 아니면 pairs((질문,답변) 튜플 목록) 전부를 status='done'으로 삽입하고
+    qa_migrations에 (device_id, company_slug) 기록까지 **한 트랜잭션**으로 커밋한 뒤 삽입
+    건수를 반환한다.
+
+    "슬러그에 메시지가 이미 있으면 스킵"(v1.5.1)이 아니라 "이 기기가 이 슬러그를 이미
+    옮겼는지"로 판단해야 한다 — 안 그러면 기기 A가 먼저 마이그레이션한 회사는 기기 B의
+    (서로 다른) 이력이 영영 안 옮겨진다. 메시지 삽입과 마이그레이션 기록을 분리된 커밋으로
+    하면, 중간에 실패했을 때 "메시지는 없는데 기록은 남아 영구 스킵"되거나 반대로 "재시도
+    때마다 중복 삽입"될 수 있어 하나의 트랜잭션으로 묶는다(Codex 리뷰로 발견, 2026-08-22 —
+    docs/chat-history-server-storage/PLAN.md 참고)."""
+    with get_connection() as conn:
+        already = conn.execute(
+            "SELECT 1 FROM qa_migrations WHERE device_id = ? AND company_slug = ?",
+            (device_id, company_slug),
+        ).fetchone()
+        if already:
+            return 0
+        now = datetime.now().isoformat(timespec="seconds")
+        for question, answer in pairs:
+            conn.execute(
+                "INSERT INTO qa_messages (company_slug, question, answer, status, created_at) "
+                "VALUES (?, ?, ?, 'done', ?)",
+                (company_slug, question, answer, now),
+            )
+        conn.execute(
+            "INSERT INTO qa_migrations (device_id, company_slug, migrated_at) VALUES (?, ?, ?)",
+            (device_id, company_slug, now),
+        )
+        conn.commit()
+        return len(pairs)
 
 
 def insert_pending_qa(company_slug: str, question: str) -> int:
@@ -697,6 +739,27 @@ if __name__ == "__main__":
         assert delete_qa_history_for_slug("테스트회사__직무") == 2
         assert list_qa_history("테스트회사__직무") == []
         assert delete_qa_history_for_slug("테스트회사__직무") == 0  # 이미 없음
+
+        # migrate_qa_slug_history: 기기별 멱등 처리 — "슬러그에 메시지 있음"이 아니라
+        # "이 기기가 이 슬러그를 옮긴 적 있음" 기준이어야 한다(v1.5.1 회귀 수정)
+        pairs_a = [("데스크탑 질문1", "데스크탑 답변1"), ("데스크탑 질문2", "데스크탑 답변2")]
+        inserted_a = migrate_qa_slug_history("device-desktop", "마이그레이션테스트__직무", pairs_a)
+        assert inserted_a == 2
+        assert len(list_qa_history("마이그레이션테스트__직무")) == 2
+
+        # 같은 기기가 같은 슬러그를 재호출하면(응답 유실 후 재시도 등) 건너뛰어야 함
+        retry_a = migrate_qa_slug_history("device-desktop", "마이그레이션테스트__직무", pairs_a)
+        assert retry_a == 0
+        assert len(list_qa_history("마이그레이션테스트__직무")) == 2  # 중복 안 생김
+
+        # 다른 기기가 같은 슬러그에 대해 다른 이력을 갖고 있으면, 먼저 옮겨진 게 있어도
+        # 반드시 같이 옮겨져야 한다(v1.5.1은 여기서 스킵해버리던 회귀)
+        pairs_b = [("모바일 질문1", "모바일 답변1")]
+        inserted_b = migrate_qa_slug_history("device-mobile", "마이그레이션테스트__직무", pairs_b)
+        assert inserted_b == 1
+        all_migrated = list_qa_history("마이그레이션테스트__직무")
+        assert len(all_migrated) == 3  # 데스크탑 2건 + 모바일 1건, 둘 다 살아있음
+        assert any(m["question"] == "모바일 질문1" for m in all_migrated)
 
         # rag_chats/rag_messages: 채팅방 생성 → pending → done/failed, 컨텍스트 조회
         create_rag_chat("chat-1", created_at="2026-08-22T00:00:00")
