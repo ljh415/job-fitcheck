@@ -885,7 +885,7 @@ async function renderQAHistory(slug) {
   if (currentSlug !== slug) return;
   container.innerHTML = '';
   messages.forEach(m => {
-    appendBubble('qa-messages', m.question, 'user');
+    appendBubble('qa-messages', m.question, 'user', m.created_at);
     if (m.status === 'done') {
       appendBubble('qa-messages', m.answer, 'assistant');
     } else if (m.status === 'pending') {
@@ -1053,7 +1053,7 @@ async function sendQA() {
   // 서버가 진실 공급원이라 로컬 배열에 push/pop할 필요가 없다 — pending 삽입과
   // done/failed 마킹을 서버가 다 처리한다(backend/routers/qa.py의 company_qa()).
   const slug = currentSlug;
-  appendBubble('qa-messages', question, 'user');
+  appendBubble('qa-messages', question, 'user', new Date());
   const assistantBubble = appendBubble('qa-messages', '', 'assistant');
 
   const token = localStorage.getItem(TOKEN_KEY);
@@ -1101,13 +1101,38 @@ async function sendCompareQA() {
   }
 }
 
-function appendBubble(containerId, text, role) {
+function formatQaTimestamp(value) {
+  const d = value instanceof Date ? value : new Date(value);
+  if (isNaN(d.getTime())) return '';
+  const days = ['일', '월', '화', '수', '목', '금', '토'];
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  const hh = String(d.getHours()).padStart(2, '0');
+  const min = String(d.getMinutes()).padStart(2, '0');
+  return `${mm}.${dd}(${days[d.getDay()]}) ${hh}:${min}`;
+}
+
+function appendBubble(containerId, text, role, timestamp) {
   const container = document.getElementById(containerId);
+  // 버블+타임스탬프를 한 래퍼로 묶어야 컨테이너의 turn 사이 gap(12px)이 버블과 그
+  // 타임스탬프 사이에는 안 끼고 turn 사이에만 적용된다(안 묶으면 형제 취급돼 gap이
+  // 버블-타임스탬프 사이에도 그대로 들어가 여백이 과하게 벌어짐).
+  const wrapper = document.createElement('div');
+  wrapper.className = role === 'assistant' ? 'qa-turn assistant' : 'qa-turn user';
   const bubble = document.createElement('div');
   bubble.className = role === 'assistant' ? 'qa-bubble assistant markdown-body' : 'qa-bubble user';
   if (role === 'assistant' && text) bubble.innerHTML = parseMarkdown(text);
   else bubble.textContent = text;
-  container.appendChild(bubble);
+  wrapper.appendChild(bubble);
+  if (timestamp) {
+    // 여러 기기 이력이 한 화면에 섞여 나열될 때(마이그레이션 시점 순서라 실제 대화 순서와
+    // 다를 수 있음) 실제로 언제 나눈 대화인지 구분할 수 있도록 작게 표시.
+    const stamp = document.createElement('div');
+    stamp.className = 'qa-timestamp';
+    stamp.textContent = formatQaTimestamp(timestamp);
+    wrapper.appendChild(stamp);
+  }
+  container.appendChild(wrapper);
   container.scrollTop = container.scrollHeight;
   return bubble;
 }

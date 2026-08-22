@@ -278,6 +278,14 @@ label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-w
 .qa-bubble { padding: 12px 16px; border-radius: 12px; line-height: 1.65; max-width: 85%; }
 .qa-bubble.user { background: var(--primary); color: var(--text-inverse); align-self: flex-end; border-radius: 12px 12px 2px 12px; white-space: pre-wrap; }
 .qa-bubble.assistant { background: var(--bg-surface); border: 1px solid var(--border); align-self: flex-start; border-radius: 12px 12px 12px 2px; }
+.qa-bubble.assistant > *:first-child { margin-top: 0; }
+.qa-bubble.assistant > *:last-child { margin-bottom: 0; }
+.qa-turn { display: flex; flex-direction: column; }
+.qa-turn.user { align-items: flex-end; }
+.qa-turn.assistant { align-items: flex-start; }
+.qa-timestamp { font-size: 11px; color: var(--text-dimmed); white-space: nowrap; margin-top: 2px; }
+.qa-turn.user .qa-timestamp { text-align: right; }
+.qa-turn.assistant .qa-timestamp { text-align: left; }
 .qa-input-row { display: flex; gap: 8px; align-items: flex-end; padding: 12px 0 16px; border-top: 1px solid var(--border); flex-shrink: 0; }
 .qa-input-row textarea { flex: 1; resize: none; }
 
