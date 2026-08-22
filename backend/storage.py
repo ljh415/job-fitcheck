@@ -223,14 +223,13 @@ def read_profile_text() -> str | None:
 
 # ── 점수 미반영(QnA 전용) 참고 내용 ────────────────────────────────────────────────
 # 프로필 "추가 설명" 입력 시 [점수 제외] 섹션으로 표시한 내용은 적합도 평가 프롬프트엔
-# 안 보내고(LLM이 우대사항 근거로 써버리는 문제가 있었음, 2026-08-20 발견) QnA엔
-# 그대로 노출한다. LLM이 "제외하라"는 지시를 지키길 기대하는 대신, 적합도 평가
-# 프롬프트를 만들 때 코드로 통째로 잘라내는 방식 — 확률이 아니라 기계적으로 보장.
+# 안 보내고(안 그러면 LLM이 우대사항 근거로 써버릴 수 있음) QnA엔 그대로 노출한다.
+# LLM이 "제외하라"는 지시를 지키길 기대하는 대신, 적합도 평가 프롬프트를 만들 때
+# 코드로 통째로 잘라내는 방식 — 확률이 아니라 기계적으로 보장.
 
 # \s*로 헤더 뒤 공백을 먼저 소비하면, 내용이 비어있을 때(헤더 바로 뒤에 다음 섹션이
-# 오는 경우) 다음 헤더 앞의 개행까지 먹어버려서 lookahead 경계가 깨지는 버그가 있었음
-# (2026-08-21, Codex 리뷰로 발견 — "빈 마커에서 제외 경계가 깨짐"). 공백을 미리 안
-# 먹고 캡처 그룹 자체에 맡긴 뒤 strip()하는 방식, ^/lookahead도 줄 시작 기준으로 고정.
+# 오는 경우) 다음 헤더 앞의 개행까지 먹어버려서 lookahead 경계가 깨질 수 있다. 공백을
+# 미리 안 먹고 캡처 그룹 자체에 맡긴 뒤 strip()하는 방식, ^/lookahead도 줄 시작 기준으로 고정.
 _SCORE_EXCLUDED_SECTION_RE = re.compile(r'^\[점수 제외\](.*?)(?=^\[.+?\]|\Z)', re.DOTALL | re.MULTILINE)
 _SCORE_EXCLUDED_MARKER_RE = re.compile(
     r'<!--\s*score-excluded-start\s*-->.*?<!--\s*score-excluded-end\s*-->', re.DOTALL
@@ -240,8 +239,7 @@ _SCORE_EXCLUDED_MARKER_RE = re.compile(
 def extract_score_excluded_section(extra_note: str) -> tuple[str, str]:
     """추가 설명 원문에서 [점수 제외] 섹션을 전부 분리한다.
     search()로 첫 번째만 찾으면, 실수로 [점수 제외]를 두 번 쓴 경우 두 번째 이후가
-    그대로 새서 점수 산정에 들어가는 문제가 있었음(2026-08-21, Codex 리뷰로 발견 —
-    finditer()로 전부 찾아 전부 제거하도록 수정).
+    그대로 새서 점수 산정에 들어갈 수 있다 — finditer()로 전부 찾아 전부 제거한다.
     반환: (그 섹션들이 빠진 나머지 텍스트, 분리된 섹션 내용을 합친 것 — 없으면 빈 문자열)"""
     matches = list(_SCORE_EXCLUDED_SECTION_RE.finditer(extra_note))
     if not matches:
@@ -320,7 +318,7 @@ if __name__ == "__main__":
     remaining2, excluded2 = extract_score_excluded_section("그냥 자유 텍스트, 섹션 없음")
     assert excluded2 == "" and remaining2 == "그냥 자유 텍스트, 섹션 없음"
 
-    # 중복 마커(2026-08-21 Codex 리뷰로 발견 — 첫 번째만 잡던 문제)
+    # 중복 마커(첫 번째만 잡으면 안 됨)
     dup_note = "[점수 제외]\n첫번째\n\n[기타 추가 내용]\n중간\n\n[점수 제외]\n두번째"
     remaining3, excluded3 = extract_score_excluded_section(dup_note)
     assert "첫번째" not in remaining3 and "두번째" not in remaining3, remaining3
