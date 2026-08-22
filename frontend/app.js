@@ -74,10 +74,20 @@ let ragIncludeProfile = false;
 function getDeviceId() {
   let id = localStorage.getItem('job-fitcheck-device-id');
   if (!id) {
-    id = crypto.randomUUID();
+    // crypto.randomUUID()는 secure context(HTTPS 또는 localhost) 전용이라, 기본
+    // docker-compose처럼 TLS 없이 LAN IP로 접속하면 없다 — device_id는 서버가 그냥
+    // 1~128자 문자열로만 받으므로 UUID 형식일 필요 없이 getRandomValues()로 대체한다
+    // (Codex 4차 리뷰로 발견, 2026-08-22).
+    id = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : randomIdFallback();
     localStorage.setItem('job-fitcheck-device-id', id);
   }
   return id;
+}
+
+function randomIdFallback() {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
 }
 
 // job-fitcheck-qa-migrated-v2: v1.5.1(슬러그 단위 스킵) 시절 이미 완료 플래그가 찍혀 다시
