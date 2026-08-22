@@ -355,21 +355,19 @@ def migrate_qa_slug_history(device_id: str, company_slug: str, pairs: list[tuple
     옮겼는지"로 판단해야 한다 — 안 그러면 기기 A가 먼저 마이그레이션한 회사는 기기 B의
     (서로 다른) 이력이 영영 안 옮겨진다. 메시지 삽입과 마이그레이션 기록을 분리된 커밋으로
     하면, 중간에 실패했을 때 "메시지는 없는데 기록은 남아 영구 스킵"되거나 반대로 "재시도
-    때마다 중복 삽입"될 수 있어 하나의 트랜잭션으로 묶는다(Codex 리뷰로 발견, 2026-08-22 —
-    docs/chat-history-server-storage/PLAN.md 참고).
+    때마다 중복 삽입"될 수 있어 하나의 트랜잭션으로 묶는다(docs/chat-history-server-storage/
+    PLAN.md 참고).
 
     쌍(question, answer)의 occurrence 개수 기준으로 서버에 이미 있던 만큼만 건너뛴다 —
     v1.5.1 당시(기기 추적 테이블이 없던 시절) 이미 성공적으로 옮겨진 기기가 복구 경로로
-    재호출해도 중복 삽입되지 않도록 하기 위함(Codex 2차 리뷰로 발견, 2026-08-22). 존재
-    여부를 boolean으로만 보면 완전히 같은 질문을 두 번 물어본 정상 이력조차 마이그레이션
-    중 하나로 뭉개진다 — 이번 호출에서 새로 넣은 행을 다음 쌍의 "이미 있음" 근거로 다시
-    세면 안 되므로, 시작 시점의 기존 개수만 한 번씩 소비한다(Codex 3차 리뷰로 발견,
-    2026-08-22).
+    재호출해도 중복 삽입되지 않도록 하기 위함. 존재 여부를 boolean으로만 보면 완전히 같은
+    질문을 두 번 물어본 정상 이력조차 마이그레이션 중 하나로 뭉개진다 — 이번 호출에서 새로
+    넣은 행을 다음 쌍의 "이미 있음" 근거로 다시 세면 안 되므로, 시작 시점의 기존 개수만
+    한 번씩 소비한다.
 
     함수 맨 앞에서 BEGIN IMMEDIATE로 쓰기 트랜잭션을 먼저 확보한다 — 안 그러면 서로 다른
     두 기기가 동시에 같은 슬러그를 복구할 때 둘 다 같은(비어있는) occurrence 스냅샷을
-    읽어서 순차 실행이었다면 스킵됐을 턴을 양쪽 다 삽입해버린다(Codex 4차 리뷰로 발견,
-    2026-08-22)."""
+    읽어서 순차 실행이었다면 스킵됐을 턴을 양쪽 다 삽입해버린다."""
     with get_connection() as conn:
         conn.execute("BEGIN IMMEDIATE")
         already = conn.execute(
@@ -481,15 +479,13 @@ def migrate_rag_chat(chat_id: str, title: str | None, created_at: str, entries: 
 
     예전엔 방 생성(create_rag_chat)과 메시지 삽입(insert_pending_rag_message+
     mark_rag_message_done)이 각각 별도 커밋이라, 방만 만들어진 직후나 메시지 일부만 들어간
-    뒤 서버가 죽으면 재시도해도 "이미 있는 방"으로 판정돼 나머지가 영구 누락됐다(Codex
-    리뷰로 발견, 2026-08-22). 한 트랜잭션으로 묶으면 중간에 실패해도 전부 롤백되어 재시도
-    시 처음부터 다시 시도할 수 있다.
+    뒤 서버가 죽으면 재시도해도 "이미 있는 방"으로 판정돼 나머지가 영구 누락됐다. 한
+    트랜잭션으로 묶으면 중간에 실패해도 전부 롤백되어 재시도 시 처음부터 다시 시도할 수 있다.
 
     방 생성은 SELECT로 먼저 존재를 확인하지 않고 INSERT ... ON CONFLICT(id) DO NOTHING으로
     원자적으로 처리한다 — 두 기기가 같은 chat_id를 동시에 이관하면 SELECT-후-INSERT는 둘 다
-    "없음"을 보고 진행해 한쪽이 기본키 충돌(IntegrityError)로 500이 났다(Codex 5차 리뷰로
-    발견, 2026-08-22). rowcount==0이면 이미 다른 쪽이 방을 만든 것이므로 멱등하게 0을
-    반환한다."""
+    "없음"을 보고 진행해 한쪽이 기본키 충돌(IntegrityError)로 500이 난다. rowcount==0이면
+    이미 다른 쪽이 방을 만든 것이므로 멱등하게 0을 반환한다."""
     with get_connection() as conn:
         cur = conn.execute(
             "INSERT INTO rag_chats (id, title, created_at) VALUES (?, ?, ?) "
@@ -846,10 +842,9 @@ if __name__ == "__main__":
         assert len(final_migrated) == 4
         assert any(m["question"] == "태블릿 질문1" for m in final_migrated)
 
-        # occurrence 소비 회귀(Codex 3차 리뷰로 발견, 2026-08-22): 완전히 같은 (질문,답변)
-        # 쌍이 로컬 이력에 두 번 있는 정상 케이스 — 서버에 기존 데이터가 없는 슬러그에
-        # 처음 옮길 때도 boolean 존재 체크였다면 두 번째 턴이 "방금 넣은 첫 번째 턴"과
-        # 겹쳐 보여서 유실됐다. 둘 다 들어가야 한다.
+        # occurrence 소비 회귀: 완전히 같은 (질문,답변) 쌍이 로컬 이력에 두 번 있는 정상
+        # 케이스 — 서버에 기존 데이터가 없는 슬러그에 처음 옮길 때도 boolean 존재 체크였다면
+        # 두 번째 턴이 "방금 넣은 첫 번째 턴"과 겹쳐 보여서 유실된다. 둘 다 들어가야 한다.
         pairs_dup = [("같은 질문", "같은 답변"), ("같은 질문", "같은 답변")]
         inserted_dup = migrate_qa_slug_history(
             "device-dup", "중복턴테스트__직무", pairs_dup
@@ -869,10 +864,9 @@ if __name__ == "__main__":
         assert inserted_dup_more == 1  # 기존 1개만큼 스킵, 초과분 1개만 삽입
         assert len(list_qa_history("중복턴테스트2__직무")) == 2
 
-        # 동시성 회귀(Codex 4차 리뷰로 발견, 2026-08-22): 서로 다른 두 기기가 정확히
-        # 동시에 같은 슬러그의 같은 내용을 복구하면, BEGIN IMMEDIATE로 직렬화되지 않을
-        # 경우 둘 다 같은(비어있는) occurrence 스냅샷을 읽어 중복 삽입된다. 순차 실행과
-        # 같은 결과(메시지 1건, marker는 기기별로 각각 2건)가 나와야 한다.
+        # 동시성 회귀: 서로 다른 두 기기가 정확히 동시에 같은 슬러그의 같은 내용을
+        # 복구하면, BEGIN IMMEDIATE로 직렬화되지 않을 경우 둘 다 같은(비어있는) occurrence
+        # 스냅샷을 읽어 중복 삽입된다. 순차 실행과 같은 결과가 나와야 한다.
         import threading
 
         barrier = threading.Barrier(2)
@@ -938,10 +932,10 @@ if __name__ == "__main__":
         assert retry == 0
         assert len(list_rag_messages("chat-migrate-1")) == 2  # 중복 안 생김
 
-        # 동시성 회귀(Codex 5차 리뷰로 발견, 2026-08-22): 같은 chat_id를 두 기기가 정확히
-        # 동시에 이관하면, SELECT-후-INSERT였다면 둘 다 "없음"을 보고 진행해 한쪽이 기본키
-        # 충돌(IntegrityError)로 500이 났다. INSERT ... ON CONFLICT DO NOTHING이면 오류
-        # 없이 한쪽만 성공(1)하고 다른 쪽은 멱등하게 0을 반환해야 한다.
+        # 동시성 회귀: 같은 chat_id를 두 기기가 정확히 동시에 이관하면, SELECT-후-INSERT였다면
+        # 둘 다 "없음"을 보고 진행해 한쪽이 기본키 충돌(IntegrityError)로 500이 난다.
+        # INSERT ... ON CONFLICT DO NOTHING이면 오류 없이 한쪽만 성공(1)하고 다른 쪽은
+        # 멱등하게 0을 반환해야 한다.
         rag_barrier = threading.Barrier(2)
         rag_results: dict[str, int] = {}
 

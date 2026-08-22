@@ -69,15 +69,14 @@ let ragIncludeProfile = false;
 // localStorage의 옛 qaHistory는 1회성 마이그레이션 소스로만 씀(migrateQAHistoryIfNeeded 참고).
 
 // 이 브라우저(기기)를 구분하는 안정적 ID — 최초 1회 생성해 영구 저장. 서버가 "이 슬러그에
-// 메시지가 있는지"가 아니라 "이 기기가 이 슬러그를 이미 옮겼는지"로 멱등 판단하는 데 쓴다
-// (v1.5.1 회귀 수정, 2026-08-22 — 슬러그 기준으로 스킵하면 다른 기기의 이력이 못 옮겨짐).
+// 메시지가 있는지"가 아니라 "이 기기가 이 슬러그를 이미 옮겼는지"로 멱등 판단하는 데 쓴다 —
+// 슬러그 기준으로 스킵하면 다른 기기의 이력이 못 옮겨진다.
 function getDeviceId() {
   let id = localStorage.getItem('job-fitcheck-device-id');
   if (!id) {
     // crypto.randomUUID()는 secure context(HTTPS 또는 localhost) 전용이라, 기본
     // docker-compose처럼 TLS 없이 LAN IP로 접속하면 없다 — device_id는 서버가 그냥
-    // 1~128자 문자열로만 받으므로 UUID 형식일 필요 없이 getRandomValues()로 대체한다
-    // (Codex 4차 리뷰로 발견, 2026-08-22).
+    // 1~128자 문자열로만 받으므로 UUID 형식일 필요 없이 getRandomValues()로 대체한다.
     id = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : randomIdFallback();
     localStorage.setItem('job-fitcheck-device-id', id);
   }
@@ -93,7 +92,7 @@ function randomIdFallback() {
 // job-fitcheck-qa-migrated-v2: v1.5.1(슬러그 단위 스킵) 시절 이미 완료 플래그가 찍혀 다시
 // 호출되지 않던 기기를 위한 1회성 복구 트리거. 기존 완료 키는 그대로 두고 별도로 둔다 —
 // 서버(migrate_qa_slug_history)가 내용 기반으로 중복을 걸러주므로 이미 성공한 기기가 다시
-// 호출해도 안전하다(Codex 2차 리뷰로 발견, 2026-08-22).
+// 호출해도 안전하다.
 async function migrateQAHistoryIfNeeded() {
   const migrated = localStorage.getItem('job-fitcheck-qa-migrated') === '1';
   const recovered = localStorage.getItem('job-fitcheck-qa-migrated-v2') === '1';
@@ -780,8 +779,8 @@ function renderFitHistoryPanel() {
 function toggleFitHistory() {
   if (!_fitHistoryCache.length) return;  // 로딩 실패(⚠) 상태 — 클릭해도 아무 반응 없게
   // 버튼은 상단(점수 배지 옆)인데 패널은 본문 아래라, 클릭해도 스크롤 안 하면
-  // 화면엔 아무 변화가 안 보인다(실사용 중 발견, 2026-08-17) — 패널은 이제 항상 열려있으므로
-  // 이 함수는 그 자리로 스크롤만 이동시킨다.
+  // 화면엔 아무 변화가 안 보인다 — 패널은 이제 항상 열려있으므로 이 함수는 그 자리로
+  // 스크롤만 이동시킨다.
   document.getElementById('fit-history-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
@@ -875,8 +874,7 @@ async function renderQAHistory(slug) {
     ({ messages } = await api(`/companies/${encodeURIComponent(slug)}/qa/history`));
   } catch (e) {
     // GET 실패 시 기존 화면(예: 방금 표시된 오류 말풍선)을 그대로 둔다 — DB 장애로 GET도
-    // 실패하는 상황에서 컨테이너를 먼저 비우면 사용자가 아무 메시지도 못 본다(Codex 2차
-    // 리뷰로 발견, 2026-08-22).
+    // 실패하는 상황에서 컨테이너를 먼저 비우면 사용자가 아무 메시지도 못 본다.
     console.error('QnA 히스토리 로딩 실패:', e);
     return;
   }
@@ -947,8 +945,8 @@ async function saveCompany(event) {
 
   // 요청 시점의 slug를 고정 — API 호출이 끝나기 전에 사용자가 다른 화면으로 이동하면
   // currentSlug가 null이나 다른 값으로 바뀌어, 뒤늦게 도착한 응답이 initDetail(null) 등
-  // 엉뚱한 slug로 화면 갱신을 시도해 가짜 "로딩 실패" 에러가 뜨는 문제가 있었음
-  // (실사용 중 발견, 2026-08-21). 저장/재분석/재평가/동기화 4곳 전부 같은 패턴.
+  // 엉뚱한 slug로 화면 갱신을 시도해 가짜 "로딩 실패" 에러가 뜬다. 저장/재분석/재평가/
+  // 동기화 4곳 전부 같은 패턴.
   const slug = currentSlug;
   try {
     await api(`/companies/${encodeURIComponent(slug)}`, {
@@ -1139,18 +1137,18 @@ function appendBubble(containerId, text, role, timestamp) {
 
 async function streamQA(fetchFn, bubble) {
   // 예전엔 연결이 끊기면 같은 질문으로 POST를 최대 2번 자동 재시도했는데, 서버 저장 전환
-  // 이후엔 POST 한 번마다 새 행+새 LLM 호출이 생겨서 재시도가 이력·비용 중복을 만들었다
-  // (Codex 리뷰로 발견, 2026-08-22). 서버가 pending 상태를 이미 들고 있어서(연결이 끊겨도
-  // 독립 태스크가 계속 처리) 재시도 없이 한 번만 시도하고, 실패하면 호출부가 서버 상태를
-  // 다시 조회하도록 한다 — sendQA()의 history 재조회 참고.
+  // 이후엔 POST 한 번마다 새 행+새 LLM 호출이 생겨서 재시도가 이력·비용 중복을 만든다.
+  // 서버가 pending 상태를 이미 들고 있어서(연결이 끊겨도 독립 태스크가 계속 처리) 재시도
+  // 없이 한 번만 시도하고, 실패하면 호출부가 서버 상태를 다시 조회하도록 한다 — sendQA()의
+  // history 재조회 참고.
   try {
     const res = await fetchFn();
     if (!res.ok) {
       // non-OK(예: DB 장애로 503)는 서버가 요청을 아예 안 받아준 것 — 이미 말풍선에 오류를
       // 표시했으니 호출부가 history를 다시 조회할 필요가 없다. undefined를 반환해 연결
-      // 단절(null, 서버가 독립 태스크로 처리 중일 수 있어 재조회가 의미 있음)과 구분한다
-      // (Codex 2차 리뷰로 발견, 2026-08-22 — 재조회가 컨테이너를 비웠다가 같은 장애로
-      // 실패하면 방금 표시한 오류까지 같이 사라짐).
+      // 단절(null, 서버가 독립 태스크로 처리 중일 수 있어 재조회가 의미 있음)과 구분한다 —
+      // 재조회가 컨테이너를 비웠다가 같은 장애로 실패하면 방금 표시한 오류까지 같이
+      // 사라진다.
       const err = await res.json().catch(() => ({ detail: '서버 오류' }));
       bubble.textContent = `오류: ${err.detail || '응답 실패'}`;
       return undefined;
@@ -1202,9 +1200,9 @@ async function consumeSSE(res, bubble) {
   }
   // 여기 도달했다는 건 [DONE]을 못 보고 루프가 끝났다는 뜻(연결이 중간에 조용히 끊김,
   // AbortError로 취소됨 등) — fullText가 비어있지 않아도 완결된 응답이 아니므로 null을
-  // 반환해 "확정 성공"과 구분한다. 예전엔 여기서 fullText를 그대로 반환해서, 부분 텍스트가
-  // 있으면 sendCompareQA()의 `if (fullText) ...`가 잘린 응답을 성공으로 착각해 히스토리에
-  // 그대로 남기는 문제가 있었다(Codex 리뷰 대응 중 발견, 2026-08-22).
+  // 반환해 "확정 성공"과 구분한다. fullText를 그대로 반환하면, 부분 텍스트가 있을 때
+  // sendCompareQA()의 `if (fullText) ...`가 잘린 응답을 성공으로 착각해 히스토리에 그대로
+  // 남기게 된다.
   return null;
 }
 
