@@ -449,19 +449,21 @@ async def delete_chat(chat_id: str):
 async def migrate_chats(req: RagChatMigrationRequest):
     """localStorage job-fitcheck-rag-chats 전체를 1회성으로 서버 저장(rag_chats/rag_messages)
     으로 옮긴다. pending:true로 남아있던 미완성 메시지는 건너뛴다(QnA migrate-qa와 동일한
-    원칙 — 짝 안 맞는/미완성 항목은 스킵)."""
+    원칙 — 짝 안 맞는/미완성 항목은 스킵). 방 하나의 생성+메시지 전체 삽입은
+    app_db.migrate_rag_chat()이 한 트랜잭션으로 처리 — 중간에 실패해도 그 방 전체가
+    롤백되어 재시도 시 처음부터 다시 시도할 수 있다(방 생성과 메시지 삽입이 각각 별도
+    커밋이라 중간 실패 시 일부만 들어간 채 영구 스킵되던 문제를 Codex 리뷰로 발견해
+    2026-08-22 수정 — 유효한 메시지가 하나도 없는 방은 빈 방으로 만들지 않고 건너뜀)."""
     inserted = 0
     for chat_id, chat in req.chats.items():
-        if app_db.get_rag_chat(chat_id):
-            continue  # 이미 마이그레이션된 방(재시도 등) — 중복 삽입 방지
+        entries = [
+            (m.question, json.dumps(m.data, ensure_ascii=False))
+            for m in chat.messages if not m.pending and m.data
+        ]
+        if not entries:
+            continue
         created_at = datetime.fromtimestamp(chat.created_at_ms / 1000).isoformat(timespec="seconds")
-        app_db.create_rag_chat(chat_id, title=chat.title, created_at=created_at)
-        for m in chat.messages:
-            if m.pending or not m.data:
-                continue
-            message_id = app_db.insert_pending_rag_message(chat_id, m.question)
-            app_db.mark_rag_message_done(message_id, json.dumps(m.data, ensure_ascii=False))
-            inserted += 1
+        inserted += app_db.migrate_rag_chat(chat_id, chat.title, created_at, entries)
     return {"inserted": inserted}
 
 
