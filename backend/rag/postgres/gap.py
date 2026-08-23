@@ -109,8 +109,7 @@ async def market_demand_hybrid(
         return await asyncio.to_thread(market_demand, conn, skill)
 
     # 아래 두 호출은 DB 쿼리+임베딩 API를 쓰는 동기 함수라 to_thread로 감싼다 — 이벤트 루프를
-    # 막지 않기 위해서다(Codex 4차 리뷰로 발견, 2026-08-03). LLM 호출(아래 extract_structured)은
-    # 원래 진짜 비동기라 그대로 둔다.
+    # 막지 않기 위해서다. LLM 호출(아래 extract_structured)은 원래 진짜 비동기라 그대로 둔다.
     (total,) = await asyncio.to_thread(lambda: conn.execute("SELECT count(*) FROM posting").fetchone())
     candidates = await asyncio.to_thread(_candidate_postings, conn, skill, embed_provider)
     if not candidates:
@@ -174,7 +173,7 @@ async def assess_gap(
     demand = await market_demand_hybrid(conn, skill, embed_provider, llm=llm)
 
     # search_chunks()는 embed_provider.embed_query()(임베딩 API 호출) + conn.execute()를 쓰는
-    # 동기 함수라 to_thread로 감싼다(Codex 4차 리뷰로 발견, 2026-08-03).
+    # 동기 함수라 to_thread로 감싼다.
     evidence_chunks = await asyncio.to_thread(
         search_chunks, conn, embed_provider, f"{skill} 관련 실무 경험",
         source_type="candidate_profile", top_k=PROFILE_TOP_K,
@@ -226,26 +225,24 @@ async def assess_all_gaps(
     llm: tuple[LLMProvider, str, str | None] | None = None,
 ) -> list[dict]:
     """`llm`이 명시적으로 주어졌을 때(Agent 경로)만 `TRACKED_SKILLS`(13개)를 동시에 판정한다
-    (순차 대비 체감 3~4배 빠름, 2026-07-29 실측 — 이 수치는 LLM 호출이 여전히 진짜 병렬이라는
-    전제는 유효하지만, 아래 커넥션 공유 구조가 바뀐 뒤로 재측정은 안 됨). 개수 제한 없는 이유:
-    실제 Anthropic API 응답 헤더로 이 계정의 분당 한도(요청 10,000회/토큰 1,200만)를 확인했고,
-    13개 동시 호출(요청 13건/토큰 약 6~7만)은 그 대비 무시할 수준.
+    (순차 대비 체감 3~4배 빠름 — 이 수치는 LLM 호출이 여전히 진짜 병렬이라는 전제는 유효하지만,
+    아래 커넥션 공유 구조가 바뀐 뒤로 재측정은 안 됨). 개수 제한 없는 이유: 실제 Anthropic API
+    응답 헤더로 이 계정의 분당 한도(요청 10,000회/토큰 1,200만)를 확인했고, 13개 동시 호출
+    (요청 13건/토큰 약 6~7만)은 그 대비 무시할 수준.
 
     공유 커넥션(`conn`) 동시 사용: 예전엔 `market_demand`/`search_chunks` 등 DB 호출이 전부
     동기라 이벤트 루프상 실제로 안 겹쳐서 안전했지만, `asyncio.to_thread`로 이 DB 호출들을
-    감싼 뒤(2026-08-03, 이벤트 루프 블로킹 수정)로는 진짜 여러 스레드가 동시에 같은 `conn`을
-    쓴다. psycopg3는 커넥션 자체는 스레드 세이프하고 같은 커넥션에 대한 쿼리 실행을 내부적으로
-    직렬화하므로 크래시나 데이터 오염은 없지만, 모든 커서가 같은 트랜잭션을 공유해서 13개 중
-    하나라도 쿼리가 실패하면 그 트랜잭션이 aborted 상태가 되어 동시에 도는 나머지 스레드의
-    쿼리까지 연쇄 실패할 수 있다(Claude 직접 리뷰 + Codex 4차 세션 교차검증으로 확인,
-    2026-08-03 — 전부 파라미터화된 SELECT라 데이터 손상 위험은 없다고 판단해 지금은 그대로
-    둠, 장애 격리가 필요해지면 이 쿼리 전용 커넥션을 `autocommit=True`로 분리하는 게 가장
-    작은 대응).
+    감싼 뒤로는 진짜 여러 스레드가 동시에 같은 `conn`을 쓴다. psycopg3는 커넥션 자체는 스레드
+    세이프하고 같은 커넥션에 대한 쿼리 실행을 내부적으로 직렬화하므로 크래시나 데이터 오염은
+    없지만, 모든 커서가 같은 트랜잭션을 공유해서 13개 중 하나라도 쿼리가 실패하면 그 트랜잭션이
+    aborted 상태가 되어 동시에 도는 나머지 스레드의 쿼리까지 연쇄 실패할 수 있다(전부
+    파라미터화된 SELECT라 데이터 손상 위험은 없다고 판단해 지금은 그대로 둠, 장애 격리가
+    필요해지면 이 쿼리 전용 커넥션을 `autocommit=True`로 분리하는 게 가장 작은 대응).
 
     `llm`이 `None`이면(메인 앱 설정을 따르는 CLI/기타 호출부) 어떤 provider일지 모르므로 위
     검증이 적용 안 됨(Gemini 무료 티어처럼 훨씬 빡빡한 한도일 수 있음) — 순차 실행 유지.
 
-    (Codex 리뷰 2026-07-29 지적) `asyncio.gather()`는 하나가 실패해도 나머지를 취소하지
+    `asyncio.gather()`는 하나가 실패해도 나머지를 취소하지
     않고 백그라운드에서 계속 돌려 재시도 시 중복 호출 위험이 있어, `return_exceptions=True`로
     전부 끝난 뒤에 예외를 처리한다."""
     if llm is None:

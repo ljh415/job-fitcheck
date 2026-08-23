@@ -1,9 +1,8 @@
 """자유 텍스트 주제 검색 + 공고 목록/비교 — Agent(agent.py)가 실제로 쓰는 조회 함수들.
 
 옛 Phase 1~4의 "질문을 7종으로 분류 → 고정 함수 실행" 라우팅 시스템(QUERY_TYPES/classify_query/
-answer_query)은 2026-07-28 Agent(tool-use) 전환 이후 완전히 대체돼 어디서도 안 쓰였다(2026-07-29
-Codex 리뷰로 참조 없음 재확인). 미래에 다시 쓸 계획도 없어 2026-07-30 삭제 — git 히스토리에는
-그대로 남아있다.
+answer_query)은 Agent(tool-use) 전환 이후 완전히 대체돼 어디서도 안 쓰여 삭제됨 — git
+히스토리에는 그대로 남아있다.
 
 경위·설계 결정 상세는 `docs/rag-project-plans/conversational-rag/00_design.md` Phase 1 참고.
 """
@@ -29,8 +28,8 @@ def list_postings(
     conn: psycopg.Connection, skill: str = "", job_title: str = "", limit: int = 50
 ) -> list[dict]:
     """공고 목록 조회/필터 — 순수 SQL, LLM 호출 없음. skill과 job_title을 동시에 주면 둘 다
-    적용한다(2026-07-29 발견 — 예전엔 skill이 있으면 job_title을 무시해서 "백엔드 직무 중 AWS
-    공고" 같은 복합 질문이 전체 AWS 공고를 반환했음, Codex 리뷰)."""
+    적용한다 — skill만 보고 job_title을 무시하면 "백엔드 직무 중 AWS 공고" 같은 복합 질문이
+    전체 AWS 공고를 반환하게 된다."""
     if skill:
         query = (
             "SELECT p.slug, p.company_name, p.job_title FROM posting p"
@@ -100,13 +99,13 @@ async def _judge_topic_postings_llm(
     """자유 텍스트 주제(TRACKED_SKILLS 밖)를 corpus 전체 원문으로 LLM이 직접 판정한다.
 
     벡터 코사인 유사도로 후보를 미리 추려서 넘기면(_candidate_postings 패턴) 이 corpus에서는
-    1차 검색 단계 자체가 진짜 정답을 통째로 놓치는 사례가 실측으로 확인됐다(2026-07-28,
+    1차 검색 단계 자체가 진짜 정답을 통째로 놓치는 사례가 실측으로 확인됐다(상세는
     docs/rag-project-plans/00_meta/HISTORY.md 해당 항목). corpus 규모가 작아(공고 수십~백 건)
     점수로 거르지 않고 전체를 LLM에 넘기는 쪽이 비용 대비 recall이 훨씬 낫다.
 
-    `job_role`을 주면 LLM 판정 전에 SQL로 직무를 먼저 좁힌다(2026-07-29 발견 — 예전엔 이
-    파라미터 자체가 없어서 "백엔드 직무 중 헬스케어 경험" 같은 복합 질문에서 직무 조건이
-    통째로 무시됐음, Codex 리뷰). LLM 호출 비용도 같이 줄어드는 부수 효과가 있다."""
+    `job_role`을 주면 LLM 판정 전에 SQL로 직무를 먼저 좁힌다 — 이 파라미터가 없으면 "백엔드
+    직무 중 헬스케어 경험" 같은 복합 질문에서 직무 조건이 통째로 무시된다. LLM 호출 비용도
+    같이 줄어드는 부수 효과가 있다."""
     query = (
         "SELECT po.id, po.slug, po.company_name, po.job_title, dc.text"
         " FROM document_chunk dc JOIN posting po ON po.slug = dc.source_id"
@@ -117,7 +116,7 @@ async def _judge_topic_postings_llm(
         query += " AND po.job_title ILIKE %s"
         params.append(f"%{job_role}%")
     query += " ORDER BY po.id, dc.chunk_index"
-    # 동기 DB 쿼리라 to_thread로 감싼다(Codex 4차 리뷰로 발견, 2026-08-03).
+    # 동기 DB 쿼리라 to_thread로 감싼다 — 안 그러면 이벤트 루프가 막힌다.
     rows = await asyncio.to_thread(lambda: conn.execute(query, params).fetchall())
     postings: dict[int, dict] = {}
     order: list[int] = []
@@ -162,17 +161,16 @@ def _judge_topic_postings_local(
 ) -> list[dict]:
     """벡터 검색만으로 top-k를 그대로 반환한다(판정 없이 순위만) — LLM 호출 없는 비교/실험용 경로.
     이번 corpus에서는 점수 격차가 razor-thin이라 신뢰도가 낮다는 게 이미 확인됐다(정확도 우선이면
-    method="llm" 기본값을 쓴다). job_role 필터는 LLM 경로와 함수 계약을 맞추기 위해 추가함
-    (Codex 리뷰로 발견, 2026-07-29 — 처음엔 method="llm"만 고치고 이 비교용 경로는 안 건드렸다가
-    같은 시그니처를 공유하는 두 구현이 서로 다르게 동작하는 게 지적됨).
+    method="llm" 기본값을 쓴다). job_role 필터는 LLM 경로와 함수 계약을 맞추기 위해 추가함 —
+    같은 시그니처를 공유하는 두 구현이 서로 다르게 동작하면 안 된다.
 
     지금 아무 진입점에서도 안 불리는 코드다(judge_topic_postings의 유일한 실제 호출부인 agent.py가
     method="llm"을 하드코딩해서 부름) — 공고 데이터가 늘어나 벡터 방식을 다시 비교 테스트할 때
-    쓰려고 의도적으로 남겨뒀다(2026-07-30, `docs/rag-project-plans/00_meta/STATUS.md` "향후 탐색
+    쓰려고 의도적으로 남겨뒀다(상세는 `docs/rag-project-plans/00_meta/STATUS.md` "향후 탐색
     아이디어" 참고). 그때는 이 함수를 evaluate_hybrid.py/hnsw_eval.py처럼 직접 호출해서 쓰면 된다."""
-    # top_k=None(전체 청크) — job_role 필터가 순위 컷오프 뒤에 걸려서, 상한을 두면 그 상한
-    # 밖에 있는 관련 공고를 원천적으로 놓칠 수 있었다(사용자 지적, 2026-07-30). 이 corpus는
-    # 청크가 수백 개 수준이라 전체를 도는 비용이 무시할 만하다.
+    # top_k=None(전체 청크) — job_role 필터가 순위 컷오프 뒤에 걸리면, 그 상한 밖에 있는 관련
+    # 공고를 원천적으로 놓칠 수 있다. 이 corpus는 청크가 수백 개 수준이라 전체를 도는 비용이
+    # 무시할 만하다.
     results = search_chunks(conn, embed_provider, topic, source_type="posting_raw", top_k=None)
     seen: set[int] = set()
     postings: list[dict] = []

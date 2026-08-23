@@ -3,7 +3,7 @@
 requirement_level(필수/우대 구분)은 2단계 종료 조건에 필요하지 않아 이번 스키마에서 뺐다 —
 skipped: 필수/우대 파싱, 검색·집계에서 실제로 그 구분이 필요해지는 단계(5단계 이후)에 추가.
 
-document_chunk/chunk_embedding은 3단계(2026-07-22, Codex 결정 반영)에서 채운다.
+document_chunk/chunk_embedding은 3단계에서 채운다.
 청킹 규칙: 빈 줄 기준 문단 분리 후 순서대로 묶어 청크당 최대 1,200자, 초기 overlap 없음.
 """
 

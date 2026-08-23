@@ -21,9 +21,9 @@ logger = logging.getLogger(__name__)
 def _raise_status_error(e: anthropic.APIStatusError) -> None:
     """APIStatusError를 사용자 친화적 메시지로 변환해 raise한다.
     크레딧/빌링 소진(400, "credit balance" 문구)은 "잠시 후 다시 시도"가 아니라
-    명확히 다른 조치(충전)가 필요하므로 별도 메시지로 분기한다(2026-08-21 발견 —
-    RateLimitError만 따로 처리하고 나머지 APIStatusError를 뭉뚱그려서, 크레딧 소진
-    시에도 "잠시 후 다시 시도해주세요"라는 틀린 안내가 나가고 있었음)."""
+    명확히 다른 조치(충전)가 필요하므로 별도 메시지로 분기한다 — RateLimitError만
+    따로 처리하고 나머지 APIStatusError를 뭉뚱그리면, 크레딧 소진 시에도 "잠시 후
+    다시 시도해주세요"라는 틀린 안내가 나간다."""
     body = e.body if isinstance(e.body, dict) else {}
     error_info = body.get("error") if isinstance(body, dict) else None
     error_msg = error_info.get("message", "") if isinstance(error_info, dict) else ""
@@ -108,8 +108,7 @@ class AnthropicProvider(LLMProvider):
         logger = _logging.getLogger(__name__)
         current_max_tokens = max_tokens
         # 잘린 응답을 그대로 반환하는 대신, max_tokens를 2배로 늘려 한 번 더 시도한다
-        # (32768 도달 시 더 늘려도 소용없으니 중단). 2026-08-18 실사용 중 프로필 본문이
-        # 잘려 저장된 사례 발견 — 사용자가 직접 재시도하지 않아도 되게 함.
+        # (32768 도달 시 더 늘려도 소용없으니 중단) — 사용자가 직접 재시도하지 않아도 되게 함.
         for attempt in range(2):
             try:
                 response = await self._client.messages.create(
@@ -219,8 +218,8 @@ class AnthropicProvider(LLMProvider):
                     result = {"error": str(e)}
                 except Exception as e:
                     # 예상 못 한 예외(SQL 오류 등)는 원문에 테이블명·쿼리 같은 내부 정보가 담길 수
-                    # 있어 Claude/프론트 도구 트레이스에 그대로 노출하지 않는다(Codex 리뷰 2026-07-29
-                    # 지적) — 서버 로그에만 전체를 남기고 도구에는 일반화된 메시지만 준다.
+                    # 있어 Claude/프론트 도구 트레이스에 그대로 노출하지 않는다 — 서버 로그에만
+                    # 전체를 남기고 도구에는 일반화된 메시지만 준다.
                     logger.exception("도구 실행 중 예상 못 한 오류 (%s)", block.name)
                     is_error = True
                     result = {"error": "내부 도구 실행 오류가 발생했습니다."}

@@ -11,8 +11,7 @@
 
 위 함수들은 기술 하나짜리 질문(AC-01~03 스타일)만 다룬다. 01b의 GP-01(우선순위 gap 랭킹)·
 GP-06(전체 강점 요약)·AC-06(여러 gap 순서 정하기)처럼 여러 기술을 종합해야 하는 질문은
-아래 `rank_priority_gaps()`/`summarize_strengths()`/`generate_sequenced_plan()`이 담당한다
-(2026-07-23 추가 — 기존엔 이 집계 로직 자체가 없어서 그런 질문에 답을 낼 수 없었다).
+아래 `rank_priority_gaps()`/`summarize_strengths()`/`generate_sequenced_plan()`이 담당한다.
 
 실행: backend/ 에서 `python3 -m rag.answer --aggregate` — TRACKED_SKILLS 전체를 종합해
 GP-01/GP-06/AC-06 스타일 집계 리포트를 생성한다.
@@ -127,7 +126,7 @@ async def full_report(conn: sqlite3.Connection, skill: str, embed_provider) -> s
 # "부분 근거"는 gap.py의 validate()에서도 이미 "직접 근거"와 같은 방향(증거 있음)으로 취급했다
 # (LLM이 같은 근거를 두고도 직접/부분을 오갈 만큼 그 경계가 미세해서). 여기서도 같은 관용도를
 # 적용 — 안 그러면 실제로는 강점인 기술(예: Kubernetes)이 LLM의 그날그날 판정 편차로 "gap"에
-# 잘못 끼어드는 문제가 생긴다(2026-07-23 첫 실행에서 실제로 발견됨).
+# 잘못 끼어드는 문제가 생긴다.
 _HAS_EVIDENCE = ("직접 근거", "부분 근거")
 _TRUE_GAP = ("인접 경험", "근거 없음")
 

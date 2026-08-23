@@ -29,12 +29,12 @@ def run(provider_name: str, include_profile: bool, rebuild_schema_flag: bool = F
 
     if rebuild_schema_flag:
         # `CREATE TABLE IF NOT EXISTS`는 기존 테이블에 새 컬럼을 안 추가해준다 — 스키마가
-        # 바뀌었을 때(Stage 2→4→6처럼)는 드롭 후 재생성이 필요하다(Codex 리뷰로 발견, 2026-07-23).
+        # 바뀌었을 때(Stage 2→4→6처럼)는 드롭 후 재생성이 필요하다.
         schema_conn = get_connection()
         try:
             rebuild_schema(schema_conn)
         finally:
-            schema_conn.close()  # rebuild_schema() 실패해도 닫아야 함(Codex 4차 재리뷰로 발견, 2026-07-24)
+            schema_conn.close()  # rebuild_schema() 실패해도 닫아야 함
         print("스키마 재생성 완료(기존 데이터 전부 삭제됨)")
 
     conn = ingest_run()  # 스키마 생성 + posting/posting_skill/skill_alias 적재
@@ -42,33 +42,30 @@ def run(provider_name: str, include_profile: bool, rebuild_schema_flag: bool = F
         _run_with_conn(conn, provider_name, include_profile)
     finally:
         conn.close()  # prune_deleted_postings()/populate_posting_chunks() 실패 경로도 여기서 닫힌다
-        # (원래는 try 밖에 있어서 이 둘이 실패하면 conn이 안 닫혔다 — Codex 4차 재리뷰로 발견, 2026-07-24)
 
 
 def _run_with_conn(conn, provider_name: str, include_profile: bool) -> None:
-    # 예전엔(2026-07-23~) google/local을 동시에 유지하는 설계라 "지금 안 고른 provider도
-    # 챙겨야 한다"는 전제로 경고·자동 재임베딩 로직이 있었다. 활성 provider를 하나로 통일한
-    # 뒤(2026-07-31, 코드리뷰 4번)에도 이 로직이 안 지워져서, 사용자가 의도적으로 하나만
-    # 쓰기로 정했는데도 "다른 provider가 안 됐다"는 경고가 계속 뜨고, 프로필이 바뀌면 꺼둔
-    # provider로 API 호출까지 조용히 나가고 있었다(사용자 질문으로 발견, 2026-08-02) —
-    # 지금은 활성 provider 하나만 다루는 게 의도된 동작이라 이 로직 자체를 없앴다.
+    # 예전엔 google/local을 동시에 유지하는 설계라 "지금 안 고른 provider도 챙겨야 한다"는
+    # 전제로 경고·자동 재임베딩 로직이 있었다. 활성 provider를 하나로 통일한 뒤에도 이
+    # 로직이 안 지워져서, 사용자가 의도적으로 하나만 쓰기로 정했는데도 "다른 provider가
+    # 안 됐다"는 경고가 계속 뜨고, 프로필이 바뀌면 꺼둔 provider로 API 호출까지 조용히
+    # 나가고 있었다 — 지금은 활성 provider 하나만 다루는 게 의도된 동작이라 이 로직 자체를
+    # 없앴다.
     n_pruned = prune_deleted_postings(conn)  # 원문이 삭제된 posting의 고아 청크/임베딩 정리
     if n_pruned:
         print(f"삭제된 공고 {n_pruned}건의 청크/임베딩 정리 완료")
     # populate_posting_chunks()도, 뒤이은 run_embedding_pipeline()도 이제 commit을 안 한다 —
     # 청크 삭제+재생성과 공고 임베딩, (옵션인) 프로필 청크+임베딩까지 전부 성공해야만 아래에서
-    # 한 번에 commit된다. 예전엔 run_embedding_pipeline()이 공고 단계 성공 시 자체적으로
-    # commit해서, 프로필 단계가 나중에 실패하면 공고 단계만 이미 확정된 채 남았다 — provider
-    # 전환 중 이전 provider 색인이 훼손되는 문제가 이 경로에서는 여전히 성립했다(Codex 4차
-    # 리뷰로 발견, 2026-08-03 — 3차 리뷰 때 chunks.py의 조기 commit만 지우고 이 부분을
-    # 놓쳤었다). 이제 실패하면 아래 except가 청크 삭제까지 전부 롤백한다.
+    # 한 번에 commit된다. run_embedding_pipeline()이 공고 단계 성공 시 자체적으로 commit하면,
+    # 프로필 단계가 나중에 실패했을 때 공고 단계만 이미 확정된 채 남는다 — provider 전환 중
+    # 이전 provider 색인이 훼손되는 문제가 이 경로에서도 성립한다. 이제 실패하면 아래 except가
+    # 청크 삭제까지 전부 롤백한다.
     n_touched, n_chunks = populate_posting_chunks(conn)
     provider = None
     try:
         # provider 생성도 try 안에서 해야 LocalEmbeddingProvider의 SSH 터널 실패 시에도
-        # finally의 conn.close()가 실행된다(Codex 3차 재리뷰로 발견, 2026-07-24 — CLI라
-        # 프로세스 종료로 대부분 회수되긴 하지만, routers/rag.py에서 이미 쓰던 패턴과
-        # 일관되게 맞춘다).
+        # finally의 conn.close()가 실행된다 — CLI라 프로세스 종료로 대부분 회수되긴 하지만,
+        # routers/rag.py에서 이미 쓰던 패턴과 일관되게 맞춘다.
         provider = PROVIDERS[provider_name]()
         n_embedded = run_embedding_pipeline(conn, provider)
         print(

@@ -64,9 +64,8 @@ def populate_candidate_profile_chunks(conn: psycopg.Connection) -> tuple[bool, i
         )
     # commit은 여기서 하지 않는다 — 호출부(reindex.py의 _run_with_conn())가 이 함수의
     # 삭제+재생성과 뒤이은 provider 임베딩을 하나의 트랜잭션으로 묶어서, 임베딩이 실패하면
-    # 방금 지운 옛 임베딩까지 롤백으로 되돌린다(Codex 3차 리뷰 발견 3번, 2026-08-02 —
-    # 예전엔 여기서 바로 commit해서 임베딩 실패 시 이전 provider 색인만 사라진 채 복구
-    # 안 되는 창이 있었다).
+    # 방금 지운 옛 임베딩까지 롤백으로 되돌린다. 여기서 바로 commit하면 임베딩 실패 시
+    # 이전 provider 색인만 사라진 채 복구 안 되는 창이 생긴다.
     return True, len(new_chunks)
 
 

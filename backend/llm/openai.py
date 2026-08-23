@@ -140,8 +140,7 @@ class OpenAIProvider(LLMProvider):
         logger = _logging.getLogger(__name__)
         current_max_tokens = max_tokens
         # 잘린 응답을 그대로 반환하는 대신, max_tokens를 2배로 늘려 한 번 더 시도한다
-        # (32768 도달 시 더 늘려도 소용없으니 중단). 2026-08-18 실사용 중 프로필 본문이
-        # 잘려 저장된 사례 발견 — 사용자가 직접 재시도하지 않아도 되게 함.
+        # (32768 도달 시 더 늘려도 소용없으니 중단) — 사용자가 직접 재시도하지 않아도 되게 함.
         for attempt in range(2):
             try:
                 response = await self._client.chat.completions.create(

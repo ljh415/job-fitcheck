@@ -73,8 +73,7 @@ class Settings(BaseSettings):
     rag_postgres_db: str = "rag"
     rag_postgres_user: str = "rag"
     # docker-compose.yml의 POSTGRES_PASSWORD 기본값(${RAG_POSTGRES_PASSWORD:-rag})과
-    # 반드시 일치시킨다 — 어긋나면 .env를 안 채운 상태에서 인증 실패가 난다(Codex 리뷰로
-    # 발견, 2026-07-31).
+    # 반드시 일치시킨다 — 어긋나면 .env를 안 채운 상태에서 인증 실패가 난다.
     rag_postgres_password: str = "rag"
 
     # 후보자 프로필(이력서 내용)을 임베딩 API로 전송할지 여부. 기본값 false(전송 안 함) —
@@ -137,7 +136,7 @@ def get_reasoning_effort() -> str:
     return _runtime_models.get("openai_reasoning_effort") or settings.openai_reasoning_effort
 
 
-# RAG 임베딩 provider — 쿼리마다 고르던 드롭다운을 없애고 설정값 하나로 통일(2026-07-31).
+# RAG 임베딩 provider — 쿼리마다 고르던 드롭다운을 없애고 설정값 하나로 통일했다.
 # None(기본)이면 메인 LLM provider를 따라간다: gemini→google, claude/openai→google
 # (Claude는 임베딩 API 자체가 없고, OpenAI 임베딩 provider는 아직 미구현 — rag/embed/openai.py
 # 추가 전까지는 둘 다 google로 폴백). 명시적으로 값을 설정하면 그 값이 항상 우선한다.

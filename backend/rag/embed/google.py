@@ -4,7 +4,7 @@
 지원하지 않는다(공식 문서: "You cannot use the task_type field for the
 gemini-embedding-2 model. Instead, include the task as an instruction in your
 prompt"). API가 이 파라미터를 조용히 무시해서 에러 없이 성공했었지만 실제로는
-문서/질의 구분 없이 임베딩되고 있었다 — Codex 리뷰로 발견(2026-07-22).
+문서/질의 구분 없이 임베딩되고 있었다.
 대신 텍스트 앞에 prefix를 붙이는 방식을 쓴다:
   - 문서(저장용): "title: {title} | text: {content}" (제목 없으면 title: none)
   - 질의(검색용): "task: search result | query: {content}"
@@ -16,8 +16,8 @@ prompt"). API가 이 파라미터를 조용히 무시해서 에러 없이 성공
 `gemini-embedding-2` 모델에 한해 `contents=list[str]`을 "개별 콘텐츠 N개"가 아니라
 "파트 N개짜리 콘텐츠 1개"로 묶어버려서, 몇 개를 보내든 벡터가 항상 1개만 돌아온다(Google
 공식 문서가 이를 "Embedding aggregation"으로 명시하는 의도된 SDK 동작 — 이 프로젝트가
-`google-genai` 1.2.0→2.15.0으로 올리며 이 직렬화 규칙이 바뀐 것으로 확인됨, 사용자 질문
-+ Codex 리뷰 교차검증으로 발견, 2026-08-02). 각 문자열을 `types.Content`로 명시적으로
+`google-genai` 1.2.0→2.15.0으로 올리며 이 직렬화 규칙이 바뀐 것으로 확인됨). 각 문자열을
+`types.Content`로 명시적으로
 감싸야 입력 개수만큼 벡터가 반환된다.
 """
 import time

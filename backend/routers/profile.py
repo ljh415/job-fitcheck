@@ -126,7 +126,7 @@ async def update_profile(req: ProfileUpdateRequest):
     logger.info("프로필 수동 업데이트 완료")
     _snapshot_profile()
     # RAG_INCLUDE_PROFILE=true면 프로필도 임베딩 대상 — 훅이 없으면 gap 도구가 옛 프로필
-    # 임베딩을 계속 쓴다(Codex 4차 리뷰로 발견, 2026-08-03). RAG 꺼져 있으면 no-op.
+    # 임베딩을 계속 쓴다. RAG 꺼져 있으면 no-op.
     trigger_reindex_background()
     return record
 
@@ -171,8 +171,8 @@ async def upload_profile(files: list[UploadFile] = File(...), extra_note: str = 
     pdf_text = prompts.escape_tag_chars(pdf_text)
     raw_extra_note = extra_note  # 저장용 원본 — 다음 업로드 때 기본값으로 남겨줄 값(이스케이프 전)
     # [점수 제외] 섹션은 프로필 생성 LLM에도 안 보내고, 생성된 본문 뒤에 코드로 그대로
-    # 붙인다 — LLM이 "제외해서 써라"를 안 지킬 수 있어서(2026-08-20 발견), 애초에
-    # 적합도 평가 프롬프트가 볼 수 없는 형태로 분리해서 관리한다.
+    # 붙인다 — LLM이 "제외해서 써라"를 안 지킬 수 있어서, 애초에 적합도 평가 프롬프트가
+    # 볼 수 없는 형태로 분리해서 관리한다.
     extra_note, score_excluded = storage.extract_score_excluded_section(extra_note)
     extra_note = prompts.escape_tag_chars(extra_note)
     score_excluded = prompts.escape_tag_chars(score_excluded)
@@ -229,7 +229,7 @@ async def upload_profile(files: list[UploadFile] = File(...), extra_note: str = 
     except OSError as e:
         # 편의 기능(다음 업로드 기본값)이라 실패해도 핵심 프로필 저장 자체에는 영향 주지
         # 않는다 — 여기서 예외가 그대로 올라가면 이미 저장된 프로필 응답이 500으로
-        # 뒤집히고 뒤이은 스냅샷·재색인 훅도 안 도는 문제가 있었음(Codex 리뷰로 발견, 2026-08-18).
+        # 뒤집히고 뒤이은 스냅샷·재색인 훅도 안 돈다.
         logger.warning("프로필 추가 설명 저장 실패(핵심 프로필 저장에는 영향 없음): %s", e)
     _snapshot_profile(version_note)
     trigger_reindex_background()

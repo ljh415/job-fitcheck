@@ -101,7 +101,6 @@ def _resolve_profile_version_id_for_eval() -> int | None:
     - 최신 스냅샷의 저장된 내용이 지금 파일과 다르면(스냅샷 insert가 조용히 실패한
       경우 등, non-fatal 처리라 있을 수 있음) id를 반환하지 않는다 — 확신 없이 엉뚱한
       버전과 연결하는 것보다 "이전 버전 불명"(None)으로 남기는 게 낫다.
-    (Codex 리뷰 2026-08-17 발견)
     """
     try:
         version_id = latest_profile_version_id()
@@ -121,7 +120,7 @@ def _snapshot_fit_history(slug: str, fit_score, fit_label, profile_version_id: i
     """방금 저장된 회사 평가 결과를 이력(SQLite)에 추가한다 — 덮어쓰기 아니라 누적.
     profile_version_id는 평가에 실제로 사용한 프로필을 읽은 시점에 고정해서 전달받는다
     (평가 완료 시점에 다시 조회하면, 평가 대기 중 프로필이 바뀐 경우 엉뚱한 버전과
-    연결될 수 있음 — Codex 리뷰 2026-08-16 발견).
+    연결될 수 있다).
     실제 평가가 있었을 때만(fit_score가 있을 때만) 기록하고, 실패해도 회사 저장 자체에는
     영향 주지 않는다."""
     if fit_score is None:
@@ -413,7 +412,7 @@ async def update_company(slug: str, req: CompanyUpdateRequest):
     logger.info("공고 수동 편집: %s", slug)
     # 원문(.raw.txt)은 안 바뀌지만 RAG의 posting 테이블이 tech_stack/stability/employee_count
     # 등 frontmatter 필드를 그대로 복제해 비교 도구에 노출한다 — 훅이 없으면 수동 재색인 전까지
-    # 옛 값이 계속 반환된다(Codex 4차 리뷰로 발견, 2026-08-03). RAG 꺼져 있으면 no-op.
+    # 옛 값이 계속 반환된다. RAG 꺼져 있으면 no-op.
     trigger_reindex_background()
     return record
 
@@ -436,7 +435,7 @@ async def delete_company(slug: str):
         logger.warning("삭제된 회사의 평가 이력 정리 실패 (slug=%s): %s", slug, e)
     try:
         # QnA 대화 기록도 같은 이유로 정리 — fit_history엔 있던 이 정리 로직이 QnA
-        # 서버 저장 전환(v1.5.0) 당시 빠졌던 걸 뒤늦게 발견해 추가(2026-08-22).
+        # 서버 저장 전환(v1.5.0) 당시 빠져 있었다.
         delete_qa_history_for_slug(slug)
     except Exception as e:
         logger.warning("삭제된 회사의 QnA 대화 기록 정리 실패 (slug=%s): %s", slug, e)
@@ -649,7 +648,7 @@ async def _process_company(
         high, high_model = high_from_snapshot(snap)
         logger.info("[4/4] 적합도 평가 시작 (model=%s)", high_model)
         # [점수 제외] 섹션(QnA 전용 참고 내용)은 적합도 평가엔 안 보여줌 — LLM 판단이
-        # 아니라 코드로 제거(2026-08-20, backend/storage.py 참고)
+        # 아니라 코드로 제거(backend/storage.py 참고)
         profile_text = storage.strip_scoring_excluded(storage.read_profile_text() or "")
         # 이 프로필을 실제로 읽은 시점의 스냅샷 id를 고정 — LLM 호출이 끝날 때까지
         # 기다렸다 조회하면 그 사이 프로필이 갱신된 경우 엉뚱한 버전과 연결된다.
@@ -819,10 +818,10 @@ async def add_from_text(req: FromTextRequest):
         body = f"# {req.company_name} — {req.job_title}\n\n## 지원 상태 로그\n- {date.today().isoformat()}: 등록"
         slug = storage.make_slug(req.company_name, req.job_title)
         # RAG는 .raw.txt만 원문으로 스캔한다 — 프론트가 실제로 쓰는 경로인데도 이 분기는
-        # write_raw_text()/trigger_reindex_background()가 빠져 있어 RAG에서 계속 안 보이고
-        # 있었다(add_manual()만 고쳐졌는데 프론트는 그 엔드포인트를 안 씀, Codex 4차 리뷰로
-        # 발견, 2026-08-03). body를 원문으로 저장한다 — 자유 텍스트 입력 자체가 없는
-        # 최소 등록이라 body가 가장 원문에 가깝다.
+        # write_raw_text()/trigger_reindex_background()가 빠져 있으면 RAG에서 계속 안 보인다
+        # (add_manual()만 고쳐지고 프론트는 그 엔드포인트를 안 쓰는 경우가 있었음). body를
+        # 원문으로 저장한다 — 자유 텍스트 입력 자체가 없는 최소 등록이라 body가 가장
+        # 원문에 가깝다.
         storage.write_raw_text(slug, body)
         record = storage.write_company(slug, fm, body)
         trigger_reindex_background()

@@ -222,8 +222,7 @@ class GeminiProvider(LLMProvider):
         parts = self._to_parts(content) if content is not None else [types.Part.from_text(text=user)]
         current_max_tokens = max_tokens
         # 잘린 응답을 그대로 반환하는 대신, max_tokens를 2배로 늘려 한 번 더 시도한다
-        # (32768 도달 시 더 늘려도 소용없으니 중단). 2026-08-18 실사용 중 프로필 본문이
-        # 잘려 저장된 사례 발견 — 사용자가 직접 재시도하지 않아도 되게 함.
+        # (32768 도달 시 더 늘려도 소용없으니 중단) — 사용자가 직접 재시도하지 않아도 되게 함.
         for truncation_attempt in range(2):
             config = types.GenerateContentConfig(
                 system_instruction=system,
@@ -253,8 +252,8 @@ class GeminiProvider(LLMProvider):
                 self._raise(last_exc)
 
             # finish_reason 판정은 usage_metadata 유무와 무관하게 항상 수행한다 — usage_metadata가
-            # None인 응답(SDK상 정상적으로 발생 가능)에서도 MAX_TOKENS 잘림을 놓치면 안 됨
-            # (Codex 리뷰로 발견, 2026-08-18). append_usage()만 usage가 있을 때 기록한다.
+            # None인 응답(SDK상 정상적으로 발생 가능)에서도 MAX_TOKENS 잘림을 놓치면 안 된다.
+            # append_usage()만 usage가 있을 때 기록한다.
             candidates = response.candidates or []
             was_truncated = bool(candidates) and getattr(candidates[0].finish_reason, "name", None) == "MAX_TOKENS"
             if response.usage_metadata:

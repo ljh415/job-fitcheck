@@ -8,9 +8,8 @@
   1. Naver  — 검색결과 안의 안정적인 평점 블록(class="fds-listitem")을 파싱.
      예전엔 JSON title 필드(최대 300자)를 정규식으로 훑었는데, Naver가 그
      텍스트를 매번 다른 지점에서 잘라버려서 평점 부분이 종종 통째로 사라졌다
-     (카카오처럼 리뷰 많은 회사도 not_found로 오탐, 2026-08-15 발견 → 2026-08-17
-     수정). fds-listitem 블록은 title JSON과 별도로 안정적으로 렌더링되고 잘릴
-     걱정이 없다.
+     (카카오처럼 리뷰 많은 회사도 not_found로 오탐). fds-listitem 블록은 title
+     JSON과 별도로 안정적으로 렌더링되고 잘릴 걱정이 없다.
   2. DuckDuckGo HTML — Naver에서 못 찾은 경우 fallback
      단, 연속 요청 시 rate limiting (202) 발생 가능
 
@@ -130,7 +129,7 @@ def _extract_naver_candidates(html: str) -> list[tuple[float, int, str]]:
     검색 결과 카드 하나의 범위를 넘어 여러 카드를 감싸는 공통 조상이라는
     뜻이라 — 거기서 찾은 링크는 남의 카드 것일 수 있으므로 더 올라가지 않고
     포기한다(자기 카드에 링크가 없는 항목이 옆 카드 링크를 가로채 틀린
-    회사명과 페어링되는 걸 방지, Codex 리뷰 2026-08-17 발견).
+    회사명과 페어링되는 걸 방지).
     """
     soup = BeautifulSoup(html, "lxml")
     candidates = []
@@ -231,8 +230,7 @@ if __name__ == "__main__":
     import asyncio
 
     # 링크 없는 평점 블록(4.9/999, 가짜)이 다음 카드의 "(주) 카카오" 링크를
-    # 가로채 틀린 점수로 채택되던 문제 재현·회귀 방지(네트워크 불필요,
-    # Codex 리뷰 2026-08-17 발견)
+    # 가로채 틀린 점수로 채택되는 걸 막는 회귀 테스트(네트워크 불필요)
     _CROSS_CARD_FIXTURE = """
     <div class="container">
       <div class="card">
@@ -249,7 +247,7 @@ if __name__ == "__main__":
     print("교차 카드 fixture:", _fixture_candidates)
 
     async def _check():
-        # 카카오: 이전엔 title JSON 절단으로 not_found 오탐(2026-08-15 발견)
+        # 카카오: title JSON 절단 방식이었다면 not_found로 오탐했을 사례
         kakao = await fetch_jobplanet_score("카카오")
         assert kakao.source == "search_snippet", f"카카오: {kakao.source}"
         assert kakao.score is not None and kakao.score > 0
