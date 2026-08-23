@@ -29,7 +29,7 @@ from services import scraper
 import storage
 from config import get_notify_pref, get_weekly_summary_schedule, settings
 from export import save_backup_zip
-from routers.rag import trigger_reindex_background
+from rag.reindex_service import trigger_background as trigger_reindex_background
 from services.app_db import (
     create_fit_history_entry,
     delete_fit_history_for_slug,
