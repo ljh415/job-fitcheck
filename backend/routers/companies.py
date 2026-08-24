@@ -25,7 +25,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 import prompts
-from services import scraper
+from services import company_analysis, scraper
 import storage
 from config import get_notify_pref, get_weekly_summary_schedule, settings
 from export import save_backup_zip
@@ -645,73 +645,16 @@ async def _process_company(
     fit_report = ""
     profile_version_id_at_eval: int | None = None
     if storage.profile_exists():
-        high, high_model = high_from_snapshot(snap)
-        logger.info("[4/4] 적합도 평가 시작 (model=%s)", high_model)
+        logger.info("[4/4] 적합도 평가 시작")
         # [점수 제외] 섹션(QnA 전용 참고 내용)은 적합도 평가엔 안 보여줌 — LLM 판단이
         # 아니라 코드로 제거(backend/storage.py 참고)
         profile_text = storage.strip_scoring_excluded(storage.read_profile_text() or "")
         # 이 프로필을 실제로 읽은 시점의 스냅샷 id를 고정 — LLM 호출이 끝날 때까지
         # 기다렸다 조회하면 그 사이 프로필이 갱신된 경우 엉뚱한 버전과 연결된다.
         profile_version_id_at_eval = _resolve_profile_version_id_for_eval()
-        eval_criteria = storage.read_eval_criteria().strip()
-        custom_criteria_section = (
-            f"\n\n## 추가 평가 기준 (사용자 지정)\n{eval_criteria}{prompts.CUSTOM_CRITERIA_BOUNDARY_NOTICE}"
-            if eval_criteria else ""
+        fit_data, fit_report = await company_analysis.evaluate_fit(
+            snap, profile_text, extracted, safe_raw_text, operation="적합도 평가",
         )
-        user_fit = prompts.EVALUATE_FIT_USER_TEMPLATE.format(
-            candidate_profile=profile_text,
-            company_json=json.dumps(extracted, ensure_ascii=False),
-            raw_text=safe_raw_text[:4000],
-            custom_criteria=custom_criteria_section,
-        )
-        # Gemini는 function call 내에 장문 마크다운 생성 시 MALFORMED_FUNCTION_CALL이 발생함.
-        # 구조화 데이터(점수·라벨·강점·갭)만 tool call로 추출하고, 리포트 본문은 complete()로 분리 생성.
-        if snap.provider_name == "gemini":
-            _gemini_fit_schema = {
-                **prompts.EVALUATE_FIT_TOOL_SCHEMA,
-                "properties": {k: v for k, v in prompts.EVALUATE_FIT_TOOL_SCHEMA["properties"].items() if k != "fit_report_body"},
-                "required": [r for r in prompts.EVALUATE_FIT_TOOL_SCHEMA.get("required", []) if r != "fit_report_body"],
-            }
-            fit_result = await high.extract_structured(
-                system=prompts.evaluate_fit_system(snap.provider_name),
-                user=user_fit,
-                tool_name=prompts.EVALUATE_FIT_TOOL_NAME,
-                tool_description=prompts.EVALUATE_FIT_TOOL_DESCRIPTION,
-                tool_schema=_gemini_fit_schema,
-                model=high_model,
-                operation="적합도 평가",
-                reasoning_effort=snap.reasoning_effort,
-            )
-            # Gemini 전용: location_check → gaps 자동 브릿지
-            _loc = fit_result.get("location_check", "")
-            _gaps = fit_result.get("gaps", [])
-            if _loc and ("조건부" in _loc or "미달" in _loc):
-                if not any(kw in g for g in _gaps for kw in ("근무지", "위치", "출퇴근", "판교", "location")):
-                    fit_result["gaps"] = _gaps + [f"(하) 근무지 조건부 - {_loc}"]
-                    logger.info("  → 근무지 갭 자동 보정: %s", _loc)
-            logger.info("[4/4] 적합도 리포트 본문 생성 시작 (Gemini 분리 생성)")
-            fit_report = await high.complete(
-                system=prompts.evaluate_fit_system(snap.provider_name),
-                user=user_fit + f"\n\n평가 결과 (참고용):\n{json.dumps(fit_result, ensure_ascii=False)}\n\n위 평가 결과를 바탕으로 fit_report_body 전체를 아래 형식에 맞게 작성하세요. ## 4. 적합도 리포트 로 시작하고, ## 5. 종합 의견 (핵심 근거 + 지원 전략)까지 빠짐없이 작성하세요.",
-                model=high_model,
-                operation="적합도 리포트 본문 생성",
-                max_tokens=8192,
-                reasoning_effort=snap.reasoning_effort,
-            )
-            fit_report = re.sub(r'^##\s*4\.\s*적합도 리포트[^\n]*\n+', '', fit_report.strip()).strip()
-        else:
-            fit_result = await high.extract_structured(
-                system=prompts.evaluate_fit_system(snap.provider_name),
-                user=user_fit,
-                tool_name=prompts.EVALUATE_FIT_TOOL_NAME,
-                tool_description=prompts.EVALUATE_FIT_TOOL_DESCRIPTION,
-                tool_schema=prompts.EVALUATE_FIT_TOOL_SCHEMA,
-                model=high_model,
-                operation="적합도 평가",
-                reasoning_effort=snap.reasoning_effort,
-            )
-            fit_report = re.sub(r'^##\s*4\.\s*적합도 리포트[^\n]*\n+', '', fit_result.pop("fit_report_body", "").strip()).strip()
-        fit_data = fit_result
         logger.info("[4/4] 적합도 평가 완료: %s점 (%s)", fit_data.get("fit_score"), fit_data.get("fit_label"))
     else:
         logger.info("[4/4] 프로필 없음 — 적합도 평가 생략")
@@ -966,69 +909,23 @@ async def refit_company(slug: str):
         raise HTTPException(status_code=400, detail="프로필이 없습니다. 먼저 이력서를 업로드해주세요.")
 
     snap = capture_snapshot()
-    high, high_model = high_from_snapshot(snap)
-    logger.info("[refit] 적합도 재산정 시작 (slug=%s, model=%s)", slug, high_model)
+    logger.info("[refit] 적합도 재산정 시작 (slug=%s)", slug)
 
     # [점수 제외] 섹션(QnA 전용 참고 내용)은 적합도 평가엔 안 보여줌 — 코드로 제거
     profile_text = storage.strip_scoring_excluded(storage.read_profile_text() or "")
     # 이 프로필을 실제로 읽은 시점의 스냅샷 id를 고정 (이유는 _resolve_profile_version_id_for_eval 참고)
     profile_version_id_at_eval = _resolve_profile_version_id_for_eval()
     raw_text = prompts.escape_tag_chars(storage.read_raw_text(slug) or record.body)
-    eval_criteria = storage.read_eval_criteria().strip()
-    custom_criteria_section = (
-        f"\n\n## 추가 평가 기준 (사용자 지정)\n{eval_criteria}{prompts.CUSTOM_CRITERIA_BOUNDARY_NOTICE}"
-        if eval_criteria else ""
-    )
     # 이전 평가 결과(strengths/gaps/fit_score 등)는 LLM 입력에서 제외 — 자기참조 편향 방지
     _REFIT_EXCLUDE = {"strengths", "gaps", "fit_score", "fit_label", "fit_report_body"}
     company_data = {
         k: v for k, v in record.frontmatter.model_dump().items()
         if k not in _REFIT_EXCLUDE
     }
-    user_fit = prompts.EVALUATE_FIT_USER_TEMPLATE.format(
-        candidate_profile=profile_text,
-        company_json=json.dumps(company_data, ensure_ascii=False, indent=2),
-        raw_text=raw_text[:4000],
-        custom_criteria=custom_criteria_section,
-    )
     try:
-        if snap.provider_name == "gemini":
-            _gemini_fit_schema = {
-                **prompts.EVALUATE_FIT_TOOL_SCHEMA,
-                "properties": {k: v for k, v in prompts.EVALUATE_FIT_TOOL_SCHEMA["properties"].items() if k != "fit_report_body"},
-                "required": [r for r in prompts.EVALUATE_FIT_TOOL_SCHEMA.get("required", []) if r != "fit_report_body"],
-            }
-            fit_result = await high.extract_structured(
-                system=prompts.evaluate_fit_system(snap.provider_name),
-                user=user_fit,
-                tool_name=prompts.EVALUATE_FIT_TOOL_NAME,
-                tool_description=prompts.EVALUATE_FIT_TOOL_DESCRIPTION,
-                tool_schema=_gemini_fit_schema,
-                model=high_model,
-                operation="적합도 재평가",
-                reasoning_effort=snap.reasoning_effort,
-            )
-            fit_report_raw = await high.complete(
-                system=prompts.evaluate_fit_system(snap.provider_name),
-                user=user_fit + f"\n\n평가 결과 (참고용):\n{json.dumps(fit_result, ensure_ascii=False)}\n\n위 평가 결과를 바탕으로 fit_report_body 전체를 아래 형식에 맞게 작성하세요. ## 4. 적합도 리포트 로 시작하고, ## 5. 종합 의견 (핵심 근거 + 지원 전략)까지 빠짐없이 작성하세요.",
-                model=high_model,
-                operation="적합도 리포트 본문 생성",
-                max_tokens=8192,
-                reasoning_effort=snap.reasoning_effort,
-            )
-            fit_report = re.sub(r'^##\s*4\.\s*적합도 리포트[^\n]*\n+', '', fit_report_raw.strip()).strip()
-        else:
-            fit_result = await high.extract_structured(
-                system=prompts.evaluate_fit_system(snap.provider_name),
-                user=user_fit,
-                tool_name=prompts.EVALUATE_FIT_TOOL_NAME,
-                tool_description=prompts.EVALUATE_FIT_TOOL_DESCRIPTION,
-                tool_schema=prompts.EVALUATE_FIT_TOOL_SCHEMA,
-                model=high_model,
-                operation="적합도 재평가",
-                reasoning_effort=snap.reasoning_effort,
-            )
-            fit_report = re.sub(r'^##\s*4\.\s*적합도 리포트[^\n]*\n+', '', fit_result.pop("fit_report_body", "").strip()).strip()
+        fit_result, fit_report = await company_analysis.evaluate_fit(
+            snap, profile_text, company_data, raw_text, operation="적합도 재평가",
+        )
     except LLMAPIError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e))
     logger.info("[refit] 완료: %s점 (%s)", fit_result.get("fit_score"), fit_result.get("fit_label"))
