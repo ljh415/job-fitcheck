@@ -32,7 +32,7 @@ async def evaluate_fit(
     )
     user_fit = prompts.EVALUATE_FIT_USER_TEMPLATE.format(
         candidate_profile=profile_text,
-        company_json=json.dumps(company_data, ensure_ascii=False, indent=2),
+        company_json=json.dumps(company_data, ensure_ascii=False),
         raw_text=raw_text[:4000],
         custom_criteria=custom_criteria_section,
     )
