@@ -242,12 +242,13 @@ private 저장소를 지인 대상 셀프호스팅 공개로 전환하기 위한
 
 ---
 
-## Phase 11 — RAG 서브프로젝트 main 반영 + MCP 설계 (RAG main 반영 완료, MCP 설계 착수 전, 2026-08-15)
+## Phase 11 — RAG 서브프로젝트 main 반영 + MCP 설계 (RAG main 반영 완료, MCP 설계 완료·구현 착수 전, 2026-08-15)
 
 > 상세: `docs/planning/mcp_plan_notes.md`(MCP 부분, 로컬 전용), `docs/rag-integration/STATUS.md`(RAG main 반영 부분 — 6개 항목 구현 + 코드리뷰 5차까지 전부 완료 후 `main`에 실제 merge됨, `f882c00`). RAG 자체 개발은 `rag/main` 브랜치에서 별도 진행 중(대화형 근거 기반 RAG → RAG 모듈 안정화, 상세는 `rag/main` 브랜치의 `docs/rag-project-plans/00_meta/STATUS.md`).
 
 - ✅ RAG `feat/rag-integration-plan`을 `main`에 merge 완료(2026-08-15, `f882c00`) — 파일 이식·opt-in 구조·provider 선택·데이터 동기화·Agent provider 지원·UI 전부 포함. merge 후 전체 앱 회귀 체크리스트(`docs/regression_testing_checklist.md`) + RAG 전용 체크리스트(`docs/rag_testing_checklist.md`)로 실사용 시나리오 검증까지 완료(총 79개 항목 중 77개 통과, 2개는 사용자 판단으로 생략/서버 미가동). 세부는 `docs/rag-integration/STATUS.md` 참고.
-- ⬜ 그 다음 MCP 설계·구현 착수 — 세부 도구·전송 방식·인증·쓰기 승인 정책은 아직 미확정
+- ✅ MCP 설계 확정(2026-08-25) — 회사 분석 재사용 흐름(본문 생성 3단계 포함), 전송 방식(HTTP/SSE, 로컬·원격 클라이언트 둘 다 커버), 인증(기존 JWT Bearer 재사용), 쓰기 승인 정책(추가·필드수정은 즉시 실행, 삭제·재분석은 확인 필요), 도구 11개 입력·반환 스키마(1차)까지 정리. 상세: `docs/planning/mcp_plan_notes.md`(로컬 전용)
+- ⬜ MCP 구현 착수 — `search_rag_evidence`만 신규 함수 필요, 나머지 10개 도구는 기존 REST 핸들러/내부 함수 재사용
 - ✅ 프로필 스냅샷 & 적합도 평가 히스토리 — 프로필 변경 시점마다 스냅샷 보관(업로드/수동편집 시 메모 남길 수 있음, 목록에서 메모 수정도 가능) + 회사별 refit 결과를 덮어쓰지 않고 이력으로 누적, 각 이력이 어느 프로필 스냅샷 기준인지 연결(예: 사이드 프로젝트 추가 후 점수가 몇 점 올랐는지 추적). SQLite(`data/app.db`)로 저장(RAG의 Postgres는 opt-in이라 의존 안 함, `usage_log` 같은 다른 후보도 같은 파일로 옮길 계획은 별도 브랜치). 세부 설계·개발 히스토리는 `docs/profile-history/PLAN.md`·`HISTORY.md`(dev worktree, 로컬 전용) 참고. `feat/profile-history` 브랜치에서 9단계 구현 + Codex 코드리뷰 5라운드(9건 발견·해결) 거쳐 `main`에 merge 완료(2026-08-17, `004611b`, v1.4.0). merge 직후 기존 92개 회사 자동 소급 백필 실측 확인.
 - ✅ Jobplanet 평점 조회 매칭 로직 개선 — merge 후 회귀 테스트 중 발견(2026-08-15, merge와는 무관한 기존 버그). 카카오처럼 리뷰가 많은 회사도 `not_found` 처리되던 원인은 Naver 검색 결과의 JSON `"title"` 필드(정규식 파싱)가 매번 다른 지점에서 잘려 평점 숫자가 사라지는 것이었음 — 별도로 안정적으로 렌더링되는 평점 블록(`class="fds-listitem"`, "평점 X.X/5 N 참여")을 BeautifulSoup으로 파싱하도록 `_search_naver()` 교체. Codex 리뷰로 "링크 없는 평점 블록이 옆 카드 링크를 가로채 틀린 회사와 페어링되는" 버그도 추가 발견·수정(카드 경계 판단 로직 추가). `fix/jobplanet-matching` 브랜치에서 실측 검증(카카오·에너닷·딥파인 등) + fixture 회귀 테스트 후 `main`에 merge 완료(2026-08-17, `b639ecc`). 상세는 dev worktree의 `docs/jobplanet-matching/PLAN.md`·`HISTORY.md`(로컬 전용) 참고.
 - ✅ 프로필 히스토리 후속 버그 2건 — v1.4.0 merge 후 실사용 중 발견(2026-08-17, 사용자가 실제 배포 화면 스크린샷으로 제보). (1) 프로필 스냅샷 소급 백필 누락 — 회사 평가 이력(`fit_history`)만 기존 값을 소급 적용했고 프로필 스냅샷(`profile_versions`)은 대응 로직이 없어 기존 이력서가 있어도 "이전 버전 0개"로 시작함 → `_backfill_profile_version()` 추가. Codex 리뷰로 "테이블이 비었는지"만 보면 사용자가 마지막 스냅샷을 명시적으로 삭제해도 재시작 시 되살아나는 결함 추가 발견 → SQLite 내장 `sqlite_sequence`(AUTOINCREMENT 최고값, 행 삭제 후에도 기록 남음)로 "한 번도 없었음"과 "다 지웠음"을 구분하도록 수정. (2) 평가 이력 토글을 눌러도 패널이 화면 하단에서 조용히 열려 안 보이던 문제 → `scrollIntoView()` 추가. `fix/profile-history-followup` 브랜치에서 실측 검증 후 `main`에 merge 완료(2026-08-17, `1b2bca4`, v1.4.2). merge 직후 prod 실데이터로 기존 프로필 자동 백필(0→1건) 확인. (3) 같은 날 추가 제보 — "프로필 이전 버전" 상세 페이지가 설정 화면 미리보기 카드용 `.profile-preview-area`(`max-height:300px`) 클래스를 잘못 재사용해 내용이 잘려 보임 → 클래스 제거. 같은 브랜치에 이어서 커밋 후 재-merge(`7b64cf5`, v1.4.3).
