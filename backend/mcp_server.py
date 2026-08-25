@@ -10,10 +10,13 @@
 import asyncio
 
 import storage
-from config import settings
+from config import resolve_rag_embedding_provider, settings
 from mcp.server.mcpserver.server import MCPServer
+from rag.embed.google import GoogleEmbeddingProvider
+from rag.embed.local import LocalEmbeddingProvider
 from rag.postgres.db import get_connection
 from rag.postgres.query_router import list_postings
+from rag.postgres.retrieval import search_chunks
 from routers import companies, profile, rag
 
 mcp = MCPServer(name="job-fitcheck")
@@ -98,4 +101,54 @@ async def list_matching_postings(skill: str = "", job_title: str = "", limit: in
         rows = await asyncio.to_thread(list_postings, conn, skill, job_title, limit)
         return {"enabled": True, "postings": rows}
     finally:
+        await asyncio.to_thread(conn.close)
+
+
+def _chunk_source(conn, chunk_id: int) -> dict:
+    """청크가 어느 공고/프로필에서 왔는지 조회 — 근거 출처를 명확히 표시해 서로 다른
+    회사·프로젝트의 근거가 뒤섞이지 않도록 한다(RAG 에이전트 근거 섞임 버그, v1.5.4와
+    같은 이유)."""
+    row = conn.execute(
+        "SELECT source_type, source_id FROM document_chunk WHERE id = %s", (chunk_id,)
+    ).fetchone()
+    if not row:
+        return {"type": "unknown"}
+    source_type, source_id = row
+    if source_type == "posting_raw":
+        posting = conn.execute(
+            "SELECT company_name, job_title FROM posting WHERE slug = %s", (source_id,)
+        ).fetchone()
+        if posting:
+            return {"type": "posting", "slug": source_id, "company_name": posting[0], "job_title": posting[1]}
+        return {"type": "posting", "slug": source_id}
+    if source_type == "candidate_profile":
+        return {"type": "profile"}
+    return {"type": source_type, "id": source_id}
+
+
+@mcp.tool()
+async def search_rag_evidence(question: str, top_k: int = 5) -> dict:
+    """자연어 질문과 관련된 근거 청크(공고·프로필 발췌문)를 벡터 검색으로 찾는다. LLM 판정
+    없이 순수 검색만 하므로, 최종 판단·답변 생성은 호출한 클라이언트가 맡는다. 각 결과에
+    출처(어느 회사 공고인지/프로필인지)를 항상 포함 — 근거를 인용할 때 출처를 섞지 않도록
+    호출부에서 이 필드를 반드시 참고할 것."""
+    if not settings.rag_postgres_host:
+        return {"enabled": False, "evidence": []}
+    provider_name = resolve_rag_embedding_provider()
+    conn = await asyncio.to_thread(get_connection)
+    embed_provider = None
+    try:
+        embed_provider = await asyncio.to_thread(
+            GoogleEmbeddingProvider if provider_name == "google" else LocalEmbeddingProvider
+        )
+        rows = await asyncio.to_thread(search_chunks, conn, embed_provider, question, None, top_k)
+        evidence = []
+        for score, chunk_id, text in rows:
+            source = await asyncio.to_thread(_chunk_source, conn, chunk_id)
+            evidence.append({"score": round(score, 4), "source": source, "excerpt": text})
+        return {"enabled": True, "provider": provider_name, "evidence": evidence}
+    finally:
+        close = getattr(embed_provider, "close", None)
+        if close:
+            await asyncio.to_thread(close)
         await asyncio.to_thread(conn.close)
