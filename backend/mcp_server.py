@@ -9,9 +9,11 @@
 """
 import asyncio
 
+import prompts
 import storage
 from config import resolve_rag_embedding_provider, settings
 from mcp.server.mcpserver.server import MCPServer
+from models import CompanyFrontmatter
 from rag.embed.google import GoogleEmbeddingProvider
 from rag.embed.local import LocalEmbeddingProvider
 from rag.postgres.db import get_connection
@@ -19,6 +21,7 @@ from rag.postgres.query_router import list_postings
 from rag.postgres.retrieval import search_chunks
 from rag.reindex_service import trigger_background as trigger_reindex_background
 from routers import companies, profile, rag
+from services import scraper
 
 mcp = MCPServer(name="job-fitcheck")
 
@@ -195,3 +198,118 @@ async def search_rag_evidence(question: str, top_k: int = 5) -> dict:
         if close:
             await asyncio.to_thread(close)
         await asyncio.to_thread(conn.close)
+
+
+@mcp.tool()
+async def prepare_company_import(url: str | None = None, raw_text: str | None = None) -> dict:
+    """회사 공고 등록을 위한 분석 패킷을 준비한다. LLM을 호출하지 않으므로 Job FitCheck
+    쪽 API 비용이 들지 않는다 — url 또는 raw_text 중 하나를 주면 원문을 모으고, 기존
+    분석 파이프라인과 동일한 프롬프트 3종(구조화 추출 → 마크다운 본문 생성 → 적합도 평가)을
+    채우지 않은 템플릿 그대로 반환한다.
+
+    호출한 클라이언트(자신의 세션 모델)가 직접: 1) extract_company로 구조화 JSON을 뽑고,
+    2) 그 결과로 generate_body의 {company_json} 자리를 채워 마크다운 본문(섹션 1~3)을
+    만들고, 3) evaluate_fit이 available이면 적합도를 평가해 본문에 "## 4. 적합도 리포트"
+    섹션을 이어붙인 뒤, create_company를 호출해 저장해야 한다."""
+    if not url and not raw_text:
+        raise ValueError("url 또는 raw_text 중 하나가 필요합니다.")
+
+    if url:
+        duplicate = next(
+            (c for c in storage.list_companies() if c.frontmatter.source_url == url), None
+        )
+        if duplicate:
+            return {
+                "duplicate": True,
+                "slug": duplicate.slug,
+                "name": duplicate.frontmatter.display_name or duplicate.frontmatter.company_name,
+            }
+        text = await scraper.fetch_url_text(url)
+    else:
+        text = raw_text
+
+    safe_text = prompts.escape_tag_chars(text)
+    has_profile = storage.profile_exists()
+    profile_text = None
+    if has_profile:
+        profile_text = prompts.escape_tag_chars(
+            storage.strip_scoring_excluded(storage.read_profile_text() or "")
+        )
+    eval_criteria = storage.read_eval_criteria().strip()
+    custom_criteria = (
+        f"\n\n## 추가 평가 기준 (사용자 지정)\n{eval_criteria}{prompts.CUSTOM_CRITERIA_BOUNDARY_NOTICE}"
+        if eval_criteria else ""
+    )
+
+    return {
+        "duplicate": False,
+        "raw_text": text,
+        "raw_text_escaped": safe_text,
+        "source_url": url,
+        "extract_company": {
+            "system": prompts.EXTRACT_COMPANY_SYSTEM,
+            "user": prompts.EXTRACT_COMPANY_USER_TEMPLATE.format(raw_text=safe_text),
+            "output_schema": prompts.EXTRACT_COMPANY_TOOL_SCHEMA,
+        },
+        "generate_body": {
+            "system": prompts.GENERATE_BODY_SYSTEM,
+            "user_template": prompts.GENERATE_BODY_USER_TEMPLATE,
+            "note": "user_template엔 {company_json}·{raw_text} 자리가 아직 안 채워져 있음 — "
+            "company_json은 extract_company 결과를 JSON 문자열로, raw_text는 "
+            "raw_text_escaped 앞 4000자를 넣는 게 기존 파이프라인 관례.",
+        },
+        "evaluate_fit": {
+            "available": has_profile,
+            "system": prompts.EVALUATE_FIT_SYSTEM,
+            "user_template": prompts.EVALUATE_FIT_USER_TEMPLATE,
+            "output_schema": prompts.EVALUATE_FIT_TOOL_SCHEMA,
+            "candidate_profile": profile_text,
+            "custom_criteria": custom_criteria,
+            "note": "user_template엔 {candidate_profile}·{company_json}·{raw_text}·"
+            "{custom_criteria} 자리가 아직 안 채워져 있음 — candidate_profile·custom_criteria는 "
+            "위 값을 그대로, company_json은 extract_company 결과, raw_text는 "
+            "raw_text_escaped 앞 4000자를 넣는 게 기존 파이프라인 관례. available이 False면 "
+            "프로필이 없어 적합도 평가를 생략해야 한다(웹 파이프라인과 동일).",
+        },
+    }
+
+
+@mcp.tool()
+async def create_company(
+    company_data: dict,
+    body: str,
+    raw_text: str,
+    source_url: str | None = None,
+) -> dict:
+    """prepare_company_import로 받은 분석 패킷을 클라이언트가 직접 처리한 결과를 저장한다.
+    확인 없이 즉시 실행된다(기존 데이터를 덮어쓰지 않는 순수 추가).
+
+    company_data: extract_company 결과 JSON에 evaluate_fit 결과 필드(fit_score, fit_label,
+    strengths, gaps, salary_check, stability_check, location_check 등, fit_report_body는
+    제외 — 그건 body에 포함)를 합친 것. body: 마크다운 본문(생성한 본문 + 적합도 리포트
+    섹션까지 이미 합쳐진 상태) — 지원 상태 로그 섹션은 이 도구가 자동으로 추가한다."""
+    if source_url:
+        duplicate = next(
+            (c for c in storage.list_companies() if c.frontmatter.source_url == source_url), None
+        )
+        if duplicate:
+            raise ValueError(
+                f"이미 등록된 URL입니다: {duplicate.slug} "
+                f"({duplicate.frontmatter.display_name or duplicate.frontmatter.company_name})"
+            )
+
+    fm_data = {
+        **company_data,
+        "source_type": "url" if source_url else "text_paste",
+        "llm_provider": "mcp",
+    }
+    if source_url:
+        fm_data["source_url"] = source_url
+    fm = CompanyFrontmatter(**fm_data)
+
+    body = companies.append_status_log(body, "분석 완료")
+    slug = storage.make_slug(fm.company_name, fm.job_title or "")
+    storage.write_raw_text(slug, raw_text)
+    record = storage.write_company(slug, fm, body)
+    trigger_reindex_background()
+    return record.model_dump()
