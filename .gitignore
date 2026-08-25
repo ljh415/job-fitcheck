@@ -1,8 +1,8 @@
 # 환경 변수 (API 키 포함)
 .env
 
-# 실험 스크립트·로그
-scripts/
+# 실험 스크립트·로그 (저장소 루트 전용 — backend/scripts/는 추적 대상 자체검증 코드라 제외)
+/scripts/
 logs/
 
 # Claude Code 로컬 설정 (훅에 봇 토큰 포함)
@@ -38,6 +38,7 @@ docs/profile-history-followup/
 docs/rag-setup-improvements/
 docs/chat-history-server-storage/
 docs/rag-evidence-scoping/
+docs/code-refactoring/
 
 # 데이터 (개인 정보 포함)
 data/

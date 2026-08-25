@@ -15,7 +15,7 @@ from config import settings
 from llm.base import LLMAPIError
 from llm.router import capture_snapshot, high_from_snapshot
 from models import CandidateProfile, CandidateRecord, ProfileUpdateRequest, ProfileVersionNoteRequest
-from routers.rag import trigger_reindex_background
+from rag.reindex_service import trigger_background as trigger_reindex_background
 from services.app_db import (
     create_profile_version,
     delete_profile_version,
