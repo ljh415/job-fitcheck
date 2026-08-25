@@ -267,6 +267,7 @@ private 저장소를 지인 대상 셀프호스팅 공개로 전환하기 위한
 - ✅ v1.5.1을 Codex 코드 리뷰에 올려 5라운드 순차 대응, 버그 6건 수정 — (1) v1.5.1 완료 플래그가 있는 기기는 기기별 멱등 처리로 고쳐도 재시도 자체가 안 걸려 누락 이력이 영영 복구 안 되던 문제 → 별도 1회성 복구 플래그(`job-fitcheck-qa-migrated-v2`) + 서버 내용 기반 중복 방지 추가. (2) QnA POST 503 오류 문구가 history 재조회 실패로 즉시 지워지던 문제 → non-OK 응답과 연결 단절 구분, `renderQAHistory()`는 GET 성공 후에만 화면 교체. (3) 마이그레이션 내용 중복 체크가 boolean이라 완전 동일한 반복 턴이 최초 이관에서도 유실되던 문제 → 기존 occurrence 개수를 `Counter`로 세어 그만큼만 소비. (4) `crypto.randomUUID()`가 secure context 전용이라 TLS 없는 기본 배포에서 LAN IP로 접속하면 device ID 생성 자체가 실패하던 문제 → `crypto.getRandomValues()` fallback 추가. (5) 서로 다른 두 기기가 동시에 마이그레이션하면 같은 occurrence 스냅샷을 읽어 중복 삽입되던 경합 → `BEGIN IMMEDIATE`로 트랜잭션 직렬화. (6) RAG 채팅방 동시 마이그레이션 시 기본키 충돌로 500 나던 문제 → `INSERT ... ON CONFLICT DO NOTHING` 원자적 처리. 매 수정마다 self-check(동시성은 threading 재현)·"수정 전 코드로 돌리면 실제로 실패하는지" 대조 검증까지 거친 뒤, `fix/codex-review-r1-v1.5.2` 브랜치 하나에 순서대로 커밋해 마지막에 한 번만 `main`에 merge 완료(2026-08-22, v1.5.2).
 - ✅ QnA 버블 대화 시각 표시 + 여백 버그 수정 (2026-08-22)
 - ✅ RAG 에이전트 근거 프로젝트 섞임 버그 수정 (2026-08-22, v1.5.4)
+- ✅ 코드 구조 리팩토링 4건(RAG 재색인 경계·적합도 평가 통합·app_db 자체검증 이동·프론트 화면 분리) + 재평가 근무지 갭 보정 누락 버그 수정 (2026-08-25, v1.5.5)
 - ⬜ **프롬프트 버전 관리** — LLM 호출마다 프롬프트 ID/버전/해시 기록. Codex 1차 제안, Claude 교차 검토 전. 상세: `docs/planning/prompt_versioning_plan.md`(로컬 전용)
 - 💡 RAG 에이전트 타이밍 디버그 로그 — 지연 반복 체감 시 재검토. 상세: `docs/planning/rag_agent_timing_debug.md`(로컬 전용)
 - ✅ RAG 로컬 임베딩 provider 사용자 문서·설정 공백 — merge 후 회귀 테스트 중 발견·즉시 수정
