@@ -523,8 +523,12 @@ def _replace_fit_section(body: str, new_section: str) -> str:
     return body.rstrip() + f"\n\n{new_section}"
 
 
-def _append_status_log(body: str, label: str) -> str:
-    """'지원 상태 로그' 섹션 끝에 오늘 날짜로 새 항목을 추가한다. 섹션이 없으면 새로 만든다."""
+def append_status_log(body: str, label: str) -> str:
+    """'지원 상태 로그' 섹션 끝에 오늘 날짜로 새 항목을 추가한다. 섹션이 없으면 새로 만든다.
+
+    refit_company()뿐 아니라 mcp_server.py의 update_company 도구도 재사용한다 — 수동 상태
+    변경(PUT /api/companies/{slug})은 지금도 프론트 JS가 body를 직접 조립해서 보내므로 이
+    함수를 거치지 않는다(웹 UI 동작은 그대로 둠, MCP 클라이언트를 위한 서버 쪽 대응만 추가)."""
     new_line = f"- {date.today().isoformat()}: {label}"
     lines = body.split("\n")
     log_header_idx = next(
@@ -886,6 +890,12 @@ async def refill_company(slug: str):
         raise HTTPException(status_code=e.status_code, detail=str(e))
 
 
+# 상태가 이 값이 되면 자동으로 pin/unpin — 웹 프론트(app.js onStatusChange)가 쓰던 규칙을
+# 그대로 옮김. mcp_server.py의 update_company가 재사용한다.
+AUTO_PIN_ON = {"지원"}
+AUTO_UNPIN_ON = {"미지원", "탈락", "보류", "지원마감"}
+
+
 @router.post("/api/companies/{slug}/pin")
 async def toggle_pin(slug: str):
     """즐겨찾기 핀 토글 — pinned 필드만 반전시켜 저장."""
@@ -936,7 +946,7 @@ async def refit_company(slug: str):
     body = record.body
     new_section = f"## 4. 적합도 리포트 — {fit_result.get('fit_score', '?')} / 100\n\n{fit_report}"
     body = _replace_fit_section(body, new_section)
-    body = _append_status_log(body, "적합도 재평가 완료")
+    body = append_status_log(body, "적합도 재평가 완료")
 
     record = storage.write_company(slug, fm, body)
     _snapshot_fit_history(slug, fm.fit_score, fm.fit_label, profile_version_id_at_eval)

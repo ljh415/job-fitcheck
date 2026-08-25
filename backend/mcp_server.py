@@ -17,6 +17,7 @@ from rag.embed.local import LocalEmbeddingProvider
 from rag.postgres.db import get_connection
 from rag.postgres.query_router import list_postings
 from rag.postgres.retrieval import search_chunks
+from rag.reindex_service import trigger_background as trigger_reindex_background
 from routers import companies, profile, rag
 
 mcp = MCPServer(name="job-fitcheck")
@@ -102,6 +103,48 @@ async def list_matching_postings(skill: str = "", job_title: str = "", limit: in
         return {"enabled": True, "postings": rows}
     finally:
         await asyncio.to_thread(conn.close)
+
+
+@mcp.tool()
+async def update_company(
+    slug: str,
+    status: str | None = None,
+    pinned: bool | None = None,
+) -> dict:
+    """회사의 지원 상태(status)·즐겨찾기(pinned)를 변경한다. 확인 없이 즉시 실행된다(사용자가
+    대시보드에서 클릭 한 번으로 바꾸던 저위험 필드, AI 분석 내용은 안 건드림).
+
+    status를 바꾸면 지원 상태 로그에 자동 기록되고, 웹 UI와 동일한 규칙으로 '지원'이면 자동
+    핀 고정, '미지원'/'탈락'/'보류'/'지원마감'이면 자동 핀 해제된다. pinned를 명시적으로 같이
+    주면 그 값이 자동 규칙보다 우선한다."""
+    record = storage.read_company(slug)
+    if not record:
+        raise ValueError(f"회사를 찾을 수 없습니다: {slug}")
+
+    fm = record.frontmatter
+    body = record.body
+    changed = False
+
+    if status is not None and status != fm.status:
+        fm = fm.model_copy(update={"status": status})
+        body = companies.append_status_log(body, status)
+        changed = True
+        if pinned is None:
+            if status in companies.AUTO_PIN_ON:
+                pinned = True
+            elif status in companies.AUTO_UNPIN_ON:
+                pinned = False
+
+    if pinned is not None and pinned != fm.pinned:
+        fm = fm.model_copy(update={"pinned": pinned})
+        changed = True
+
+    if not changed:
+        return record.model_dump()
+
+    updated = storage.write_company(slug, fm, body)
+    trigger_reindex_background()  # RAG가 복제하는 status 필드 갱신, RAG 꺼져 있으면 no-op
+    return updated.model_dump()
 
 
 def _chunk_source(conn, chunk_id: int) -> dict:
