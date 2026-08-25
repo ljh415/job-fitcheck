@@ -1,5 +1,33 @@
 # Changelog
 
+## v1.5.5 — 코드 구조 리팩토링 4건 + 재평가 근무지 갭 보정 누락 버그 수정 (2026-08-25)
+
+`docs/planning/code_refactoring_plan.md`(Codex 제안, Claude 교차 검토)를 바탕으로 책임
+경계·중복 정리. 기능 변경 없는 순수 구조 이동이 대부분이나, 설계 검증 과정에서 실제
+버그 1건을 발견해 함께 수정했다. `refactor/code-refactoring` 브랜치에서 4개 단계를
+순서대로 커밋 후 `main`에 merge(주간요약·상태로그 분리는 착수 전 재판단 — 실익 대비
+비용이 커서 스킵, Codex도 동의).
+
+- **재평가(refit) 시 Gemini의 근무지 조건부/미달 갭 자동 보정 누락** — 최초 평가
+  (`_process_company`)의 Gemini 분기에는 `location_check`가 "조건부"·"미달"인데 `gaps`에
+  근무지 관련 항목이 없으면 자동으로 추가하는 보정이 있었는데, 거의 동일한 재평가 함수
+  (`refit_company`)에는 이 로직이 없었음. `git log -S`로 확인한 결과 브릿지를 처음 추가한
+  커밋(`dd7128c`, 2026-07-09) 시점에 `refit_company()`가 이미 존재했는데 그쪽은 고치지
+  않은 채 남아있던 누락 — 두 함수가 중복 구현돼 있어 한쪽만 고쳐지고 다른 쪽은 놓친
+  전형적 사례. 적합도 평가 로직을 `services/company_analysis.py::evaluate_fit()`으로
+  통합하면서 재평가에도 동일하게 적용되도록 수정.
+- **RAG 재색인 실행 상태·잠금·트리거**(`backend/rag/reindex_service.py`)와 **회사 적합도
+  평가**(`backend/services/company_analysis.py`)를 각각 라우터에서 분리 — `companies.py`/
+  `profile.py`가 `routers.rag`를 직접 import하던 라우터 간 역방향 의존 제거.
+- **`services/app_db.py`의 자체검증 코드**(약 360줄)를 `backend/scripts/check_app_db.py`로
+  분리, 운영 코드만 남김. 이동 중 해당 self-check의 read-only DB 시나리오가 Docker
+  컨테이너(root 실행)에서는 애초에 검증 불가능했음을 발견(root는 파일 권한 비트를 무시)
+  — 디렉토리 경로를 DB 경로로 지정해 `sqlite3.connect()` 자체가 실패하도록 바꿔 root
+  여부와 무관하게 동작하도록 수정.
+- **`frontend/app.js`(2,675줄)를 화면 단위로 분리** — 타임라인(`timeline.js`), RAG
+  설정·재색인·채팅(`rag.js`). ES Module 전환 없이 기존 전역 스크립트 구조 유지.
+  Playwright로 데스크톱·모바일 두 viewport 각 14개 시나리오 검증.
+
 ## v1.5.4 — RAG 에이전트 근거 프로젝트 섞임 버그 수정 (2026-08-22)
 
 RAG 에이전트가 "이 프로젝트(Job FitCheck) 경쟁력이 있냐" 같이 특정 프로젝트로 범위를 좁힌
