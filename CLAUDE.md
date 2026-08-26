@@ -59,8 +59,9 @@ docker compose restart api     # ❌ 이미지가 캐시되어 변경사항 미�
 
 ## 아키텍처 결정
 
-- **DB 없음**: 회사 정보는 `data/companies/{slug}.md` 마크다운 파일로 저장. 검색·필터는 메모리 내 처리. 데이터가 수백 개 미만인 개인 사용 기준 충분.
+- **DB 없음(초기 결정, 고정 원칙 아님)**: 회사 정보는 현재 `data/companies/{slug}.md` 마크다운 파일로 저장하고 검색·필터는 메모리 내 처리한다. 데이터가 수백 개 미만인 초기 규모를 전제로 한 결정이며, 데이터가 늘거나 필드 단위 관리(조회·필터·이력 추적)가 필요해지면 재검토 대상이다 — "마크다운으로 시작했다"는 사실이 앞으로도 그래야 한다는 근거는 아니다. 재검토 논의는 `docs/planning/db_architecture_reconsideration.md` 참고(진행 중, 결정된 것 없음).
 - **RAG(선택 기능)는 이 원칙의 예외가 아니라 opt-in 계층**: 핵심 데이터(회사 정보)는 여전히 마크다운 그대로 두고, `RAG_POSTGRES_HOST` 설정 시에만 PostgreSQL+pgvector가 추가로 붙어 자연어 채팅 검색을 제공한다. 미설정 배포는 Postgres 관련 코드가 아예 안 쓰인다(`routers/rag.py`가 `/status` 외 전부 503 가드). 사용자 가이드는 `RAG_GUIDE.md`, 코드 구조는 `backend/rag/README.md`, 개발 이력은 `docs/rag-integration/`(git 미추적) 참고.
+- **MCP 서버**: Codex·Claude 같은 외부 AI 클라이언트가 채팅으로 회사·프로필·RAG 기능을 도구로 쓸 수 있게 한다. RAG와 달리 opt-in 토글이 없고, 서버가 뜨면 `/api/mcp`가 항상 켜져 있다(인증은 기존 JWT 재사용, 별도 권한 체계 없음). 사용자 가이드는 `MCP_GUIDE.md`, 코드는 `backend/mcp_server.py`, 설계 배경은 `docs/planning/mcp_plan_notes.md`(git 미추적) 참고.
 - **프로필 히스토리(항상 켜짐)는 SQLite 사용**: 핵심 데이터(회사 정보·프로필)는 여전히 마크다운 파일 그대로 두고, 프로필 스냅샷·회사별 적합도 평가 이력만 `data/app.db`(SQLite, 단일 파일)에 별도 기록한다. RAG의 Postgres와 달리 opt-in이 아니라 항상 켜져 있지만, 별도 서버 프로세스가 아닌 로컬 파일 하나라 "DB 없음"(별도 DB 서버 미의존) 원칙과 어긋나지 않는다. DB 장애 시(`init_db()` 실패) 이력 조회 API는 503을 반환하되 회사 CRUD 등 핵심 기능은 영향 없음(`backend/services/app_db.py`의 `is_healthy()`). `backend/services/app_db.py` 참고.
 - **LLM 티어**: Lightweight = 구조화 추출·요약, High = 프로필 추출·적합도 평가·Q&A. 설정 화면에서 모델 수동 변경 가능.
   - Claude 기본: Light=haiku-4-5, High=sonnet-4-6
