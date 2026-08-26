@@ -8,12 +8,14 @@
 설계 배경: docs/planning/mcp_plan_notes.md(로컬 전용), 진행 기록: docs/mcp-server/(로컬 전용).
 """
 import asyncio
+from typing import Literal
 
 import prompts
 import storage
 from config import resolve_rag_embedding_provider, settings
 from mcp.server.mcpserver.server import MCPServer
 from models import CompanyFrontmatter
+from pydantic import ValidationError
 from rag.embed.google import GoogleEmbeddingProvider
 from rag.embed.local import LocalEmbeddingProvider
 from rag.postgres.db import get_connection
@@ -111,7 +113,7 @@ async def list_matching_postings(skill: str = "", job_title: str = "", limit: in
 @mcp.tool()
 async def update_company(
     slug: str,
-    status: str | None = None,
+    status: Literal["미지원", "지원", "서류통과", "인터뷰", "최종", "탈락", "보류", "지원마감"] | None = None,
     pinned: bool | None = None,
 ) -> dict:
     """회사의 지원 상태(status)·즐겨찾기(pinned)를 변경한다. 확인 없이 즉시 실행된다(사용자가
@@ -144,6 +146,15 @@ async def update_company(
 
     if not changed:
         return record.model_dump()
+
+    # model_copy()는 재검증을 안 해서 잘못된 값도 그대로 통과한다 — 파일로 저장되고 나면
+    # read_company()/list_companies()가 생성자 검증에서 실패해 해당 회사를 못 읽게 된다
+    # (2026-08-25 Codex 리뷰 finding). MCP 스키마의 Literal 타입으로 대부분 걸러지지만,
+    # 저장 직전에 한 번 더 검증해 어떤 경로로든 잘못된 값이 파일에 쓰이지 않도록 한다.
+    try:
+        fm = CompanyFrontmatter.model_validate(fm.model_dump())
+    except ValidationError as e:
+        raise ValueError(f"저장할 수 없는 값입니다: {e}")
 
     updated = storage.write_company(slug, fm, body)
     trigger_reindex_background()  # RAG가 복제하는 status 필드 갱신, RAG 꺼져 있으면 no-op
