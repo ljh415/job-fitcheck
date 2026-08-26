@@ -209,9 +209,16 @@ async def search_rag_evidence(question: str, top_k: int = 5) -> dict:
             evidence.append({"score": round(score, 4), "source": source, "excerpt": text})
         return {"enabled": True, "provider": provider_name, "evidence": evidence}
     finally:
+        # 두 자원을 독립적으로 정리한다(routers/rag.py의 기존 cleanup과 동일 패턴) —
+        # embed_provider.close()(SSH 터널 종료 대기라 실패할 수 있음)가 예외를 던지면
+        # 그 다음 줄인 conn.close()가 실행되지 않아 PostgreSQL 연결이 회수되지 않는다
+        # (2026-08-25 Codex 리뷰 finding).
         close = getattr(embed_provider, "close", None)
         if close:
-            await asyncio.to_thread(close)
+            try:
+                await asyncio.to_thread(close)
+            except Exception:
+                pass
         await asyncio.to_thread(conn.close)
 
 
