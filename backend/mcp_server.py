@@ -299,9 +299,14 @@ async def create_company(
     strengths, gaps, salary_check, stability_check, location_check 등, fit_report_body는
     제외 — 그건 body에 포함)를 합친 것. body: 마크다운 본문(생성한 본문 + 적합도 리포트
     섹션까지 이미 합쳐진 상태) — 지원 상태 로그 섹션은 이 도구가 자동으로 추가한다."""
-    if source_url:
+    # source_url 인자와 company_data["source_url"](raw_text만 줘도 extract_company가 원문에서
+    # 찾아 채울 수 있음)가 서로 다른 값을 가질 수 있어, 중복검사·source_type·최종 저장 전부
+    # 이 값 하나만 기준으로 통일한다(둘이 따로 놀아서 생긴 버그, 2026-08-25 Codex 리뷰 finding).
+    effective_source_url = source_url or company_data.get("source_url")
+
+    if effective_source_url:
         duplicate = next(
-            (c for c in storage.list_companies() if c.frontmatter.source_url == source_url), None
+            (c for c in storage.list_companies() if c.frontmatter.source_url == effective_source_url), None
         )
         if duplicate:
             raise ValueError(
@@ -311,11 +316,10 @@ async def create_company(
 
     fm_data = {
         **company_data,
-        "source_type": "url" if source_url else "text_paste",
+        "source_url": effective_source_url,
+        "source_type": "url" if effective_source_url else "text_paste",
         "llm_provider": "mcp",
     }
-    if source_url:
-        fm_data["source_url"] = source_url
     fm = CompanyFrontmatter(**fm_data)
 
     body = companies.append_status_log(body, "분석 완료")
