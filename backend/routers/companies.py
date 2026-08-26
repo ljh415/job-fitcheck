@@ -116,8 +116,9 @@ def _resolve_profile_version_id_for_eval() -> int | None:
         return None
 
 
-def _snapshot_fit_history(slug: str, fit_score, fit_label, profile_version_id: int | None) -> None:
+def snapshot_fit_history(slug: str, fit_score, fit_label, profile_version_id: int | None) -> None:
     """방금 저장된 회사 평가 결과를 이력(SQLite)에 추가한다 — 덮어쓰기 아니라 누적.
+    mcp_server.py의 create_company도 재사용한다.
     profile_version_id는 평가에 실제로 사용한 프로필을 읽은 시점에 고정해서 전달받는다
     (평가 완료 시점에 다시 조회하면, 평가 대기 중 프로필이 바뀐 경우 엉뚱한 버전과
     연결될 수 있다).
@@ -130,6 +131,26 @@ def _snapshot_fit_history(slug: str, fit_score, fit_label, profile_version_id: i
         create_fit_history_entry(slug, profile_version_id, fit_score, fit_label, content)
     except Exception as e:
         logger.warning("평가 이력 저장 실패: %s", e)
+
+
+def build_fit_notification_materials(fm: CompanyFrontmatter) -> dict:
+    """분석 완료 알림 재료를 사용자 알림 설정에 따라 조립한다. mcp_server.py의
+    create_company도 재사용한다."""
+    materials = {
+        "company": fm.display_name or fm.company_name,
+        "job_title": fm.job_title or "",
+        "score": fm.fit_score if fm.fit_score is not None else "",
+        "label": fm.fit_label or "",
+    }
+    if get_notify_pref("notify_strengths") and fm.strengths:
+        materials["strengths"] = [item.split(" - ", 1)[0].strip() for item in fm.strengths[:2]]
+    if get_notify_pref("notify_gaps") and fm.gaps:
+        materials["gaps"] = [item.split(" - ", 1)[0].strip() for item in fm.gaps[:2]]
+    if get_notify_pref("notify_jobplanet_rating") and fm.jobplanet_score:
+        materials["jobplanet"] = fm.jobplanet_score
+    if get_notify_pref("notify_employee_count") and fm.employee_count:
+        materials["employee_count"] = fm.employee_count
+    return materials
 
 
 _in_progress_count = 0
@@ -523,8 +544,12 @@ def _replace_fit_section(body: str, new_section: str) -> str:
     return body.rstrip() + f"\n\n{new_section}"
 
 
-def _append_status_log(body: str, label: str) -> str:
-    """'지원 상태 로그' 섹션 끝에 오늘 날짜로 새 항목을 추가한다. 섹션이 없으면 새로 만든다."""
+def append_status_log(body: str, label: str) -> str:
+    """'지원 상태 로그' 섹션 끝에 오늘 날짜로 새 항목을 추가한다. 섹션이 없으면 새로 만든다.
+
+    refit_company()뿐 아니라 mcp_server.py의 update_company 도구도 재사용한다 — 수동 상태
+    변경(PUT /api/companies/{slug})은 지금도 프론트 JS가 body를 직접 조립해서 보내므로 이
+    함수를 거치지 않는다(웹 UI 동작은 그대로 둠, MCP 클라이언트를 위한 서버 쪽 대응만 추가)."""
     new_line = f"- {date.today().isoformat()}: {label}"
     lines = body.split("\n")
     log_header_idx = next(
@@ -687,23 +712,9 @@ async def _process_company(
     slug = existing_slug or storage.make_slug(fm.company_name, fm.job_title or "")
     storage.write_raw_text(slug, raw_text)
     record = storage.write_company(slug, fm, body)
-    _snapshot_fit_history(slug, fm.fit_score, fm.fit_label, profile_version_id_at_eval)
+    snapshot_fit_history(slug, fm.fit_score, fm.fit_label, profile_version_id_at_eval)
 
-    materials = {
-        "company": fm.display_name or fm.company_name,
-        "job_title": fm.job_title or "",
-        "score": fit_data.get("fit_score", ""),
-        "label": fit_data.get("fit_label", ""),
-    }
-    if get_notify_pref("notify_strengths") and fm.strengths:
-        materials["strengths"] = [item.split(" - ", 1)[0].strip() for item in fm.strengths[:2]]
-    if get_notify_pref("notify_gaps") and fm.gaps:
-        materials["gaps"] = [item.split(" - ", 1)[0].strip() for item in fm.gaps[:2]]
-    if get_notify_pref("notify_jobplanet_rating") and fm.jobplanet_score:
-        materials["jobplanet"] = fm.jobplanet_score
-    if get_notify_pref("notify_employee_count") and fm.employee_count:
-        materials["employee_count"] = fm.employee_count
-
+    materials = build_fit_notification_materials(fm)
     await send_notification(materials)
     # RAG(opt-in) 자동 재색인 — 공고 원문(.raw.txt)이 방금 바뀌었으니 백그라운드로 반영한다.
     # RAG가 꺼져 있으면 즉시 아무 일도 안 함(4번 "데이터 동기화" 항목).
@@ -886,6 +897,12 @@ async def refill_company(slug: str):
         raise HTTPException(status_code=e.status_code, detail=str(e))
 
 
+# 상태가 이 값이 되면 자동으로 pin/unpin — 웹 프론트(app.js onStatusChange)가 쓰던 규칙을
+# 그대로 옮김. mcp_server.py의 update_company가 재사용한다.
+AUTO_PIN_ON = {"지원"}
+AUTO_UNPIN_ON = {"미지원", "탈락", "보류", "지원마감"}
+
+
 @router.post("/api/companies/{slug}/pin")
 async def toggle_pin(slug: str):
     """즐겨찾기 핀 토글 — pinned 필드만 반전시켜 저장."""
@@ -936,9 +953,9 @@ async def refit_company(slug: str):
     body = record.body
     new_section = f"## 4. 적합도 리포트 — {fit_result.get('fit_score', '?')} / 100\n\n{fit_report}"
     body = _replace_fit_section(body, new_section)
-    body = _append_status_log(body, "적합도 재평가 완료")
+    body = append_status_log(body, "적합도 재평가 완료")
 
     record = storage.write_company(slug, fm, body)
-    _snapshot_fit_history(slug, fm.fit_score, fm.fit_label, profile_version_id_at_eval)
+    snapshot_fit_history(slug, fm.fit_score, fm.fit_label, profile_version_id_at_eval)
     trigger_reindex_background()  # RAG가 복제하는 fit_score/strengths/gaps 갱신, RAG 꺼져 있으면 no-op
     return record
