@@ -31,6 +31,14 @@ from services import scraper
 
 mcp = MCPServer(name="job-fitcheck")
 
+# list_companies 응답에서 제외할 필드 — 문장 단위 상세 텍스트라 회사 수가 늘면 MCP 클라이언트
+# 라이브러리(httpx-sse)의 SSE 이벤트 크기 제한(기본 1MB, streamable_http_client()가 설정을
+# 노출하지 않아 서버 쪽에서 줄이는 것 외엔 대응 방법이 없음)을 넘길 수 있다. 상세는 get_company로.
+_LIST_COMPANIES_EXCLUDED_FIELDS = {
+    "strengths", "gaps", "key_responsibilities",
+    "required_skills", "preferred_skills", "benefits", "hiring_process",
+}
+
 
 @mcp.tool()
 async def get_rag_status() -> dict:
@@ -45,7 +53,10 @@ async def list_companies(
     pinned_only: bool = False,
     min_score: int | None = None,
 ) -> list[dict]:
-    """등록된 회사 목록을 조회한다. 인자를 안 주면 전체 목록을 반환한다.
+    """등록된 회사 목록을 조회한다. 인자를 안 주면 전체 목록을 반환한다. 강점/갭/주요업무/
+    필수·우대요건/복지/채용절차처럼 문장 단위로 풀어쓴 상세 필드는 목록에서 빠진다(회사 수가
+    늘면 MCP 클라이언트의 SSE 이벤트 크기 제한을 넘어설 수 있음) — 특정 회사의 전체 내용은
+    get_company로 조회한다.
 
     search: 회사명/직무/지역/상태에서 부분 일치 검색(대소문자 무시)
     status: 정확히 일치하는 상태(예: "지원", "탈락")만 필터
@@ -67,7 +78,7 @@ async def list_companies(
             haystacks = [fm.company_name, fm.display_name, fm.job_title, fm.location, fm.status]
             if not any(q in (h or "").lower() for h in haystacks):
                 continue
-        result.append(meta.model_dump())
+        result.append(meta.model_dump(exclude={"frontmatter": _LIST_COMPANIES_EXCLUDED_FIELDS}))
     return result
 
 
