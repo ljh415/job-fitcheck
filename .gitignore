@@ -39,7 +39,6 @@ docs/rag-setup-improvements/
 docs/chat-history-server-storage/
 docs/rag-evidence-scoping/
 docs/code-refactoring/
-docs/mcp-server/
 
 # 데이터 (개인 정보 포함)
 data/

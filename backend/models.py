@@ -49,14 +49,13 @@ class CompanyFrontmatter(BaseModel):
     benefits: list[str] = Field(default_factory=list)
     hiring_process: list[str] = Field(default_factory=list)
 
-    # 적합도 — High 티어 LLM이 후보자 프로필과 공고를 비교해서 생성.
-    # LLM tool-use 응답은 API가 스키마의 min/max/enum을 강제하지 않으므로 여기서 검증한다.
-    fit_score: int | None = Field(default=None, ge=0, le=100)
-    fit_label: Literal["강력추천", "추천", "조건부추천", "보류", "비추천"] | None = None
+    # 적합도 — High 티어 LLM이 후보자 프로필과 공고를 비교해서 생성
+    fit_score: int | None = None    # 0~100
+    fit_label: str | None = None    # 강력추천 / 추천 / 조건부추천 / 보류 / 비추천
     strengths: list[str] = Field(default_factory=list)
     gaps: list[str] = Field(default_factory=list)
-    salary_check: Literal["양호", "미확인", "낮음"] | None = None
-    stability_check: Literal["충족", "조건부", "미달"] | None = None
+    salary_check: str | None = None     # 양호 / 미확인 / 낮음
+    stability_check: str | None = None  # 충족 / 조건부 / 미달
     location_check: str | None = None
 
     # 지원 현황 — 사용자가 직접 업데이트
