@@ -50,11 +50,7 @@ class CompanyFrontmatter(BaseModel):
     hiring_process: list[str] = Field(default_factory=list)
 
     # 적합도 — High 티어 LLM이 후보자 프로필과 공고를 비교해서 생성.
-    # fit_score/fit_label/salary_check/stability_check는 EVALUATE_FIT_TOOL_SCHEMA(prompts.py)에도
-    # 같은 제약이 선언돼 있지만, LLM tool-use 응답은 API가 스키마 범위를 강제하지 않고 그대로
-    # 반환된다(llm/anthropic.py 등 extract_structured()는 검증 없이 dict(block.input)을 돌려줌) —
-    # 웹 파이프라인도 원래부터 이 값을 검증 없이 저장하고 있었다. 여기(canonical 모델)에 제약을
-    # 걸어야 웹·MCP 모든 저장 경로에서 한 번에 강제된다(2026-08-26 Codex 리뷰 finding).
+    # LLM tool-use 응답은 API가 스키마의 min/max/enum을 강제하지 않으므로 여기서 검증한다.
     fit_score: int | None = Field(default=None, ge=0, le=100)
     fit_label: Literal["강력추천", "추천", "조건부추천", "보류", "비추천"] | None = None
     strengths: list[str] = Field(default_factory=list)

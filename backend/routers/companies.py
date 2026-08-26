@@ -118,8 +118,7 @@ def _resolve_profile_version_id_for_eval() -> int | None:
 
 def snapshot_fit_history(slug: str, fit_score, fit_label, profile_version_id: int | None) -> None:
     """방금 저장된 회사 평가 결과를 이력(SQLite)에 추가한다 — 덮어쓰기 아니라 누적.
-    mcp_server.py의 create_company도 재사용한다(2026-08-26 Codex 리뷰 finding — MCP 생성
-    경로가 이 호출을 빠뜨려서 최초 점수가 이력에 안 남는 문제).
+    mcp_server.py의 create_company도 재사용한다.
     profile_version_id는 평가에 실제로 사용한 프로필을 읽은 시점에 고정해서 전달받는다
     (평가 완료 시점에 다시 조회하면, 평가 대기 중 프로필이 바뀐 경우 엉뚱한 버전과
     연결될 수 있다).

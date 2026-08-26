@@ -147,21 +147,15 @@ async def update_company(
     if not changed:
         return record.model_dump()
 
-    # model_copy()는 재검증을 안 해서 잘못된 값도 그대로 통과한다 — 파일로 저장되고 나면
-    # read_company()/list_companies()가 생성자 검증에서 실패해 해당 회사를 못 읽게 된다
-    # (2026-08-25 Codex 리뷰 finding). MCP 스키마의 Literal 타입으로 대부분 걸러지지만,
-    # 저장 직전에 한 번 더 검증해 어떤 경로로든 잘못된 값이 파일에 쓰이지 않도록 한다.
+    # model_copy()는 재검증을 안 하므로 저장 전에 한 번 더 검증한다(잘못된 값이 파일에
+    # 쓰이면 read_company()/list_companies()가 이후 그 회사를 못 읽게 됨).
     try:
         fm = CompanyFrontmatter.model_validate(fm.model_dump())
     except ValidationError as e:
         raise ValueError(f"저장할 수 없는 값입니다: {e}")
 
     updated = storage.write_company(slug, fm, body)
-    # RAG의 posting 테이블 스키마·적재 로직 어디에도 status/pinned가 없다(rag/postgres/
-    # ingest.py 확인) — toggle_pin()과 동일하게 재색인을 아예 트리거하지 않는다. 예전엔
-    # PUT /api/companies/{slug}(tech_stack 등 RAG 대상 필드도 바꾸는 핸들러)의 트리거 호출을
-    # 그대로 복사해왔는데, 그쪽과 달리 이 도구는 RAG 무관 필드만 다뤄서 불필요했다
-    # (2026-08-25 Codex 리뷰 finding).
+    # status/pinned는 RAG posting 스키마에 없는 필드라 재색인 불필요(toggle_pin()과 동일).
     return updated.model_dump()
 
 
@@ -209,10 +203,7 @@ async def search_rag_evidence(question: str, top_k: int = 5) -> dict:
             evidence.append({"score": round(score, 4), "source": source, "excerpt": text})
         return {"enabled": True, "provider": provider_name, "evidence": evidence}
     finally:
-        # 두 자원을 독립적으로 정리한다(routers/rag.py의 기존 cleanup과 동일 패턴) —
-        # embed_provider.close()(SSH 터널 종료 대기라 실패할 수 있음)가 예외를 던지면
-        # 그 다음 줄인 conn.close()가 실행되지 않아 PostgreSQL 연결이 회수되지 않는다
-        # (2026-08-25 Codex 리뷰 finding).
+        # provider.close() 실패가 conn.close()를 막지 않도록 독립적으로 정리한다(routers/rag.py와 동일 패턴).
         close = getattr(embed_provider, "close", None)
         if close:
             try:
@@ -296,10 +287,7 @@ async def prepare_company_import(url: str | None = None, raw_text: str | None = 
     }
 
 
-# create_company가 company_data에서 받아들일 필드 — extract_company/evaluate_fit 결과만
-# 허용하고, status/pinned/created_at 같은 사용자 관리·서버 관리 필드는 스키마에 없으므로
-# 자동으로 제외된다(수작업 나열이 아니라 기존 도구 스키마에서 그대로 뽑음 — 2026-08-25
-# Codex 리뷰 finding, 필드가 늘어도 스키마만 따라가면 됨).
+# extract_company/evaluate_fit 스키마 필드만 허용 — status/pinned/created_at 등은 여기 없어 자동 제외된다.
 _CREATE_COMPANY_ALLOWED_FIELDS = set(prompts.EXTRACT_COMPANY_TOOL_SCHEMA["properties"]) | (
     set(prompts.EVALUATE_FIT_TOOL_SCHEMA["properties"]) - {"fit_report_body"}
 )
@@ -320,9 +308,8 @@ async def create_company(
     제외 — 그건 body에 포함)를 합친 것. 이 필드 집합 밖의 키(status/pinned/created_at 등
     사용자·서버 관리 필드)는 무시된다. body: 마크다운 본문(생성한 본문 + 적합도 리포트
     섹션까지 이미 합쳐진 상태) — 지원 상태 로그 섹션은 이 도구가 자동으로 추가한다."""
-    # source_url 인자와 company_data["source_url"](raw_text만 줘도 extract_company가 원문에서
-    # 찾아 채울 수 있음)가 서로 다른 값을 가질 수 있어, 중복검사·source_type·최종 저장 전부
-    # 이 값 하나만 기준으로 통일한다(둘이 따로 놀아서 생긴 버그, 2026-08-25 Codex 리뷰 finding).
+    # company_data["source_url"](raw_text만 줘도 extract_company가 채울 수 있음)도 함께 고려해
+    # 중복검사·source_type·최종 저장을 전부 이 값 하나로 통일한다.
     effective_source_url = source_url or company_data.get("source_url")
 
     if effective_source_url:
@@ -351,11 +338,7 @@ async def create_company(
     slug = storage.make_slug(fm.company_name, fm.job_title or "")
     storage.write_raw_text(slug, raw_text)
     record = storage.write_company(slug, fm, body)
-    # 웹 분석(_process_company)/재평가(refit_company)는 저장 직후 항상 이 스냅샷을 남기는데
-    # MCP 경로만 빠져 있었다 — 이후 재평가하면 최초 점수가 이력에서 영구히 사라진다
-    # (2026-08-26 Codex 리뷰 finding). profile_version_id는 MCP가 프로필을 읽은 시점을
-    # 추적하지 않으므로 우선 None(추후 prepare_company_import가 버전 id를 같이 넘기게
-    # 확장 가능 — 지금은 이력 유실 방지가 우선).
+    # profile_version_id는 MCP가 프로필을 읽은 시점을 추적하지 않아 None으로 기록한다.
     companies.snapshot_fit_history(slug, fm.fit_score, fm.fit_label, None)
     trigger_reindex_background()
     return record.model_dump()
