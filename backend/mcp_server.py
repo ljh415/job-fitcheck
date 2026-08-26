@@ -10,9 +10,12 @@
 import asyncio
 from typing import Literal
 
+import httpx
 import prompts
 import storage
 from config import resolve_rag_embedding_provider, settings
+from fastapi import HTTPException
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.mcpserver.server import MCPServer
 from models import CompanyFrontmatter
 from notify import send_notification
@@ -73,14 +76,17 @@ async def get_company(slug: str) -> dict:
     """특정 회사의 공고 원문, 분석 결과(frontmatter), 상태 로그(본문)를 조회한다."""
     record = storage.read_company(slug)
     if not record:
-        raise ValueError(f"회사를 찾을 수 없습니다: {slug}")
+        raise ToolError(f"회사를 찾을 수 없습니다: {slug}")
     return record.model_dump()
 
 
 @mcp.tool()
 async def compare_companies(slugs: list[str]) -> list[dict]:
     """여러 회사의 공고와 적합도 정보를 나란히 비교한다(최대 5개)."""
-    records = await companies.compare_companies(slugs)
+    try:
+        records = await companies.compare_companies(slugs)
+    except HTTPException as e:
+        raise ToolError(str(e.detail))
     return [r.model_dump() for r in records]
 
 
@@ -93,7 +99,10 @@ async def get_application_timeline() -> list[dict]:
 @mcp.tool()
 async def get_profile() -> dict:
     """후보자 프로필(이력서 기반 구조화 정보 + 본문)을 조회한다."""
-    record = await profile.get_profile()
+    try:
+        record = await profile.get_profile()
+    except HTTPException as e:
+        raise ToolError(str(e.detail))
     return record.model_dump()
 
 
@@ -102,7 +111,7 @@ async def list_matching_postings(skill: str = "", job_title: str = "", limit: in
     """기술 스택·직무명으로 공고를 검색한다(LLM 미사용, 순수 DB 조회). skill과 job_title을
     같이 주면 둘 다 만족하는 공고만 반환한다."""
     if limit <= 0:
-        raise ValueError("limit은 1 이상이어야 합니다.")
+        raise ToolError("limit은 1 이상이어야 합니다.")
     if not settings.rag_postgres_host:
         return {"enabled": False, "postings": []}
     conn = await asyncio.to_thread(get_connection)
@@ -127,7 +136,7 @@ async def update_company(
     주면 그 값이 자동 규칙보다 우선한다."""
     record = storage.read_company(slug)
     if not record:
-        raise ValueError(f"회사를 찾을 수 없습니다: {slug}")
+        raise ToolError(f"회사를 찾을 수 없습니다: {slug}")
 
     fm = record.frontmatter
     body = record.body
@@ -155,7 +164,7 @@ async def update_company(
     try:
         fm = CompanyFrontmatter.model_validate(fm.model_dump())
     except ValidationError as e:
-        raise ValueError(f"저장할 수 없는 값입니다: {e}")
+        raise ToolError(f"저장할 수 없는 값입니다: {e}")
 
     updated = storage.write_company(slug, fm, body)
     # status/pinned는 RAG posting 스키마에 없는 필드라 재색인 불필요(toggle_pin()과 동일).
@@ -191,9 +200,9 @@ async def search_rag_evidence(question: str, top_k: int = 5) -> dict:
     출처(어느 회사 공고인지/프로필인지)를 항상 포함 — 근거를 인용할 때 출처를 섞지 않도록
     호출부에서 이 필드를 반드시 참고할 것."""
     if len(question) > 2_000:
-        raise ValueError("question은 2,000자 이하여야 합니다.")
+        raise ToolError("question은 2,000자 이하여야 합니다.")
     if top_k <= 0:
-        raise ValueError("top_k는 1 이상이어야 합니다.")
+        raise ToolError("top_k는 1 이상이어야 합니다.")
     if not settings.rag_postgres_host:
         return {"enabled": False, "evidence": []}
     provider_name = resolve_rag_embedding_provider()
@@ -232,9 +241,9 @@ async def prepare_company_import(url: str | None = None, raw_text: str | None = 
     만들고, 3) evaluate_fit이 available이면 적합도를 평가해 본문에 "## 4. 적합도 리포트"
     섹션을 이어붙인 뒤, create_company를 호출해 저장해야 한다."""
     if not url and not raw_text:
-        raise ValueError("url 또는 raw_text 중 하나가 필요합니다.")
+        raise ToolError("url 또는 raw_text 중 하나가 필요합니다.")
     if raw_text and len(raw_text) > 100_000:
-        raise ValueError("raw_text는 100,000자 이하여야 합니다.")
+        raise ToolError("raw_text는 100,000자 이하여야 합니다.")
 
     if url:
         duplicate = next(
@@ -246,7 +255,16 @@ async def prepare_company_import(url: str | None = None, raw_text: str | None = 
                 "slug": duplicate.slug,
                 "name": duplicate.frontmatter.display_name or duplicate.frontmatter.company_name,
             }
-        text = await scraper.fetch_url_text(url)
+        try:
+            text = await scraper.fetch_url_text(url)
+        except ValueError as e:
+            raise ToolError(str(e))
+        except httpx.TimeoutException:
+            raise ToolError("사이트 응답 시간이 초과됐습니다 (20초). 사이트가 느리거나 접근이 차단됐을 수 있습니다.")
+        except httpx.HTTPStatusError as e:
+            raise ToolError(f"사이트가 {e.response.status_code} 오류를 반환했습니다. URL을 확인해주세요.")
+        except Exception:
+            raise ToolError("URL 접근 실패: 네트워크 연결 오류. URL을 다시 확인해주세요.")
     else:
         text = raw_text
 
@@ -326,14 +344,14 @@ async def create_company(
             (c for c in storage.list_companies() if c.frontmatter.source_url == effective_source_url), None
         )
         if duplicate:
-            raise ValueError(
+            raise ToolError(
                 f"이미 등록된 URL입니다: {duplicate.slug} "
                 f"({duplicate.frontmatter.display_name or duplicate.frontmatter.company_name})"
             )
 
     projected = {k: v for k, v in company_data.items() if k in _CREATE_COMPANY_ALLOWED_FIELDS}
     if not (projected.get("company_name") or "").strip() or not (projected.get("job_title") or "").strip():
-        raise ValueError("company_data에는 비어 있지 않은 company_name과 job_title이 필요합니다.")
+        raise ToolError("company_data에는 비어 있지 않은 company_name과 job_title이 필요합니다.")
 
     fm_data = {
         **projected,
