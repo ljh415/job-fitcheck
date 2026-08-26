@@ -100,6 +100,8 @@ async def get_profile() -> dict:
 async def list_matching_postings(skill: str = "", job_title: str = "", limit: int = 50) -> dict:
     """기술 스택·직무명으로 공고를 검색한다(LLM 미사용, 순수 DB 조회). skill과 job_title을
     같이 주면 둘 다 만족하는 공고만 반환한다."""
+    if limit <= 0:
+        raise ValueError("limit은 1 이상이어야 합니다.")
     if not settings.rag_postgres_host:
         return {"enabled": False, "postings": []}
     conn = await asyncio.to_thread(get_connection)
@@ -187,6 +189,10 @@ async def search_rag_evidence(question: str, top_k: int = 5) -> dict:
     없이 순수 검색만 하므로, 최종 판단·답변 생성은 호출한 클라이언트가 맡는다. 각 결과에
     출처(어느 회사 공고인지/프로필인지)를 항상 포함 — 근거를 인용할 때 출처를 섞지 않도록
     호출부에서 이 필드를 반드시 참고할 것."""
+    if len(question) > 2_000:
+        raise ValueError("question은 2,000자 이하여야 합니다.")
+    if top_k <= 0:
+        raise ValueError("top_k는 1 이상이어야 합니다.")
     if not settings.rag_postgres_host:
         return {"enabled": False, "evidence": []}
     provider_name = resolve_rag_embedding_provider()
@@ -226,6 +232,8 @@ async def prepare_company_import(url: str | None = None, raw_text: str | None = 
     섹션을 이어붙인 뒤, create_company를 호출해 저장해야 한다."""
     if not url and not raw_text:
         raise ValueError("url 또는 raw_text 중 하나가 필요합니다.")
+    if raw_text and len(raw_text) > 100_000:
+        raise ValueError("raw_text는 100,000자 이하여야 합니다.")
 
     if url:
         duplicate = next(
