@@ -157,7 +157,11 @@ async def update_company(
         raise ValueError(f"저장할 수 없는 값입니다: {e}")
 
     updated = storage.write_company(slug, fm, body)
-    trigger_reindex_background()  # RAG가 복제하는 status 필드 갱신, RAG 꺼져 있으면 no-op
+    # RAG의 posting 테이블 스키마·적재 로직 어디에도 status/pinned가 없다(rag/postgres/
+    # ingest.py 확인) — toggle_pin()과 동일하게 재색인을 아예 트리거하지 않는다. 예전엔
+    # PUT /api/companies/{slug}(tech_stack 등 RAG 대상 필드도 바꾸는 핸들러)의 트리거 호출을
+    # 그대로 복사해왔는데, 그쪽과 달리 이 도구는 RAG 무관 필드만 다뤄서 불필요했다
+    # (2026-08-25 Codex 리뷰 finding).
     return updated.model_dump()
 
 
