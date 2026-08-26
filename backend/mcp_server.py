@@ -15,6 +15,7 @@ import storage
 from config import resolve_rag_embedding_provider, settings
 from mcp.server.mcpserver.server import MCPServer
 from models import CompanyFrontmatter
+from notify import send_notification
 from pydantic import ValidationError
 from rag.embed.google import GoogleEmbeddingProvider
 from rag.embed.local import LocalEmbeddingProvider
@@ -348,5 +349,6 @@ async def create_company(
     record = storage.write_company(slug, fm, body)
     # profile_version_id는 MCP가 프로필을 읽은 시점을 추적하지 않아 None으로 기록한다.
     companies.snapshot_fit_history(slug, fm.fit_score, fm.fit_label, None)
+    await send_notification(companies.build_fit_notification_materials(fm))
     trigger_reindex_background()
     return record.model_dump()

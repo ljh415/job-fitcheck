@@ -133,6 +133,26 @@ def snapshot_fit_history(slug: str, fit_score, fit_label, profile_version_id: in
         logger.warning("평가 이력 저장 실패: %s", e)
 
 
+def build_fit_notification_materials(fm: CompanyFrontmatter) -> dict:
+    """분석 완료 알림 재료를 사용자 알림 설정에 따라 조립한다. mcp_server.py의
+    create_company도 재사용한다."""
+    materials = {
+        "company": fm.display_name or fm.company_name,
+        "job_title": fm.job_title or "",
+        "score": fm.fit_score if fm.fit_score is not None else "",
+        "label": fm.fit_label or "",
+    }
+    if get_notify_pref("notify_strengths") and fm.strengths:
+        materials["strengths"] = [item.split(" - ", 1)[0].strip() for item in fm.strengths[:2]]
+    if get_notify_pref("notify_gaps") and fm.gaps:
+        materials["gaps"] = [item.split(" - ", 1)[0].strip() for item in fm.gaps[:2]]
+    if get_notify_pref("notify_jobplanet_rating") and fm.jobplanet_score:
+        materials["jobplanet"] = fm.jobplanet_score
+    if get_notify_pref("notify_employee_count") and fm.employee_count:
+        materials["employee_count"] = fm.employee_count
+    return materials
+
+
 _in_progress_count = 0
 
 
@@ -694,21 +714,7 @@ async def _process_company(
     record = storage.write_company(slug, fm, body)
     snapshot_fit_history(slug, fm.fit_score, fm.fit_label, profile_version_id_at_eval)
 
-    materials = {
-        "company": fm.display_name or fm.company_name,
-        "job_title": fm.job_title or "",
-        "score": fit_data.get("fit_score", ""),
-        "label": fit_data.get("fit_label", ""),
-    }
-    if get_notify_pref("notify_strengths") and fm.strengths:
-        materials["strengths"] = [item.split(" - ", 1)[0].strip() for item in fm.strengths[:2]]
-    if get_notify_pref("notify_gaps") and fm.gaps:
-        materials["gaps"] = [item.split(" - ", 1)[0].strip() for item in fm.gaps[:2]]
-    if get_notify_pref("notify_jobplanet_rating") and fm.jobplanet_score:
-        materials["jobplanet"] = fm.jobplanet_score
-    if get_notify_pref("notify_employee_count") and fm.employee_count:
-        materials["employee_count"] = fm.employee_count
-
+    materials = build_fit_notification_materials(fm)
     await send_notification(materials)
     # RAG(opt-in) 자동 재색인 — 공고 원문(.raw.txt)이 방금 바뀌었으니 백그라운드로 반영한다.
     # RAG가 꺼져 있으면 즉시 아무 일도 안 함(4번 "데이터 동기화" 항목).
