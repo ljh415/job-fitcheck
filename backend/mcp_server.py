@@ -351,5 +351,11 @@ async def create_company(
     slug = storage.make_slug(fm.company_name, fm.job_title or "")
     storage.write_raw_text(slug, raw_text)
     record = storage.write_company(slug, fm, body)
+    # 웹 분석(_process_company)/재평가(refit_company)는 저장 직후 항상 이 스냅샷을 남기는데
+    # MCP 경로만 빠져 있었다 — 이후 재평가하면 최초 점수가 이력에서 영구히 사라진다
+    # (2026-08-26 Codex 리뷰 finding). profile_version_id는 MCP가 프로필을 읽은 시점을
+    # 추적하지 않으므로 우선 None(추후 prepare_company_import가 버전 id를 같이 넘기게
+    # 확장 가능 — 지금은 이력 유실 방지가 우선).
+    companies.snapshot_fit_history(slug, fm.fit_score, fm.fit_label, None)
     trigger_reindex_background()
     return record.model_dump()
