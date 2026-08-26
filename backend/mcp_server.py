@@ -285,6 +285,15 @@ async def prepare_company_import(url: str | None = None, raw_text: str | None = 
     }
 
 
+# create_company가 company_data에서 받아들일 필드 — extract_company/evaluate_fit 결과만
+# 허용하고, status/pinned/created_at 같은 사용자 관리·서버 관리 필드는 스키마에 없으므로
+# 자동으로 제외된다(수작업 나열이 아니라 기존 도구 스키마에서 그대로 뽑음 — 2026-08-25
+# Codex 리뷰 finding, 필드가 늘어도 스키마만 따라가면 됨).
+_CREATE_COMPANY_ALLOWED_FIELDS = set(prompts.EXTRACT_COMPANY_TOOL_SCHEMA["properties"]) | (
+    set(prompts.EVALUATE_FIT_TOOL_SCHEMA["properties"]) - {"fit_report_body"}
+)
+
+
 @mcp.tool()
 async def create_company(
     company_data: dict,
@@ -297,7 +306,8 @@ async def create_company(
 
     company_data: extract_company 결과 JSON에 evaluate_fit 결과 필드(fit_score, fit_label,
     strengths, gaps, salary_check, stability_check, location_check 등, fit_report_body는
-    제외 — 그건 body에 포함)를 합친 것. body: 마크다운 본문(생성한 본문 + 적합도 리포트
+    제외 — 그건 body에 포함)를 합친 것. 이 필드 집합 밖의 키(status/pinned/created_at 등
+    사용자·서버 관리 필드)는 무시된다. body: 마크다운 본문(생성한 본문 + 적합도 리포트
     섹션까지 이미 합쳐진 상태) — 지원 상태 로그 섹션은 이 도구가 자동으로 추가한다."""
     # source_url 인자와 company_data["source_url"](raw_text만 줘도 extract_company가 원문에서
     # 찾아 채울 수 있음)가 서로 다른 값을 가질 수 있어, 중복검사·source_type·최종 저장 전부
@@ -314,8 +324,12 @@ async def create_company(
                 f"({duplicate.frontmatter.display_name or duplicate.frontmatter.company_name})"
             )
 
+    projected = {k: v for k, v in company_data.items() if k in _CREATE_COMPANY_ALLOWED_FIELDS}
+    if not (projected.get("company_name") or "").strip() or not (projected.get("job_title") or "").strip():
+        raise ValueError("company_data에는 비어 있지 않은 company_name과 job_title이 필요합니다.")
+
     fm_data = {
-        **company_data,
+        **projected,
         "source_url": effective_source_url,
         "source_type": "url" if effective_source_url else "text_paste",
         "llm_provider": "mcp",
