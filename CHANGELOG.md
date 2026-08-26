@@ -1,5 +1,36 @@
 # Changelog
 
+## v1.6.0 — MCP 서버 추가 (Codex/Claude가 도구로 사용 가능) (2026-08-26)
+
+Codex·Claude 같은 외부 AI 클라이언트가 채팅 안에서 직접 회사·프로필·RAG 기능을 도구로 쓸 수
+있게 하는 MCP(Model Context Protocol) 서버를 추가했다. `/api/mcp`에 상시 마운트(RAG처럼
+opt-in 토글 없음), 인증은 기존 JWT Bearer 재사용. 도구 11개(회사 조회/비교/타임라인 4,
+상태변경/회사추가 3, 프로필 조회 1, RAG 3). 회사 추가는 `prepare_company_import`(원문+분석
+프롬프트 준비, LLM 미호출) → 클라이언트가 직접 3단계 분석 → `create_company`(저장) 2단계
+구조라 Job FitCheck 자체 API 비용이 들지 않는다. 사용자 가이드는 `MCP_GUIDE.md`.
+
+`feat/mcp-server` 브랜치에서 4단계로 구현 후 Codex 리뷰 2라운드(중간 1건+낮음 4건, 이후
+중간 1건+낮음 2건)와 자체 리뷰(2건)로 총 7건의 버그를 발견해 수정했다.
+
+- **`update_company`가 유효하지 않은 status를 저장해 회사를 읽을 수 없게 만듦** — `status`
+  파라미터를 `Literal` enum으로 제한하고 저장 직전 모델 재검증 추가
+- **`create_company`가 `company_data.source_url`로 중복 검사를 우회당함**,
+  **입력 필드·필수값을 강제하지 않음**(스키마 기반 화이트리스트로 해결),
+  **최초 적합도 이력을 안 남김**(재평가 시 원래 점수 영구 유실 — 기존 스냅샷 함수 재사용으로
+  해결), **분석완료 알림을 발송하지 않음**(자체 발견) — 전부 기존 REST 파이프라인
+  (`add_from_url`, `_process_company`)이 이미 처리하던 것을 새 MCP 경로가 누락했던 사례
+- **`update_company`가 RAG와 무관한 필드 변경에도 불필요한 전체 재색인을 트리거**,
+  **화이트리스트가 값 범위(0~100점 등)를 검증 안 함**(모델 자체에 제약 추가 — 웹 경로도
+  같이 보호됨), **MCP 입력이 기존 REST의 길이·양수 제한을 재사용 안 해 비용 발생 후 실패**
+- **도구 함수 안에서 발생한 에러 메시지가 MCP 클라이언트에 전혀 전달되지 않음**(자체 발견,
+  가장 중요) — SDK가 `ToolError`가 아닌 예외는 전부 "Error executing tool `<name>`"으로
+  뭉개는 설계. `ToolError`로 전환해 해결
+- **prod 최초 배포 직후 발견된 규모 버그**: `list_companies`가 실제 운영 데이터(116개
+  회사)에서 MCP 클라이언트 라이브러리(`httpx-sse`)의 1MB SSE 이벤트 하드 리밋을 초과해
+  실패 — dev 테스트 데이터(69개)로는 안 걸렸던 규모 문제. 즉시 prod를 `git revert`로
+  원복하고, 목록 응답에서 문장 단위 상세 필드(강점/갭/주요업무 등, 전체 데이터의 70% 차지)를
+  제외해 해결(상세 조회는 `get_company`로 그대로 가능). 별도 Codex 리뷰 후 재배포
+
 ## v1.5.5 — 코드 구조 리팩토링 4건 + 재평가 근무지 갭 보정 누락 버그 수정 (2026-08-25)
 
 `docs/planning/code_refactoring_plan.md`(Codex 제안, Claude 교차 검토)를 바탕으로 책임
