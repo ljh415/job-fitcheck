@@ -40,6 +40,7 @@ docs/chat-history-server-storage/
 docs/rag-evidence-scoping/
 docs/code-refactoring/
 docs/mcp-server/
+docs/fit-eval-consistency/
 
 # 데이터 (개인 정보 포함)
 data/

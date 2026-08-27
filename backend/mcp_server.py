@@ -39,6 +39,14 @@ _LIST_COMPANIES_EXCLUDED_FIELDS = {
     "required_skills", "preferred_skills", "benefits", "hiring_process",
 }
 
+# 웹 경로(REST)는 이 분석 하나만을 위한 격리된 단발성 API 호출이라 애초에 문제가 안 되지만,
+# MCP는 이미 진행 중인 대화(다른 주제·톤·이전 논의)의 연장선에서 호출된다 — 그 맥락이 평가에
+# 섞여 웹과 다른 결과가 나올 수 있다(docs/planning/mcp_analysis_consistency.md 참고). REST와
+# 공유하는 prompts.py의 SYSTEM 상수엔 안 넣고, MCP 전용으로 여기서만 덧붙인다 — REST엔 애초에
+# 해당 없는 지시라 원본 프롬프트를 불필요하게 늘릴 이유가 없다.
+_MCP_ISOLATION_NOTICE = """
+[격리된 작업 지시] 이 요청은 지금 진행 중인 대화의 다른 주제·톤·이전 논의와 무관한 단일 목적의 독립 작업입니다. 이 대화에서 오간 다른 내용(다른 회사에 대한 평가, 잡담, 사용자의 다른 요청 등)을 이 판단의 근거나 참고 자료로 쓰지 마세요. 오직 이 요청에서 함께 제공된 데이터(채용공고 원문·구조화된 회사 정보·후보자 프로필·평가 기준 등)만을 근거로 판단하세요."""
+
 
 @mcp.tool()
 async def get_rag_status() -> dict:
@@ -303,12 +311,12 @@ async def prepare_company_import(url: str | None = None, raw_text: str | None = 
         "raw_text_escaped": safe_text,
         "source_url": url,
         "extract_company": {
-            "system": prompts.EXTRACT_COMPANY_SYSTEM,
+            "system": prompts.EXTRACT_COMPANY_SYSTEM + _MCP_ISOLATION_NOTICE,
             "user": prompts.EXTRACT_COMPANY_USER_TEMPLATE.format(raw_text=safe_text),
             "output_schema": prompts.EXTRACT_COMPANY_TOOL_SCHEMA,
         },
         "generate_body": {
-            "system": prompts.GENERATE_BODY_SYSTEM,
+            "system": prompts.GENERATE_BODY_SYSTEM + _MCP_ISOLATION_NOTICE,
             "user_template": prompts.GENERATE_BODY_USER_TEMPLATE,
             "note": "user_template엔 {company_json}·{raw_text} 자리가 아직 안 채워져 있음 — "
             "company_json은 extract_company 결과를 JSON 문자열로, raw_text는 "
@@ -316,7 +324,7 @@ async def prepare_company_import(url: str | None = None, raw_text: str | None = 
         },
         "evaluate_fit": {
             "available": has_profile,
-            "system": prompts.EVALUATE_FIT_SYSTEM,
+            "system": prompts.EVALUATE_FIT_SYSTEM + _MCP_ISOLATION_NOTICE,
             "user_template": prompts.EVALUATE_FIT_USER_TEMPLATE,
             "output_schema": prompts.EVALUATE_FIT_TOOL_SCHEMA,
             "candidate_profile": profile_text,
