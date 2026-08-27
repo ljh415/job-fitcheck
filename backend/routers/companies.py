@@ -94,7 +94,7 @@ def _resize_image(data: bytes) -> tuple[bytes, str]:
 
 # ── 진행 중 표시 ──────────────────────────────────────────────────────────────
 
-def _resolve_profile_version_id_for_eval() -> int | None:
+def resolve_profile_version_id_for_eval() -> int | None:
     """평가 직전 후보자 프로필의 스냅샷 id를 안전하게 구한다.
     - DB 조회 자체가 실패해도(히스토리 DB 장애) 예외를 밖으로 내보내지 않는다 — 이
       함수가 실패한다고 회사 등록/재분석(핵심 기능)까지 막히면 안 된다.
@@ -676,7 +676,7 @@ async def _process_company(
         profile_text = storage.strip_scoring_excluded(storage.read_profile_text() or "")
         # 이 프로필을 실제로 읽은 시점의 스냅샷 id를 고정 — LLM 호출이 끝날 때까지
         # 기다렸다 조회하면 그 사이 프로필이 갱신된 경우 엉뚱한 버전과 연결된다.
-        profile_version_id_at_eval = _resolve_profile_version_id_for_eval()
+        profile_version_id_at_eval = resolve_profile_version_id_for_eval()
         fit_data, fit_report = await company_analysis.evaluate_fit(
             snap, profile_text, extracted, safe_raw_text, operation="적합도 평가",
         )
@@ -930,8 +930,8 @@ async def refit_company(slug: str):
 
     # [점수 제외] 섹션(QnA 전용 참고 내용)은 적합도 평가엔 안 보여줌 — 코드로 제거
     profile_text = storage.strip_scoring_excluded(storage.read_profile_text() or "")
-    # 이 프로필을 실제로 읽은 시점의 스냅샷 id를 고정 (이유는 _resolve_profile_version_id_for_eval 참고)
-    profile_version_id_at_eval = _resolve_profile_version_id_for_eval()
+    # 이 프로필을 실제로 읽은 시점의 스냅샷 id를 고정 (이유는 resolve_profile_version_id_for_eval 참고)
+    profile_version_id_at_eval = resolve_profile_version_id_for_eval()
     raw_text = prompts.escape_tag_chars(storage.read_raw_text(slug) or record.body)
     # 이전 평가 결과(strengths/gaps/fit_score 등)는 LLM 입력에서 제외 — 자기참조 편향 방지
     _REFIT_EXCLUDE = {"strengths", "gaps", "fit_score", "fit_label", "fit_report_body"}

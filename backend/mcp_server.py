@@ -376,8 +376,8 @@ async def create_company(
     slug = storage.make_slug(fm.company_name, fm.job_title or "")
     storage.write_raw_text(slug, raw_text)
     record = storage.write_company(slug, fm, body)
-    # profile_version_id는 MCP가 프로필을 읽은 시점을 추적하지 않아 None으로 기록한다.
-    companies.snapshot_fit_history(slug, fm.fit_score, fm.fit_label, None)
+    profile_version_id = companies.resolve_profile_version_id_for_eval()
+    companies.snapshot_fit_history(slug, fm.fit_score, fm.fit_label, profile_version_id)
     await send_notification(companies.build_fit_notification_materials(fm))
     trigger_reindex_background()
     return record.model_dump()
