@@ -1,5 +1,28 @@
 # Changelog
 
+## v1.6.2 — MCP `create_company` 프로필 버전 이력 버그 2건 수정 (2026-08-27)
+
+CLI로 MCP를 실사용하며 QA하던 중 발견. `create_company`가 저장 시 `fit_history`에
+`profile_version_id`를 항상 `None`으로 기록해 "이전 버전 불명"으로 표시되던 문제와,
+그 수정 과정에서 Codex 리뷰로 드러난 후속 타이밍 버그를 함께 수정.
+
+- **`profile_version_id` 항상 None으로 기록**: REST 경로(`_process_company`/
+  `refit_company`)는 저장 직전 프로필 스냅샷 id를 조회해 이력에 남기는데, MCP
+  `create_company`만 조회 없이 `None`을 하드코딩하고 있었음(REST엔 있는 동작을 MCP가
+  재사용 안 하는 반복 패턴). `routers/companies.py`의 `_resolve_profile_version_id_for_eval()`을
+  공개 전환해 재사용하도록 수정.
+- **프로필 버전 조회 시점이 저장 직전이라 타이밍 레이스 발생**: 위 수정을 Codex 리뷰한
+  결과, `create_company`가 저장 "시점"에 조회하면 `prepare_company_import`가 프로필을
+  클라이언트에 넘긴 뒤 평가하는 동안 프로필이 갱신됐을 때 실제 평가에 안 쓰인 새 버전과
+  잘못 연결됨(재현 확인). 조회 시점을 `prepare_company_import`(프로필을 읽는 시점)로
+  옮기고 `create_company`가 그 값을 그대로 전달받도록 변경.
+
+dev 컨테이너 재빌드 후 실제 `create_company` 흐름을 직접 호출해 두 버그 모두 end-to-end
+재현·검증(프로필 갱신 레이스는 의도적으로 재현해 고정된 값이 유지되는지 확인). Claude
+서브에이전트의 추가 리뷰에서 나온 "클라이언트가 존재하지 않는 id를 보낼 수 있다"는
+지적은, 프론트가 이미 그런 경우를 "삭제됨"으로 처리하는 기존 설계(REST도 동일 리스크를
+이미 갖고 있음)라 false positive로 판단하고 반영하지 않음.
+
 ## v1.6.1 — MCP `list_companies` prod 장애 수정 (2026-08-26)
 
 v1.6.0 배포 직후 발견된 별도 버그 수정. `feat/mcp-server`와는 구분되는 후속 픽스 —
