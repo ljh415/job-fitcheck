@@ -1,5 +1,25 @@
 # Changelog
 
+## v1.6.3 — MCP 대화맥락 격리 지시 + 적합도 평가 프롬프트 일관성 개선 (2026-08-28)
+
+MCP-vs-웹 적합도 점수 불일치 조사의 후속 작업 두 건.
+
+- **MCP 대화맥락 격리 지시**: MCP 호출은 REST와 달리 이미 진행 중인 대화 안에서 일어나
+  다른 맥락이 분석에 섞일 여지가 있다는 문제(v1.6.0 배포 직후 발견, `docs/planning/
+  mcp_analysis_consistency.md`)에 대한 완화책. `mcp_server.py`에 `_MCP_ISOLATION_NOTICE`
+  추가 — `prepare_company_import`가 반환하는 세 프롬프트(구조화 추출/본문 생성/적합도
+  평가)에 "이 요청은 대화의 다른 맥락과 무관한 독립 작업"이라는 명시적 지시 삽입. REST와
+  공유하는 `prompts.py`는 안 건드림(REST엔 해당 없는 지시라 원본을 불필요하게 늘릴 이유
+  없음). Codex 리뷰에서 낮음 2건(격리 지시가 구조화 회사 정보를 배제하던 문제, `MCP_GUIDE.md`의
+  낡은 dev 전용 안내) 발견·수정.
+- **적합도 평가 프롬프트(`EVALUATE_FIT_SYSTEM`) 일관성 개선**: 위 완화책 검증 중, 원인이
+  대화 맥락 오염이 아니라 **프롬프트 자체가 같은 입력을 반복 평가해도 판단이 일관되지
+  않는 것**으로 드러남(REST/MCP 공유, 이번 커밋으로 양쪽 다 개선). Claude/기본용 프롬프트에
+  갭 판정 원칙·심각도 기준(직무 핵심 업무 연관 갭 판정 포함)·자격요건 유형 구분(역량 요건
+  vs 결격사유형 형식 조항) 규칙을 추가. 5개 버전(A~E)에 걸쳐 REST 실호출 + LLM judge 내용
+  검증 + Codex 의견 2회로 반복 개선. 상세 기록: `docs/fit-eval-consistency/PLAN.md`·
+  `HISTORY.md`(로컬 전용).
+
 ## v1.6.2 — MCP `create_company` 프로필 버전 이력 버그 2건 수정 (2026-08-27)
 
 CLI로 MCP를 실사용하며 QA하던 중 발견. `create_company`가 저장 시 `fit_history`에
