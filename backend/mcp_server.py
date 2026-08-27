@@ -282,10 +282,15 @@ async def prepare_company_import(url: str | None = None, raw_text: str | None = 
     safe_text = prompts.escape_tag_chars(text)
     has_profile = storage.profile_exists()
     profile_text = None
+    profile_version_id = None
     if has_profile:
         profile_text = prompts.escape_tag_chars(
             storage.strip_scoring_excluded(storage.read_profile_text() or "")
         )
+        # 이 프로필을 실제로 읽은 시점에 스냅샷 id를 고정한다 — create_company 시점에
+        # 다시 조회하면, 클라이언트가 평가하는 동안 프로필이 갱신된 경우 실제 평가에
+        # 쓰이지 않은 새 버전과 잘못 연결된다.
+        profile_version_id = companies.resolve_profile_version_id_for_eval()
     eval_criteria = storage.read_eval_criteria().strip()
     custom_criteria = (
         f"\n\n## 추가 평가 기준 (사용자 지정)\n{eval_criteria}{prompts.CUSTOM_CRITERIA_BOUNDARY_NOTICE}"
@@ -315,12 +320,15 @@ async def prepare_company_import(url: str | None = None, raw_text: str | None = 
             "user_template": prompts.EVALUATE_FIT_USER_TEMPLATE,
             "output_schema": prompts.EVALUATE_FIT_TOOL_SCHEMA,
             "candidate_profile": profile_text,
+            "profile_version_id": profile_version_id,
             "custom_criteria": custom_criteria,
             "note": "user_template엔 {candidate_profile}·{company_json}·{raw_text}·"
             "{custom_criteria} 자리가 아직 안 채워져 있음 — candidate_profile·custom_criteria는 "
             "위 값을 그대로, company_json은 extract_company 결과, raw_text는 "
             "raw_text_escaped 앞 4000자를 넣는 게 기존 파이프라인 관례. available이 False면 "
-            "프로필이 없어 적합도 평가를 생략해야 한다(웹 파이프라인과 동일).",
+            "프로필이 없어 적합도 평가를 생략해야 한다(웹 파이프라인과 동일). profile_version_id는 "
+            "이 프로필을 평가에 실제로 사용했다면 그대로 create_company에 다시 전달할 것 — "
+            "이력에 정확한 프로필 버전을 연결하는 데 쓰인다.",
         },
     }
 
@@ -337,6 +345,7 @@ async def create_company(
     body: str,
     raw_text: str,
     source_url: str | None = None,
+    profile_version_id: int | None = None,
 ) -> dict:
     """prepare_company_import로 받은 분석 패킷을 클라이언트가 직접 처리한 결과를 저장한다.
     확인 없이 즉시 실행된다(기존 데이터를 덮어쓰지 않는 순수 추가).
@@ -345,7 +354,11 @@ async def create_company(
     strengths, gaps, salary_check, stability_check, location_check 등, fit_report_body는
     제외 — 그건 body에 포함)를 합친 것. 이 필드 집합 밖의 키(status/pinned/created_at 등
     사용자·서버 관리 필드)는 무시된다. body: 마크다운 본문(생성한 본문 + 적합도 리포트
-    섹션까지 이미 합쳐진 상태) — 지원 상태 로그 섹션은 이 도구가 자동으로 추가한다."""
+    섹션까지 이미 합쳐진 상태) — 지원 상태 로그 섹션은 이 도구가 자동으로 추가한다.
+    profile_version_id: prepare_company_import의 evaluate_fit.profile_version_id를 평가에
+    실제로 썼다면 그대로 전달 — 여기서 다시 조회하지 않는 이유는 조회 시점(저장 직전)이
+    실제 평가 시점과 다를 수 있어(그 사이 프로필이 갱신되면) 엉뚱한 버전과 연결될 수 있기
+    때문. 안 주면 이전 버전 불명(None)으로 기록된다."""
     # company_data["source_url"](raw_text만 줘도 extract_company가 채울 수 있음)도 함께 고려해
     # 중복검사·source_type·최종 저장을 전부 이 값 하나로 통일한다.
     effective_source_url = source_url or company_data.get("source_url")
@@ -376,7 +389,6 @@ async def create_company(
     slug = storage.make_slug(fm.company_name, fm.job_title or "")
     storage.write_raw_text(slug, raw_text)
     record = storage.write_company(slug, fm, body)
-    profile_version_id = companies.resolve_profile_version_id_for_eval()
     companies.snapshot_fit_history(slug, fm.fit_score, fm.fit_label, profile_version_id)
     await send_notification(companies.build_fit_notification_materials(fm))
     trigger_reindex_background()
