@@ -50,11 +50,14 @@ def _is_valid_judgment(item_id: str, verdict, evidence_basis, severity) -> bool:
     항목 종류별 verdict 제약(예: required는 unclear 불가)은 검사하지 않는다 —
     복합 자격요건의 연결어 불명확 예외([복합 자격요건 판정])가 required 항목에도
     합법적으로 unclear를 허용하므로, 코드가 항목 종류만으로 그 예외를 구분할 수
-    없다. 다만 severity는 명확히 판별 가능한 두 규칙([심각도 기준])만 강제한다
-    (2026-09-01, 2차 리뷰 반영 — required+unclear는 원문 의미가 필요해 여전히
-    강제하지 않는다):
+    없다. severity도 명확히 판별 가능한 규칙만 강제한다(2026-09-02, 3차 리뷰로
+    정정 — responsibility를 preferred와 같이 묶어 중/하만 허용했던 게 회귀였음):
     - required + unmet → severity는 반드시 "상"
-    - preferred/responsibility + unmet·unclear → severity는 "중" 또는 "하"만
+    - preferred + unmet·unclear → severity는 "중" 또는 "하"만
+    - responsibility + unmet·unclear → **강제하지 않음**. [심각도 기준]의
+      2축 매트릭스(업무 핵심성×경험 일치도)에 따라 "핵심 업무 + 인접 경험뿐"이면
+      상도 합법이라, required+unclear와 같은 이유로 항목 id만으로는 검증 불가
+      (원문 의미 판단이 필요함).
     """
     if verdict not in _VALID_VERDICTS:
         return False
@@ -68,7 +71,7 @@ def _is_valid_judgment(item_id: str, verdict, evidence_basis, severity) -> bool:
     prefix = item_id.split(":", 1)[0]
     if prefix == "required" and verdict == "unmet" and severity != "상":
         return False
-    if prefix in ("preferred", "responsibility") and severity not in ("중", "하"):
+    if prefix == "preferred" and severity not in ("중", "하"):
         return False
     return True
 
@@ -359,8 +362,9 @@ if __name__ == "__main__":
     assert label_from_score(39) == "비추천"
     assert label_from_score(0) == "비추천"
 
-    # 3-4. 항목 종류별 severity 강제 (2026-09-01, 2차 리뷰 반영) — required+unmet은 반드시 상,
-    # preferred/responsibility+unmet·unclear는 중/하만 허용
+    # 3-4. 항목 종류별 severity 강제 (2026-09-01, 2차 리뷰 반영, 2026-09-02 3차 리뷰로
+    # responsibility 범위 정정) — required+unmet은 반드시 상, preferred+unmet·unclear는
+    # 중/하만 허용. responsibility는 상/중/하 전부 합법이라 강제하지 않음.
     llm7 = [{"id": "required:0", "verdict": "unmet", "evidence_basis": "해당없음", "severity": "하", "reason": "이유"}]
     result7, incomplete7 = reconcile_judgments(inputs2, llm7)
     assert incomplete7 is True, "required+unmet인데 severity가 상이 아니면 무효(fallback)여야 함"
@@ -369,6 +373,13 @@ if __name__ == "__main__":
     llm8 = [{"id": "preferred:0", "verdict": "unmet", "evidence_basis": "해당없음", "severity": "상", "reason": "이유"}]
     result8, incomplete8 = reconcile_judgments(inputs_pref, llm8)
     assert incomplete8 is True, "preferred+unmet인데 severity가 상이면 무효(fallback)여야 함"
+
+    # 3-4-1. responsibility+unmet+severity="상"은 합법(핵심 업무+인접 경험뿐인 경우) — 회귀 방지
+    inputs_resp = [{"id": "responsibility:0", "source_item": "R"}]
+    llm10 = [{"id": "responsibility:0", "verdict": "unmet", "evidence_basis": "해당없음", "severity": "상", "reason": "핵심 업무+인접 경험뿐"}]
+    result10, incomplete10 = reconcile_judgments(inputs_resp, llm10)
+    assert incomplete10 is False, "responsibility+unmet+severity=상은 [심각도 기준]상 합법이라 fallback 안 돼야 함(2026-09-02 3차 리뷰 회귀 수정)"
+    assert result10[0]["severity"] == "상"
 
     # 3-5. unmet인데 evidence_basis가 "assumed"(met 전용)면 무효
     llm9 = [{"id": "required:0", "verdict": "unmet", "evidence_basis": "assumed", "severity": "상"}]
