@@ -181,17 +181,25 @@ _VALID_LEVEL = {"상", "중", "하", "없음"}
 
 
 def validate_decision_factors(decision_factors: dict) -> tuple[dict, bool]:
-    """decision_factors의 6개 요인이 전부 존재하고 `level`이 유효한 enum인지
-    검증한다(2026-09-01, 2차 리뷰 반영). 누락되거나 `level`이 enum 밖 값이면
-    임의로 등급을 매기지 않고 안전한 기본값(level="없음", 확인 필요 note)으로
-    교체한 뒤 incomplete로 표시한다 — enum 밖 값이 "(최상) ..." 같은 형식으로
-    그대로 gaps에 노출되는 것을 막는다."""
+    """decision_factors의 6개 요인이 전부 존재하고 `level`이 유효한 enum,
+    `status`/`note`가 문자열인지 검증한다(2026-09-01 2차 리뷰, 2026-09-02
+    4차 리뷰 반영). 누락되거나 `level`이 enum 밖 값이거나 status/note 타입이
+    틀리면 임의로 등급을 매기지 않고 안전한 기본값(level="없음", 확인 필요
+    note)으로 교체한 뒤 incomplete로 표시한다 — enum 밖 값이 "(최상) ..."
+    같은 형식으로 그대로 gaps에 노출되거나, status가 dict 등 비문자열이라
+    derive_legacy_checks()가 구 필드(Pydantic Literal/str)에 그대로 옮겨서
+    저장 직후 회사 파일을 읽지 못하게 만드는 것을 막는다."""
     result = {}
     incomplete = False
     for key in _DECISION_FACTOR_KEYS:
         factor = decision_factors.get(key)
-        if not isinstance(factor, dict) or factor.get("level") not in _VALID_LEVEL:
-            logger.warning("validate_decision_factors: %s 누락 또는 level 유효하지 않음 — raw=%r", key, factor)
+        if (
+            not isinstance(factor, dict)
+            or factor.get("level") not in _VALID_LEVEL
+            or not isinstance(factor.get("status"), str)
+            or not isinstance(factor.get("note"), str)
+        ):
+            logger.warning("validate_decision_factors: %s 누락 또는 level/status/note 유효하지 않음 — raw=%r", key, factor)
             result[key] = {"status": "확인필요", "level": "없음", "note": "시스템이 이 요인을 판정하지 못함"}
             incomplete = True
         else:
@@ -267,14 +275,17 @@ def derive_legacy_checks(decision_factors: dict) -> dict:
     B — decision_factors로 대체하지 않고 계속 채운다). status는 프롬프트가 이미
     이 구 필드들과 같은 어휘로 채우도록 지시돼 있으므로(EVALUATE_FIT_JUDGE_SYSTEM
     [decision_factors 판정]) 그대로 옮기되, enum을 벗어나면 버린다(salary_check/
-    stability_check는 Pydantic Literal이라 임의 문자열을 넣으면 저장이 깨진다)."""
+    stability_check는 Pydantic Literal이라 임의 문자열을 넣으면 저장이 깨진다).
+    validate_decision_factors()가 status를 문자열로 보장하지만(4차 리뷰 반영),
+    이 함수 자체도 비문자열 status가 들어와도 안전하도록 isinstance로 한 번 더
+    막는다(set 멤버십 검사에 dict 등 unhashable 값이 들어오면 TypeError)."""
     salary_status = (decision_factors.get("salary") or {}).get("status")
     stability_status = (decision_factors.get("stability") or {}).get("status")
     location_status = (decision_factors.get("location") or {}).get("status")
     return {
-        "salary_check": salary_status if salary_status in _SALARY_CHECK_VALUES else None,
-        "stability_check": stability_status if stability_status in _STABILITY_CHECK_VALUES else None,
-        "location_check": location_status or None,
+        "salary_check": salary_status if isinstance(salary_status, str) and salary_status in _SALARY_CHECK_VALUES else None,
+        "stability_check": stability_status if isinstance(stability_status, str) and stability_status in _STABILITY_CHECK_VALUES else None,
+        "location_check": location_status if isinstance(location_status, str) and location_status else None,
     }
 
 
@@ -428,6 +439,14 @@ if __name__ == "__main__":
     assert result_broken["jobplanet"]["level"] == "없음", "enum 밖 level은 그대로 노출되면 안 됨"
     assert result_broken["salary"]["level"] == "없음", "누락된 요인은 안전한 기본값으로 채워져야 함"
 
+    # 3-7-1. status가 dict 등 비문자열이면 level이 유효해도 무효 처리(4차 리뷰 반영 —
+    # 안 걸러지면 derive_legacy_checks()가 그대로 옮겨 location_check(str) 저장이 깨짐)
+    bad_status_factors = dict(valid_factors)
+    bad_status_factors["location"] = {"status": {"nested": "dict"}, "level": "없음", "note": ""}
+    result_bad_status, incomplete_bad_status = validate_decision_factors(bad_status_factors)
+    assert incomplete_bad_status is True
+    assert result_bad_status["location"]["status"] == "확인필요", "status가 비문자열이면 안전한 기본값으로 교체"
+
     # 4. derive_gaps_strengths — met(explicit)→strength, met(assumed)→제외, unmet→gap, verify→확인필요 gap
     items = [
         {"id": "required:0", "source_item": "A", "verdict": "met", "evidence_basis": "explicit",
@@ -471,5 +490,9 @@ if __name__ == "__main__":
     assert derive_legacy_checks({}) == {"salary_check": None, "stability_check": None, "location_check": None}
     bad = derive_legacy_checks({"salary": {"status": "괜찮음"}})  # enum 밖 값은 버림
     assert bad["salary_check"] is None, bad
+    # status가 비문자열이면(validate_decision_factors가 걸러야 정상이지만, 이 함수
+    # 자체도 방어해야 함 — set 멤버십에 dict가 들어오면 TypeError로 죽을 수 있음)
+    unsafe = derive_legacy_checks({"salary": {"status": {"x": 1}}, "location": {"status": {"y": 2}}})
+    assert unsafe == {"salary_check": None, "stability_check": None, "location_check": None}, unsafe
 
     print("fit_normalization self-check 통과")

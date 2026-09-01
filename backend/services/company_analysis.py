@@ -100,13 +100,15 @@ async def evaluate_fit_structured(
     호출부에는 연결하지 않았다 — `evaluate_fit()`과 나란히 존재하며 회귀 검증
     (4개 사례) 통과 후 교체 예정.
 
-    주의(Codex 리뷰 2026-09-01 반영): 이 함수의 반환값은 `evaluate_fit()`과
-    필드 이름이 다르다(`salary_check`/`stability_check`/`location_check` 대신
-    `decision_factors`에 중첩) — "호출부를 그대로 재사용 가능"은 아직 사실이
-    아니다. `item_judgments`/`decision_factors`/`evaluation_incomplete`도
-    `CompanyFrontmatter`에 선언되지 않아 그대로 저장하면 조용히 버려진다.
-    저장 여부·기존 필드 호환은 구현 순서 6번(저장·이력·QnA 제외 계약 확인)에서
-    확정한다 — 지금은 함수 자체의 판정 로직만 검증하는 단계.
+    주의(Codex 리뷰 2026-09-01/구현 순서 6번 반영, 4차 리뷰로 설명 정정): 이
+    함수의 반환값은 `evaluate_fit()`과 필드 이름이 다르다(`decision_factors`에
+    중첩된 값에서 `salary_check`/`stability_check`/`location_check`를
+    `fit_normalization.derive_legacy_checks()`로 파생해 같이 채움) — 다만
+    "호출부를 그대로 재사용 가능"은 여전히 아니다. `item_judgments`/
+    `decision_factors`/`evaluation_incomplete`는 `CompanyFrontmatter`에
+    이미 선언돼 저장되고, refit 입력·QnA 컨텍스트에서는 제외된다(구현 순서
+    6번 완료). 아직 안 끝난 건 `_process_company`/`refit_company` 호출부
+    연결(4개 사례 회귀 검증 이후)뿐이다.
     """
     high, high_model = high_from_snapshot(snap)
     eval_criteria = storage.read_eval_criteria().strip()
