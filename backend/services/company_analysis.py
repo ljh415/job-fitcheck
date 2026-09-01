@@ -136,16 +136,26 @@ async def evaluate_fit_structured(
         reasoning_effort=snap.reasoning_effort,
     )
 
-    normalized, incomplete = fit_normalization.reconcile_judgments(
+    normalized, items_incomplete = fit_normalization.reconcile_judgments(
         input_items, judge_result.get("item_judgments", [])
     )
     gaps, strengths = fit_normalization.derive_gaps_strengths(normalized)
-    decision_factors = judge_result.get("decision_factors", {})
+
+    # 1단계 응답의 최상위 필드(fit_score/decision_factors)도 provider가 스키마를
+    # 서버에서 강제하지 않으므로 여기서 직접 검증한다(2026-09-01, 2차 리뷰 반영) —
+    # 값이 없거나 이상해도 조용히 그럴듯한 기본값으로 넘어가지 않고 incomplete로 표시.
+    decision_factors, factors_incomplete = fit_normalization.validate_decision_factors(
+        judge_result.get("decision_factors") or {}
+    )
     gaps = gaps + fit_normalization.derive_decision_factor_gaps(decision_factors)
 
-    # 점수·라벨은 이미 완전히 결정적인 매핑이므로 LLM 값을 신뢰하지 않고 코드가 검증·계산한다.
-    fit_score = max(0, min(100, int(judge_result.get("fit_score") or 0)))
-    fit_label = fit_normalization.label_from_score(fit_score)
+    fit_score, score_incomplete = fit_normalization.safe_fit_score(judge_result.get("fit_score"))
+    incomplete = items_incomplete or factors_incomplete or score_incomplete
+    # 점수·라벨은 이미 완전히 결정적인 매핑이므로 LLM 값을 신뢰하지 않고 코드가 계산한다.
+    # fit_score를 못 구했으면(위에서 이미 incomplete=True로 표시됨) 라벨 계산을 위한
+    # 최소한의 폴백으로만 0을 쓴다.
+    fit_label = fit_normalization.label_from_score(fit_score if fit_score is not None else 0)
+    fit_score = fit_score if fit_score is not None else 0
 
     tables = "\n\n".join(
         fit_normalization.render_requirement_table(

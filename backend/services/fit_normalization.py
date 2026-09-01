@@ -45,17 +45,32 @@ def _code_fallback(item_id: str, source_item: str) -> dict:
 
 def _is_valid_judgment(item_id: str, verdict, evidence_basis, severity) -> bool:
     """조건부 불변조건 검증 — ID가 정확히 한 번 등장해도 필드 조합 자체가 규칙을
-    어기면(예: met인데 evidence_basis가 "해당없음", unmet인데 severity가 "없음")
-    무효로 본다. 항목 종류별 verdict 제약(예: required는 unclear 불가)은 검사하지
-    않는다 — 복합 자격요건의 연결어 불명확 예외([복합 자격요건 판정])가 required
-    항목에도 합법적으로 unclear를 허용하므로, 코드가 항목 종류만으로 그 예외를
-    구분할 수 없다."""
+    어기면 무효로 본다.
+
+    항목 종류별 verdict 제약(예: required는 unclear 불가)은 검사하지 않는다 —
+    복합 자격요건의 연결어 불명확 예외([복합 자격요건 판정])가 required 항목에도
+    합법적으로 unclear를 허용하므로, 코드가 항목 종류만으로 그 예외를 구분할 수
+    없다. 다만 severity는 명확히 판별 가능한 두 규칙([심각도 기준])만 강제한다
+    (2026-09-01, 2차 리뷰 반영 — required+unclear는 원문 의미가 필요해 여전히
+    강제하지 않는다):
+    - required + unmet → severity는 반드시 "상"
+    - preferred/responsibility + unmet·unclear → severity는 "중" 또는 "하"만
+    """
     if verdict not in _VALID_VERDICTS:
         return False
     if verdict == "met":
         return evidence_basis in ("explicit", "assumed")
-    # unmet | unclear
-    return severity in _VALID_SEVERITY
+    # unmet | unclear — evidence_basis는 met 전용이므로 "해당없음"이어야 한다
+    if evidence_basis != "해당없음":
+        return False
+    if severity not in _VALID_SEVERITY:
+        return False
+    prefix = item_id.split(":", 1)[0]
+    if prefix == "required" and verdict == "unmet" and severity != "상":
+        return False
+    if prefix in ("preferred", "responsibility") and severity not in ("중", "하"):
+        return False
+    return True
 
 
 def reconcile_judgments(input_items: list[dict], llm_items: list[dict]) -> tuple[list[dict], bool]:
@@ -143,6 +158,42 @@ def label_from_score(fit_score: int) -> str:
         if fit_score >= threshold:
             return label
     return "비추천"
+
+
+def safe_fit_score(raw_score) -> tuple[int | None, bool]:
+    """`fit_score`를 안전하게 정수로 변환한다(2026-09-01, 2차 리뷰 반영) — provider가
+    도구 응답 스키마를 서버에서 강제 검증하지 않으므로, 값이 없거나 숫자로 변환
+    불가능할 수 있다. 이 경우 0점 같은 그럴듯한 잘못된 기본값으로 조용히 넘어가지
+    않고 (None, True)를 반환해 `evaluation_incomplete`를 강제한다."""
+    try:
+        score = int(raw_score)
+    except (TypeError, ValueError):
+        logger.warning("safe_fit_score: fit_score 변환 실패 — raw=%r", raw_score)
+        return None, True
+    return max(0, min(100, score)), False
+
+
+_DECISION_FACTOR_KEYS = ("career_years", "location", "stability", "jobplanet", "salary", "custom_criteria")
+_VALID_LEVEL = {"상", "중", "하", "없음"}
+
+
+def validate_decision_factors(decision_factors: dict) -> tuple[dict, bool]:
+    """decision_factors의 6개 요인이 전부 존재하고 `level`이 유효한 enum인지
+    검증한다(2026-09-01, 2차 리뷰 반영). 누락되거나 `level`이 enum 밖 값이면
+    임의로 등급을 매기지 않고 안전한 기본값(level="없음", 확인 필요 note)으로
+    교체한 뒤 incomplete로 표시한다 — enum 밖 값이 "(최상) ..." 같은 형식으로
+    그대로 gaps에 노출되는 것을 막는다."""
+    result = {}
+    incomplete = False
+    for key in _DECISION_FACTOR_KEYS:
+        factor = decision_factors.get(key)
+        if not isinstance(factor, dict) or factor.get("level") not in _VALID_LEVEL:
+            logger.warning("validate_decision_factors: %s 누락 또는 level 유효하지 않음 — raw=%r", key, factor)
+            result[key] = {"status": "확인필요", "level": "없음", "note": "시스템이 이 요인을 판정하지 못함"}
+            incomplete = True
+        else:
+            result[key] = factor
+    return result, incomplete
 
 
 def strength_grade(item_id: str) -> str:
@@ -241,8 +292,9 @@ if __name__ == "__main__":
 
     # 2. reconcile_judgments — 정상/누락/중복/미지 id 각각 처리
     llm_items = [
-        {"id": "required:0", "verdict": "unmet", "severity": "상", "reason": "MongoDB 경험 없음",
-         "evidence_summary": "MongoDB 경험 없음", "source_item": "LLM이 바꿔치기하려는 값 — 무시돼야 함"},
+        {"id": "required:0", "verdict": "unmet", "evidence_basis": "해당없음", "severity": "상",
+         "reason": "MongoDB 경험 없음", "evidence_summary": "MongoDB 경험 없음",
+         "source_item": "LLM이 바꿔치기하려는 값 — 무시돼야 함"},
         # required:1 누락
         {"id": "preferred:0", "verdict": "met", "evidence_basis": "explicit",
          "evidence_summary": "Job FitCheck에서 문제 정의·기획·검증 주도"},
@@ -306,6 +358,43 @@ if __name__ == "__main__":
     assert label_from_score(40) == "보류"
     assert label_from_score(39) == "비추천"
     assert label_from_score(0) == "비추천"
+
+    # 3-4. 항목 종류별 severity 강제 (2026-09-01, 2차 리뷰 반영) — required+unmet은 반드시 상,
+    # preferred/responsibility+unmet·unclear는 중/하만 허용
+    llm7 = [{"id": "required:0", "verdict": "unmet", "evidence_basis": "해당없음", "severity": "하", "reason": "이유"}]
+    result7, incomplete7 = reconcile_judgments(inputs2, llm7)
+    assert incomplete7 is True, "required+unmet인데 severity가 상이 아니면 무효(fallback)여야 함"
+
+    inputs_pref = [{"id": "preferred:0", "source_item": "P"}]
+    llm8 = [{"id": "preferred:0", "verdict": "unmet", "evidence_basis": "해당없음", "severity": "상", "reason": "이유"}]
+    result8, incomplete8 = reconcile_judgments(inputs_pref, llm8)
+    assert incomplete8 is True, "preferred+unmet인데 severity가 상이면 무효(fallback)여야 함"
+
+    # 3-5. unmet인데 evidence_basis가 "assumed"(met 전용)면 무효
+    llm9 = [{"id": "required:0", "verdict": "unmet", "evidence_basis": "assumed", "severity": "상"}]
+    result9, incomplete9 = reconcile_judgments(inputs2, llm9)
+    assert incomplete9 is True, "unmet에 evidence_basis=assumed는 무효(fallback)여야 함"
+
+    # 3-6. safe_fit_score — 누락·비숫자는 None+incomplete, 정상값은 그대로, 범위 밖은 clamp
+    assert safe_fit_score(72) == (72, False)
+    assert safe_fit_score(None) == (None, True)
+    assert safe_fit_score("not-a-number") == (None, True)
+    assert safe_fit_score(150) == (100, False), "범위 밖 점수는 clamp"
+    assert safe_fit_score(-5) == (0, False)
+
+    # 3-7. validate_decision_factors — 누락되거나 level이 enum 밖이면 안전한 기본값+incomplete
+    valid_factors = {k: {"status": "충족", "level": "없음", "note": ""} for k in _DECISION_FACTOR_KEYS}
+    result_ok, incomplete_ok = validate_decision_factors(valid_factors)
+    assert incomplete_ok is False
+    assert result_ok == valid_factors
+
+    broken_factors = dict(valid_factors)
+    broken_factors["jobplanet"] = {"status": "낮음", "level": "최상", "note": "2.4점"}  # enum 밖 값
+    del broken_factors["salary"]  # 통째로 누락
+    result_broken, incomplete_broken = validate_decision_factors(broken_factors)
+    assert incomplete_broken is True
+    assert result_broken["jobplanet"]["level"] == "없음", "enum 밖 level은 그대로 노출되면 안 됨"
+    assert result_broken["salary"]["level"] == "없음", "누락된 요인은 안전한 기본값으로 채워져야 함"
 
     # 4. derive_gaps_strengths — met(explicit)→strength, met(assumed)→제외, unmet→gap, verify→확인필요 gap
     items = [
