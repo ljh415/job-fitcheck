@@ -179,25 +179,36 @@ def safe_fit_score(raw_score) -> tuple[int | None, bool]:
 _DECISION_FACTOR_KEYS = ("career_years", "location", "stability", "jobplanet", "salary", "custom_criteria")
 _VALID_LEVEL = {"상", "중", "하", "없음"}
 
+# 구 CompanyFrontmatter salary_check/stability_check(Pydantic Literal)와 같은 어휘 —
+# validate_decision_factors()의 enum 검증과 derive_legacy_checks()의 매핑 양쪽에서 쓴다.
+_SALARY_CHECK_VALUES = {"양호", "미확인", "낮음"}
+_STABILITY_CHECK_VALUES = {"충족", "조건부", "미달"}
+_STATUS_ENUM_BY_KEY = {"salary": _SALARY_CHECK_VALUES, "stability": _STABILITY_CHECK_VALUES}
+
 
 def validate_decision_factors(decision_factors: dict) -> tuple[dict, bool]:
     """decision_factors의 6개 요인이 전부 존재하고 `level`이 유효한 enum,
-    `status`/`note`가 문자열인지 검증한다(2026-09-01 2차 리뷰, 2026-09-02
-    4차 리뷰 반영). 누락되거나 `level`이 enum 밖 값이거나 status/note 타입이
-    틀리면 임의로 등급을 매기지 않고 안전한 기본값(level="없음", 확인 필요
-    note)으로 교체한 뒤 incomplete로 표시한다 — enum 밖 값이 "(최상) ..."
-    같은 형식으로 그대로 gaps에 노출되거나, status가 dict 등 비문자열이라
-    derive_legacy_checks()가 구 필드(Pydantic Literal/str)에 그대로 옮겨서
-    저장 직후 회사 파일을 읽지 못하게 만드는 것을 막는다."""
+    `status`/`note`가 문자열인지, salary/stability는 status가 구 필드와 같은
+    enum인지 검증한다(2026-09-01 2차 리뷰, 2026-09-02 4·5차 리뷰 반영). 위반
+    시 임의로 등급을 매기지 않고 안전한 기본값(level="없음", 확인 필요 note)
+    으로 교체한 뒤 incomplete로 표시한다. 최상위 `decision_factors` 자체가
+    dict가 아니면(provider가 list/문자열/숫자를 반환하는 등) `.get()` 호출이
+    `AttributeError`로 죽어 1단계 LLM 호출 비용만 쓰고 평가 전체가 예외로
+    끝나는 것을 막기 위해 먼저 빈 dict로 정규화한다(5차 리뷰 반영)."""
+    if not isinstance(decision_factors, dict):
+        logger.warning("validate_decision_factors: 최상위 타입이 dict 아님 — raw=%r", decision_factors)
+        decision_factors = {}
     result = {}
     incomplete = False
     for key in _DECISION_FACTOR_KEYS:
         factor = decision_factors.get(key)
+        allowed_status = _STATUS_ENUM_BY_KEY.get(key)
         if (
             not isinstance(factor, dict)
             or factor.get("level") not in _VALID_LEVEL
             or not isinstance(factor.get("status"), str)
             or not isinstance(factor.get("note"), str)
+            or (allowed_status is not None and factor.get("status") not in allowed_status)
         ):
             logger.warning("validate_decision_factors: %s 누락 또는 level/status/note 유효하지 않음 — raw=%r", key, factor)
             result[key] = {"status": "확인필요", "level": "없음", "note": "시스템이 이 요인을 판정하지 못함"}
@@ -263,10 +274,6 @@ def derive_decision_factor_gaps(decision_factors: dict) -> list[str]:
         status = factor.get("status", "")
         gaps.append(f"({level}) {label} {status} - {note}".replace("  ", " "))
     return gaps
-
-
-_SALARY_CHECK_VALUES = {"양호", "미확인", "낮음"}
-_STABILITY_CHECK_VALUES = {"충족", "조건부", "미달"}
 
 
 def derive_legacy_checks(decision_factors: dict) -> dict:
@@ -427,9 +434,30 @@ if __name__ == "__main__":
 
     # 3-7. validate_decision_factors — 누락되거나 level이 enum 밖이면 안전한 기본값+incomplete
     valid_factors = {k: {"status": "충족", "level": "없음", "note": ""} for k in _DECISION_FACTOR_KEYS}
+    valid_factors["salary"] = {"status": "양호", "level": "없음", "note": ""}
+    valid_factors["stability"] = {"status": "충족", "level": "없음", "note": ""}
     result_ok, incomplete_ok = validate_decision_factors(valid_factors)
     assert incomplete_ok is False
     assert result_ok == valid_factors
+
+    # 3-7-2. 최상위 decision_factors 자체가 dict가 아니면 AttributeError 없이
+    # 전부 fallback+incomplete로 정규화(5차 리뷰 반영 — provider가 list/문자열/
+    # 숫자를 반환해도 죽지 않아야 함)
+    for bad_top in ([], "bad", 1, None):
+        result_bad_top, incomplete_bad_top = validate_decision_factors(bad_top)
+        assert incomplete_bad_top is True, bad_top
+        assert all(result_bad_top[k]["level"] == "없음" for k in _DECISION_FACTOR_KEYS), bad_top
+
+    # 3-7-3. salary/stability는 status가 구 필드 enum 밖이면 level이 정상이어도 무효
+    # (schema상 허용되는 임의 문자열이 evaluation_incomplete=false로 통과해 legacy
+    # 필드만 조용히 None이 되는 정보 유실 방지, 5차 리뷰 반영)
+    enum_violation = dict(valid_factors)
+    enum_violation["salary"] = {"status": "협의", "level": "없음", "note": ""}
+    enum_violation["stability"] = {"status": "강", "level": "없음", "note": ""}
+    result_enum, incomplete_enum = validate_decision_factors(enum_violation)
+    assert incomplete_enum is True
+    assert result_enum["salary"]["status"] == "확인필요"
+    assert result_enum["stability"]["status"] == "확인필요"
 
     broken_factors = dict(valid_factors)
     broken_factors["jobplanet"] = {"status": "낮음", "level": "최상", "note": "2.4점"}  # enum 밖 값
