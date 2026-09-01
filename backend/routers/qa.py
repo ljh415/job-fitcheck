@@ -19,6 +19,11 @@ logger = logging.getLogger(__name__)
 # 빈 목록/일반 500 대신 명확한 503으로 구분한다.
 _DB_UNAVAILABLE_DETAIL = "QnA 대화 기록 기능을 일시적으로 사용할 수 없습니다."
 
+# 적합도 평가 구조 개편(docs/fit-eval-structural-redesign/PLAN.md)의 1단계 중간
+# 판정 결과 — gaps/strengths가 이미 같은 내용을 읽기 좋게 담고 있어 QnA 컨텍스트에는
+# 원본 판정 배열까지 중복으로 넣지 않는다.
+_QA_FRONTMATTER_EXCLUDE = {"item_judgments", "decision_factors", "evaluation_incomplete"}
+
 # 진행 중인 QnA 생성 태스크 참조 보관 — asyncio 문서 권고대로, 참조를 안 들고 있으면
 # 이벤트 루프가 GC 시점에 실행 중인 태스크를 조용히 없애버릴 수 있다.
 _active_qa_tasks: set[asyncio.Task] = set()
@@ -156,7 +161,7 @@ async def company_qa(slug: str, req: QARequest):
     if not is_healthy():
         raise HTTPException(status_code=503, detail=_DB_UNAVAILABLE_DETAIL)
     profile_text = storage.read_profile_text() or "후보자 프로필 없음"
-    company_context = f"{record.frontmatter.model_dump_json(indent=2)}\n\n{record.body}"
+    company_context = f"{record.frontmatter.model_dump_json(indent=2, exclude=_QA_FRONTMATTER_EXCLUDE)}\n\n{record.body}"
 
     context_part = (
         f"## 후보자 프로필\n{profile_text}\n\n"
@@ -222,7 +227,7 @@ async def multi_company_qa(req: MultiQARequest):
             history_summary = _fit_history_summary(slug)
             contexts.append(
                 f"=== {record.frontmatter.display_name} ===\n"
-                f"{record.frontmatter.model_dump_json(indent=2)}\n\n{record.body}"
+                f"{record.frontmatter.model_dump_json(indent=2, exclude=_QA_FRONTMATTER_EXCLUDE)}\n\n{record.body}"
                 + (f"\n\n{history_summary}" if history_summary else "")
             )
     if not contexts:

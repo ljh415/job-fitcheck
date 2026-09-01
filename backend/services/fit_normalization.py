@@ -257,6 +257,27 @@ def derive_decision_factor_gaps(decision_factors: dict) -> list[str]:
     return gaps
 
 
+_SALARY_CHECK_VALUES = {"양호", "미확인", "낮음"}
+_STABILITY_CHECK_VALUES = {"충족", "조건부", "미달"}
+
+
+def derive_legacy_checks(decision_factors: dict) -> dict:
+    """decision_factors → 구 CompanyFrontmatter 필드(salary_check/stability_check/
+    location_check) 매핑. CSV 내보내기·MCP 계약 하위 호환용(4번 열린 질문, 결정:
+    B — decision_factors로 대체하지 않고 계속 채운다). status는 프롬프트가 이미
+    이 구 필드들과 같은 어휘로 채우도록 지시돼 있으므로(EVALUATE_FIT_JUDGE_SYSTEM
+    [decision_factors 판정]) 그대로 옮기되, enum을 벗어나면 버린다(salary_check/
+    stability_check는 Pydantic Literal이라 임의 문자열을 넣으면 저장이 깨진다)."""
+    salary_status = (decision_factors.get("salary") or {}).get("status")
+    stability_status = (decision_factors.get("stability") or {}).get("status")
+    location_status = (decision_factors.get("location") or {}).get("status")
+    return {
+        "salary_check": salary_status if salary_status in _SALARY_CHECK_VALUES else None,
+        "stability_check": stability_status if stability_status in _STABILITY_CHECK_VALUES else None,
+        "location_check": location_status or None,
+    }
+
+
 def _escape_cell(text: str) -> str:
     """마크다운 표 셀 이스케이프 — '|'와 줄바꿈이 표 구조를 깨는 것을 방지한다."""
     return (text or "").replace("|", "\\|").replace("\n", " ").strip()
@@ -443,5 +464,12 @@ if __name__ == "__main__":
     assert not any("연봉" in g or "salary" in g.lower() for g in df_gaps), \
         "salary는 _DECISION_FACTOR_LABELS에 없으므로 절대 파생되면 안 됨"
     assert any("잡플래닛" in g and g.startswith("(상)") for g in df_gaps), df_gaps
+
+    # 7. derive_legacy_checks — status를 구 필드 어휘로 그대로 옮기되 enum 밖이면 버림
+    legacy = derive_legacy_checks(decision_factors)
+    assert legacy == {"salary_check": "낮음", "stability_check": None, "location_check": "충족"}, legacy
+    assert derive_legacy_checks({}) == {"salary_check": None, "stability_check": None, "location_check": None}
+    bad = derive_legacy_checks({"salary": {"status": "괜찮음"}})  # enum 밖 값은 버림
+    assert bad["salary_check"] is None, bad
 
     print("fit_normalization self-check 통과")

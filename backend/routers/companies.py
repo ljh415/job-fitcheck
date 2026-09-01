@@ -933,8 +933,15 @@ async def refit_company(slug: str):
     # 이 프로필을 실제로 읽은 시점의 스냅샷 id를 고정 (이유는 resolve_profile_version_id_for_eval 참고)
     profile_version_id_at_eval = resolve_profile_version_id_for_eval()
     raw_text = prompts.escape_tag_chars(storage.read_raw_text(slug) or record.body)
-    # 이전 평가 결과(strengths/gaps/fit_score 등)는 LLM 입력에서 제외 — 자기참조 편향 방지
-    _REFIT_EXCLUDE = {"strengths", "gaps", "fit_score", "fit_label", "fit_report_body"}
+    # 이전 평가 결과(strengths/gaps/fit_score 등)는 LLM 입력에서 제외 — 자기참조 편향 방지.
+    # item_judgments/decision_factors/evaluation_incomplete도 같은 이유로 제외한다 —
+    # 적합도 평가 구조 개편(docs/fit-eval-structural-redesign/PLAN.md)의 1단계 중간
+    # 판정 결과라, 안 빼면 직전 평가의 결론이 "회사 데이터"인 것처럼 다음 평가에
+    # 섞여 들어간다.
+    _REFIT_EXCLUDE = {
+        "strengths", "gaps", "fit_score", "fit_label", "fit_report_body",
+        "item_judgments", "decision_factors", "evaluation_incomplete",
+    }
     company_data = {
         k: v for k, v in record.frontmatter.model_dump().items()
         if k not in _REFIT_EXCLUDE

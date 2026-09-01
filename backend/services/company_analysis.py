@@ -194,6 +194,9 @@ async def evaluate_fit_structured(
         "evaluation_incomplete": incomplete,
         "item_judgments": normalized,
         "decision_factors": decision_factors,
+        # 구 salary_check/stability_check/location_check 필드 하위 호환(CSV 내보내기·
+        # MCP 계약, 4번 열린 질문 결정: B). decision_factors로 대체하지 않고 계속 채운다.
+        **fit_normalization.derive_legacy_checks(decision_factors),
     }
     return fit_result, fit_report
 
