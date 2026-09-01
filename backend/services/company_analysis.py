@@ -100,10 +100,13 @@ async def evaluate_fit_structured(
     호출부에는 연결하지 않았다 — `evaluate_fit()`과 나란히 존재하며 회귀 검증
     (4개 사례) 통과 후 교체 예정.
 
-    반환 형식은 `evaluate_fit()`과 동일(fit_data, fit_report) — 호출부를 그대로
-    재사용할 수 있게. fit_data에 `item_judgments`/`decision_factors`/
-    `evaluation_incomplete`가 추가로 담긴다(중간결과 보존, 4번 열린 질문 참고 —
-    호출부가 이 필드들을 재평가 입력·QnA 컨텍스트에서 제외해야 함).
+    주의(Codex 리뷰 2026-09-01 반영): 이 함수의 반환값은 `evaluate_fit()`과
+    필드 이름이 다르다(`salary_check`/`stability_check`/`location_check` 대신
+    `decision_factors`에 중첩) — "호출부를 그대로 재사용 가능"은 아직 사실이
+    아니다. `item_judgments`/`decision_factors`/`evaluation_incomplete`도
+    `CompanyFrontmatter`에 선언되지 않아 그대로 저장하면 조용히 버려진다.
+    저장 여부·기존 필드 호환은 구현 순서 6번(저장·이력·QnA 제외 계약 확인)에서
+    확정한다 — 지금은 함수 자체의 판정 로직만 검증하는 단계.
     """
     high, high_model = high_from_snapshot(snap)
     eval_criteria = storage.read_eval_criteria().strip()
@@ -138,6 +141,11 @@ async def evaluate_fit_structured(
     )
     gaps, strengths = fit_normalization.derive_gaps_strengths(normalized)
     decision_factors = judge_result.get("decision_factors", {})
+    gaps = gaps + fit_normalization.derive_decision_factor_gaps(decision_factors)
+
+    # 점수·라벨은 이미 완전히 결정적인 매핑이므로 LLM 값을 신뢰하지 않고 코드가 검증·계산한다.
+    fit_score = max(0, min(100, int(judge_result.get("fit_score") or 0)))
+    fit_label = fit_normalization.label_from_score(fit_score)
 
     tables = "\n\n".join(
         fit_normalization.render_requirement_table(
@@ -152,8 +160,8 @@ async def evaluate_fit_structured(
     )
 
     report_user = prompts.EVALUATE_FIT_REPORT_USER_TEMPLATE.format(
-        fit_score=judge_result.get("fit_score"),
-        fit_label=judge_result.get("fit_label"),
+        fit_score=fit_score,
+        fit_label=fit_label,
         strengths_text="\n".join(f"- {s}" for s in strengths) or "(없음)",
         gaps_text="\n".join(f"- {g}" for g in gaps) or "(없음)",
         decision_factors_text=json.dumps(decision_factors, ensure_ascii=False),
@@ -169,8 +177,8 @@ async def evaluate_fit_structured(
 
     fit_report = f"{tables}\n\n{report_prose.strip()}"
     fit_result = {
-        "fit_score": judge_result.get("fit_score"),
-        "fit_label": judge_result.get("fit_label"),
+        "fit_score": fit_score,
+        "fit_label": fit_label,
         "gaps": gaps,
         "strengths": strengths,
         "evaluation_incomplete": incomplete,

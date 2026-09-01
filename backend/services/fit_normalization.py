@@ -2,6 +2,9 @@
 1단계 산출물을 다룬다. 완결성 검증·코드 fallback·gaps/strengths 파생·표 렌더링을
 provider(Claude/OpenAI/Gemini) 공통으로 담당해, 각 provider가 같은 규칙을 따로
 구현하지 않게 한다."""
+import logging
+
+logger = logging.getLogger(__name__)
 
 # id 접두사 → (company_data의 원본 배열 키, 강점 등급)
 _ID_PREFIX_MAP = {
@@ -9,6 +12,10 @@ _ID_PREFIX_MAP = {
     "preferred": ("preferred_skills", "중"),
     "responsibility": ("key_responsibilities", "중"),
 }
+
+_VALID_VERDICTS = {"met", "unmet", "unclear"}
+_VALID_EVIDENCE_BASIS = {"explicit", "assumed", "해당없음"}
+_VALID_SEVERITY = {"상", "중", "하"}  # None("없음")은 met일 때만 허용, 별도 처리
 
 
 def build_input_items(company_data: dict) -> list[dict]:
@@ -36,21 +43,46 @@ def _code_fallback(item_id: str, source_item: str) -> dict:
     }
 
 
+def _is_valid_judgment(item_id: str, verdict, evidence_basis, severity) -> bool:
+    """조건부 불변조건 검증 — ID가 정확히 한 번 등장해도 필드 조합 자체가 규칙을
+    어기면(예: met인데 evidence_basis가 "해당없음", unmet인데 severity가 "없음")
+    무효로 본다. 항목 종류별 verdict 제약(예: required는 unclear 불가)은 검사하지
+    않는다 — 복합 자격요건의 연결어 불명확 예외([복합 자격요건 판정])가 required
+    항목에도 합법적으로 unclear를 허용하므로, 코드가 항목 종류만으로 그 예외를
+    구분할 수 없다."""
+    if verdict not in _VALID_VERDICTS:
+        return False
+    if verdict == "met":
+        return evidence_basis in ("explicit", "assumed")
+    # unmet | unclear
+    return severity in _VALID_SEVERITY
+
+
 def reconcile_judgments(input_items: list[dict], llm_items: list[dict]) -> tuple[list[dict], bool]:
     """LLM이 반환한 판정 배열을 입력 기준으로 검증·복원한다.
 
-    - 모르는 id(입력에 없던 값)는 폐기한다.
+    - 모르는 id(입력에 없던 값)는 폐기한다(로그만 남김).
     - 중복 id는 임의로 하나를 고르지 않고 그 id 전체를 무효화한 뒤 fallback으로 채운다.
+    - verdict·evidence_basis·severity 조합이 규칙을 어기면(예: met인데 evidence_basis
+      불명, unmet인데 severity 없음) 필드 개수가 맞아도 무효로 보고 fallback으로 채운다.
     - source_item은 LLM 반환값을 신뢰하지 않고 입력값으로 강제 복원한다.
-    - severity는 met일 때 null로 강제한다.
+    - severity는 met일 때 null로 강제, "없음" 문자열은 None으로 정규화한다.
     - 최종 순서는 LLM이 돌려준 순서가 아니라 입력 순서를 따른다.
-    - 빠진 id는 code_fallback으로 채운다(재요청하지 않음).
+    - 빠진/무효 id는 code_fallback으로 채운다(재요청하지 않음).
 
     반환: (정규화된 배열, evaluation_incomplete 여부 — fallback이 하나라도 있으면 True)
     """
     by_id: dict[str, list[dict]] = {}
     for raw in llm_items:
-        by_id.setdefault(raw.get("id"), []).append(raw)
+        raw_id = raw.get("id")
+        if raw_id is None:
+            continue
+        by_id.setdefault(raw_id, []).append(raw)
+
+    known_ids = {item["id"] for item in input_items}
+    unknown_ids = set(by_id) - known_ids
+    if unknown_ids:
+        logger.warning("reconcile_judgments: 입력에 없는 id 폐기 — %s", sorted(unknown_ids))
 
     result = []
     incomplete = False
@@ -58,21 +90,34 @@ def reconcile_judgments(input_items: list[dict], llm_items: list[dict]) -> tuple
         item_id, source_item = item["id"], item["source_item"]
         candidates = by_id.get(item_id, [])
         if len(candidates) != 1:
-            # 0개(누락) 또는 2개 이상(중복) 반환된 id는 둘 다 무효화 → fallback
+            reason = "누락" if not candidates else "중복"
+            logger.warning("reconcile_judgments: id=%s %s → code_fallback", item_id, reason)
             result.append(_code_fallback(item_id, source_item))
             incomplete = True
             continue
         raw = candidates[0]
         verdict = raw.get("verdict")
+        evidence_basis = raw.get("evidence_basis")
         # 스키마는 severity를 "없음" 문자열로 받는다(도구 호출 스키마의 null 처리 회피,
         # docs/fit-eval-structural-redesign/PLAN.md 스키마 실측 참고) — 내부적으로는 None으로 통일.
         raw_severity = raw.get("severity")
-        severity = None if verdict == "met" or raw_severity == "없음" else raw_severity
+        normalized_severity = None if raw_severity == "없음" else raw_severity
+
+        if not _is_valid_judgment(item_id, verdict, evidence_basis, normalized_severity):
+            logger.warning(
+                "reconcile_judgments: id=%s 조건 위반(verdict=%r, evidence_basis=%r, severity=%r) → code_fallback",
+                item_id, verdict, evidence_basis, raw_severity,
+            )
+            result.append(_code_fallback(item_id, source_item))
+            incomplete = True
+            continue
+
+        severity = None if verdict == "met" else normalized_severity
         result.append({
             "id": item_id,
             "source_item": source_item,
             "verdict": verdict,
-            "evidence_basis": raw.get("evidence_basis"),
+            "evidence_basis": evidence_basis,
             "evidence_summary": raw.get("evidence_summary", ""),
             "evidence_source": raw.get("evidence_source", ""),
             "evidence_excerpt": raw.get("evidence_excerpt", ""),
@@ -81,6 +126,23 @@ def reconcile_judgments(input_items: list[dict], llm_items: list[dict]) -> tuple
             "filled_by": "llm",
         })
     return result, incomplete
+
+
+_LABEL_THRESHOLDS = (
+    (85, "강력추천"),
+    (70, "추천"),
+    (55, "조건부추천"),
+    (40, "보류"),
+)
+
+
+def label_from_score(fit_score: int) -> str:
+    """점수→라벨 매핑은 이미 완전히 결정적이므로 LLM 응답을 신뢰하지 않고 코드가
+    직접 계산한다(EVALUATE_FIT_JUDGE_USER_TEMPLATE의 점수→라벨 기준표와 동일)."""
+    for threshold, label in _LABEL_THRESHOLDS:
+        if fit_score >= threshold:
+            return label
+    return "비추천"
 
 
 def strength_grade(item_id: str) -> str:
@@ -114,6 +176,31 @@ def derive_gaps_strengths(items: list[dict]) -> tuple[list[str], list[str]]:
             reason = it.get("reason") or it.get("evidence_summary", "")
             gaps.append(f"({severity}) {it['source_item']} - {reason}")
     return gaps, strengths
+
+
+_DECISION_FACTOR_LABELS = {
+    "career_years": "경력 연수",
+    "location": "근무지",
+    "stability": "기업 안정성",
+    "jobplanet": "잡플래닛 평점",
+    "custom_criteria": "사용자 지정 평가 기준",
+}
+
+
+def derive_decision_factor_gaps(decision_factors: dict) -> list[str]:
+    """decision_factors에서 gaps 문자열을 파생한다. `level`이 "없음"이 아닌
+    요인만(=1단계가 문제 있다고 판단한 것만) gap으로 포함한다. `salary`는 이
+    맵에 없으므로 절대 파생되지 않는다(기존 규칙: 연봉은 감점 근거로 안 씀)."""
+    gaps = []
+    for key, label in _DECISION_FACTOR_LABELS.items():
+        factor = decision_factors.get(key) or {}
+        level = factor.get("level")
+        if not level or level == "없음":
+            continue
+        note = factor.get("note", "")
+        status = factor.get("status", "")
+        gaps.append(f"({level}) {label} {status} - {note}".replace("  ", " "))
+    return gaps
 
 
 def _escape_cell(text: str) -> str:
@@ -184,10 +271,41 @@ if __name__ == "__main__":
     assert incomplete2 is False
     assert result2[0]["severity"] is None, "met은 severity를 코드가 null로 강제해야 함"
 
-    # 3-1. unmet인데 severity가 "없음" 문자열로 오면 None으로 정규화(스키마는 null 대신 "없음" 사용)
-    llm3 = [{"id": "required:0", "verdict": "unmet", "severity": "없음", "reason": "이유"}]
-    result3, _ = reconcile_judgments(inputs2, llm3)
-    assert result3[0]["severity"] is None, '"없음" 문자열은 None으로 정규화돼야 함'
+    # 3-1. "없음" 문자열은 severity로 넘어오면 None으로 정규화된다는 것 자체는 met 케이스로 이미 확인됨(위 2번,
+    # required:0의 최초 llm_items에는 severity="상"이 있었으므로 met이 아닌 케이스로 별도 확인:
+    # met + evidence_basis 정상 + severity="없음"(→None 정규화, met이라 어차피 무시됨)은 유효해야 함
+    llm3 = [{"id": "required:0", "verdict": "met", "evidence_basis": "explicit", "severity": "없음",
+             "evidence_summary": "근거"}]
+    result3, incomplete3 = reconcile_judgments(inputs2, llm3)
+    assert incomplete3 is False
+    assert result3[0]["severity"] is None
+
+    # 3-2. 조건부 불변조건 위반은 필드가 다 채워져 있어도 무효 → fallback (Codex 리뷰 2026-09-01 지적)
+    # met인데 evidence_basis가 "해당없음"(met에는 explicit/assumed만 허용)
+    llm4 = [{"id": "required:0", "verdict": "met", "evidence_basis": "해당없음", "evidence_summary": "근거 없음"}]
+    result4, incomplete4 = reconcile_judgments(inputs2, llm4)
+    assert incomplete4 is True, "met+evidence_basis=해당없음은 무효로 fallback 처리돼야 함"
+    assert result4[0]["filled_by"] == "code_fallback"
+    # unmet인데 severity가 "없음"(정규화 후 None) — unmet/unclear는 severity가 상/중/하 중 하나여야 함
+    llm5 = [{"id": "required:0", "verdict": "unmet", "severity": "없음", "reason": "이유"}]
+    result5, incomplete5 = reconcile_judgments(inputs2, llm5)
+    assert incomplete5 is True, "unmet인데 severity가 없으면 무효로 fallback 처리돼야 함"
+    assert result5[0]["filled_by"] == "code_fallback"
+    # verdict가 enum 밖 값
+    llm6 = [{"id": "required:0", "verdict": "확실히충족", "severity": "없음"}]
+    result6, incomplete6 = reconcile_judgments(inputs2, llm6)
+    assert incomplete6 is True, "enum 밖 verdict는 무효로 fallback 처리돼야 함"
+
+    # 3-3. label_from_score — 점수→라벨 매핑은 코드가 결정
+    assert label_from_score(85) == "강력추천"
+    assert label_from_score(84) == "추천"
+    assert label_from_score(70) == "추천"
+    assert label_from_score(69) == "조건부추천"
+    assert label_from_score(55) == "조건부추천"
+    assert label_from_score(54) == "보류"
+    assert label_from_score(40) == "보류"
+    assert label_from_score(39) == "비추천"
+    assert label_from_score(0) == "비추천"
 
     # 4. derive_gaps_strengths — met(explicit)→strength, met(assumed)→제외, unmet→gap, verify→확인필요 gap
     items = [
@@ -211,5 +329,19 @@ if __name__ == "__main__":
     table = render_requirement_table(table_items, "자격요건 충족 현황")
     assert "RDB/Mongo \\| 위험문자" in table, table
     assert "근거 줄바꿈 포함" in table, "셀 안 줄바꿈은 공백으로 치환돼야 함"
+
+    # 6. derive_decision_factor_gaps — level이 "없음"이면 제외, salary는 애초에 안 넣으면 파생 안 됨
+    decision_factors = {
+        "career_years": {"status": "미달", "level": "중", "note": "요구 3년, 보유 1년"},
+        "location": {"status": "충족", "level": "없음", "note": "서울 일치"},
+        "jobplanet": {"status": "낮음", "level": "상", "note": "2.4점"},
+        "salary": {"status": "낮음", "level": "상", "note": "이 level은 무시돼야 함"},
+    }
+    df_gaps = derive_decision_factor_gaps(decision_factors)
+    assert any("경력 연수" in g and g.startswith("(중)") for g in df_gaps), df_gaps
+    assert not any("근무지" in g for g in df_gaps), "level=없음은 파생되면 안 됨"
+    assert not any("연봉" in g or "salary" in g.lower() for g in df_gaps), \
+        "salary는 _DECISION_FACTOR_LABELS에 없으므로 절대 파생되면 안 됨"
+    assert any("잡플래닛" in g and g.startswith("(상)") for g in df_gaps), df_gaps
 
     print("fit_normalization self-check 통과")

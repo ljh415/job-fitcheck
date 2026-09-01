@@ -584,12 +584,10 @@ _DECISION_FACTOR_SCHEMA = {
 EVALUATE_FIT_JUDGE_TOOL_SCHEMA = {
     "type": "object",
     "properties": {
+        # fit_label은 여기 없다 — 점수→라벨 매핑은 이미 완전히 결정적이라 LLM에
+        # 물어봐야 할 이유가 없고, company_analysis.py가 fit_score만으로
+        # fit_normalization.label_from_score()를 통해 항상 코드로 계산한다.
         "fit_score": {"type": "integer", "minimum": 0, "maximum": 100, "description": "적합도 점수 (0~100)"},
-        "fit_label": {
-            "type": "string",
-            "enum": ["강력추천", "추천", "조건부추천", "보류", "비추천"],
-            "description": "적합도 라벨",
-        },
         "item_judgments": {
             "type": "array",
             "description": (
@@ -604,18 +602,20 @@ EVALUATE_FIT_JUDGE_TOOL_SCHEMA = {
                 "career_years": _DECISION_FACTOR_SCHEMA,
                 "location": _DECISION_FACTOR_SCHEMA,
                 "stability": _DECISION_FACTOR_SCHEMA,
+                "jobplanet": _DECISION_FACTOR_SCHEMA,
                 "salary": _DECISION_FACTOR_SCHEMA,
                 "custom_criteria": _DECISION_FACTOR_SCHEMA,
             },
-            "required": ["career_years", "location", "stability", "salary", "custom_criteria"],
+            "required": ["career_years", "location", "stability", "jobplanet", "salary", "custom_criteria"],
             "description": (
                 "salary는 gaps/strengths로 절대 파생되지 않습니다 — level을 채우더라도 무시됩니다"
                 "(연봉 미명시·미달은 감점 없음, 희망 이상만 참고 가산). "
+                "jobplanet은 3.0 미만이면 level을 최소 '중', 2.5 미만이면 '상'으로. 정보 없으면 level '없음'. "
                 "custom_criteria는 사용자 지정 평가 기준이 없으면 status를 '해당없음'으로."
             ),
         },
     },
-    "required": ["fit_score", "fit_label", "item_judgments", "decision_factors"],
+    "required": ["fit_score", "item_judgments", "decision_factors"],
 }
 
 EVALUATE_FIT_JUDGE_SYSTEM = f"""당신은 구직자의 이력서와 채용공고를 비교하여 항목별 적합도를 판정하는 전문 커리어 컨설턴트입니다.
@@ -651,7 +651,7 @@ severity는 공고에서의 비중을 최우선 기준으로 판단하세요(met
   - 핵심성 판단이 애매하면 (상)으로 올리지 말고 (중)을 기본값으로 두세요.
 
 [decision_factors 판정]
-경력 연수·근무지·안정성·연봉·사용자 지정 평가 기준도 위와 같은 원칙(명시적 근거만 사용, 추측 금지)으로 판정하세요. `status`에는 상태를, `level`에는 gaps/strengths로 파생할 때 쓸 등급(상/중/하, 해당 없으면 "없음")을, `note`에는 보고서에 바로 쓸 근거 문장을 채우세요. 연봉은 희망 최소 연봉 이상일 때만 "양호"로 표시하고, 미명시·미달은 "미확인"/"낮음"으로 표시하되 level은 항상 "없음"으로 두세요(감점 근거로 쓰이지 않습니다).
+경력 연수·근무지·안정성·잡플래닛 평점·연봉·사용자 지정 평가 기준도 위와 같은 원칙(명시적 근거만 사용, 추측 금지)으로 판정하세요. `status`에는 상태를, `level`에는 gaps/strengths로 파생할 때 쓸 등급(상/중/하, 해당 없으면 "없음")을, `note`에는 보고서에 바로 쓸 근거 문장을 채우세요. 잡플래닛 평점은 3.0 미만이면 level을 최소 "중", 2.5 미만이면 "상"으로 매기고, 정보가 없으면 level을 "없음"으로 두세요. 연봉은 희망 최소 연봉 이상일 때만 "양호"로 표시하고, 미명시·미달은 "미확인"/"낮음"으로 표시하되 level은 항상 "없음"으로 두세요(감점 근거로 쓰이지 않습니다).
 {TRUST_BOUNDARY_NOTICE}"""
 
 EVALUATE_FIT_JUDGE_USER_TEMPLATE = """## 후보자 프로필
@@ -666,7 +666,7 @@ EVALUATE_FIT_JUDGE_USER_TEMPLATE = """## 후보자 프로필
 ## 판정할 항목 목록 (id별로 정확히 하나씩 판정하세요 — 하나도 빠뜨리지 마세요)
 {item_list}
 
-위 정보를 바탕으로 각 항목을 판정하고, 종합 점수·라벨·decision_factors까지 채워서 {tool_name} 툴(함수)을 호출하세요.
+위 정보를 바탕으로 각 항목을 판정하고, 종합 점수·decision_factors까지 채워서 {tool_name} 툴(함수)을 호출하세요. 라벨은 점수만으로 시스템이 자동 계산하니 별도로 판단하지 마세요.
 
 ---
 
