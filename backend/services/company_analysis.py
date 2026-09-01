@@ -6,6 +6,7 @@ import re
 import prompts
 import storage
 from llm.router import LLMSnapshot, high_from_snapshot
+from services import fit_normalization
 
 
 async def evaluate_fit(
@@ -82,6 +83,100 @@ async def evaluate_fit(
             reasoning_effort=snap.reasoning_effort,
         )
         fit_report = re.sub(r'^##\s*4\.\s*적합도 리포트[^\n]*\n+', '', fit_result.pop("fit_report_body", "").strip()).strip()
+    return fit_result, fit_report
+
+
+async def evaluate_fit_structured(
+    snap: LLMSnapshot,
+    profile_text: str,
+    company_data: dict,
+    raw_text: str,
+    operation: str,
+) -> tuple[dict, str]:
+    """적합도 평가 구조 개편(docs/fit-eval-structural-redesign/PLAN.md) 파이프라인.
+
+    1단계(판정 전용) 호출 → 코드가 완결성 검증·표 렌더링·gaps/strengths 파생 →
+    2단계(보고서 산문 전용) 호출. 아직 검증 전이라 `_process_company`/`refit_company`
+    호출부에는 연결하지 않았다 — `evaluate_fit()`과 나란히 존재하며 회귀 검증
+    (4개 사례) 통과 후 교체 예정.
+
+    반환 형식은 `evaluate_fit()`과 동일(fit_data, fit_report) — 호출부를 그대로
+    재사용할 수 있게. fit_data에 `item_judgments`/`decision_factors`/
+    `evaluation_incomplete`가 추가로 담긴다(중간결과 보존, 4번 열린 질문 참고 —
+    호출부가 이 필드들을 재평가 입력·QnA 컨텍스트에서 제외해야 함).
+    """
+    high, high_model = high_from_snapshot(snap)
+    eval_criteria = storage.read_eval_criteria().strip()
+    custom_criteria_section = (
+        f"\n\n## 추가 평가 기준 (사용자 지정)\n{eval_criteria}{prompts.CUSTOM_CRITERIA_BOUNDARY_NOTICE}"
+        if eval_criteria else ""
+    )
+
+    input_items = fit_normalization.build_input_items(company_data)
+    item_list_text = "\n".join(f"- {it['id']}: {it['source_item']}" for it in input_items)
+    judge_user = prompts.EVALUATE_FIT_JUDGE_USER_TEMPLATE.format(
+        candidate_profile=profile_text,
+        company_json=json.dumps(company_data, ensure_ascii=False),
+        raw_text=raw_text[:4000],
+        item_list=item_list_text or "(판정할 항목 없음)",
+        tool_name=prompts.EVALUATE_FIT_JUDGE_TOOL_NAME,
+        custom_criteria=custom_criteria_section,
+    )
+    judge_result = await high.extract_structured(
+        system=prompts.EVALUATE_FIT_JUDGE_SYSTEM,
+        user=judge_user,
+        tool_name=prompts.EVALUATE_FIT_JUDGE_TOOL_NAME,
+        tool_description=prompts.EVALUATE_FIT_JUDGE_TOOL_DESCRIPTION,
+        tool_schema=prompts.EVALUATE_FIT_JUDGE_TOOL_SCHEMA,
+        model=high_model,
+        operation=operation,
+        reasoning_effort=snap.reasoning_effort,
+    )
+
+    normalized, incomplete = fit_normalization.reconcile_judgments(
+        input_items, judge_result.get("item_judgments", [])
+    )
+    gaps, strengths = fit_normalization.derive_gaps_strengths(normalized)
+    decision_factors = judge_result.get("decision_factors", {})
+
+    tables = "\n\n".join(
+        fit_normalization.render_requirement_table(
+            [it for it in normalized if it["id"].startswith(f"{prefix}:")], header
+        )
+        for prefix, header in (
+            ("required", "자격요건 충족 현황"),
+            ("preferred", "우대사항 충족 현황"),
+            ("responsibility", "직무 적합도 분석"),
+        )
+        if any(it["id"].startswith(f"{prefix}:") for it in normalized)
+    )
+
+    report_user = prompts.EVALUATE_FIT_REPORT_USER_TEMPLATE.format(
+        fit_score=judge_result.get("fit_score"),
+        fit_label=judge_result.get("fit_label"),
+        strengths_text="\n".join(f"- {s}" for s in strengths) or "(없음)",
+        gaps_text="\n".join(f"- {g}" for g in gaps) or "(없음)",
+        decision_factors_text=json.dumps(decision_factors, ensure_ascii=False),
+    )
+    report_prose = await high.complete(
+        system=prompts.EVALUATE_FIT_REPORT_SYSTEM,
+        user=report_user,
+        model=high_model,
+        operation=f"{operation}(보고서)",
+        max_tokens=4096,
+        reasoning_effort=snap.reasoning_effort,
+    )
+
+    fit_report = f"{tables}\n\n{report_prose.strip()}"
+    fit_result = {
+        "fit_score": judge_result.get("fit_score"),
+        "fit_label": judge_result.get("fit_label"),
+        "gaps": gaps,
+        "strengths": strengths,
+        "evaluation_incomplete": incomplete,
+        "item_judgments": normalized,
+        "decision_factors": decision_factors,
+    }
     return fit_result, fit_report
 
 

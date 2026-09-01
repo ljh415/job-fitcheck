@@ -1,0 +1,215 @@
+"""정규화 판정 배열 처리 — 적합도 평가 구조 개편(docs/fit-eval-structural-redesign/PLAN.md)
+1단계 산출물을 다룬다. 완결성 검증·코드 fallback·gaps/strengths 파생·표 렌더링을
+provider(Claude/OpenAI/Gemini) 공통으로 담당해, 각 provider가 같은 규칙을 따로
+구현하지 않게 한다."""
+
+# id 접두사 → (company_data의 원본 배열 키, 강점 등급)
+_ID_PREFIX_MAP = {
+    "required": ("required_skills", "상"),
+    "preferred": ("preferred_skills", "중"),
+    "responsibility": ("key_responsibilities", "중"),
+}
+
+
+def build_input_items(company_data: dict) -> list[dict]:
+    """required_skills/preferred_skills/key_responsibilities를 {id, source_item}
+    목록으로 변환한다. id는 코드가 부여한다 — LLM은 판정 시 이 id만 그대로 돌려준다."""
+    items = []
+    for prefix, (key, _grade) in _ID_PREFIX_MAP.items():
+        for i, text in enumerate(company_data.get(key, [])):
+            items.append({"id": f"{prefix}:{i}", "source_item": text})
+    return items
+
+
+def _code_fallback(item_id: str, source_item: str) -> dict:
+    return {
+        "id": item_id,
+        "source_item": source_item,
+        "verdict": "verify",
+        "evidence_basis": None,
+        "evidence_summary": "시스템이 이 항목에 대한 판정을 받지 못해 자동 표시됨 — 이력서 원문 직접 확인 필요",
+        "evidence_source": "",
+        "evidence_excerpt": "",
+        "reason": "system_no_response",
+        "severity": None,
+        "filled_by": "code_fallback",
+    }
+
+
+def reconcile_judgments(input_items: list[dict], llm_items: list[dict]) -> tuple[list[dict], bool]:
+    """LLM이 반환한 판정 배열을 입력 기준으로 검증·복원한다.
+
+    - 모르는 id(입력에 없던 값)는 폐기한다.
+    - 중복 id는 임의로 하나를 고르지 않고 그 id 전체를 무효화한 뒤 fallback으로 채운다.
+    - source_item은 LLM 반환값을 신뢰하지 않고 입력값으로 강제 복원한다.
+    - severity는 met일 때 null로 강제한다.
+    - 최종 순서는 LLM이 돌려준 순서가 아니라 입력 순서를 따른다.
+    - 빠진 id는 code_fallback으로 채운다(재요청하지 않음).
+
+    반환: (정규화된 배열, evaluation_incomplete 여부 — fallback이 하나라도 있으면 True)
+    """
+    by_id: dict[str, list[dict]] = {}
+    for raw in llm_items:
+        by_id.setdefault(raw.get("id"), []).append(raw)
+
+    result = []
+    incomplete = False
+    for item in input_items:
+        item_id, source_item = item["id"], item["source_item"]
+        candidates = by_id.get(item_id, [])
+        if len(candidates) != 1:
+            # 0개(누락) 또는 2개 이상(중복) 반환된 id는 둘 다 무효화 → fallback
+            result.append(_code_fallback(item_id, source_item))
+            incomplete = True
+            continue
+        raw = candidates[0]
+        verdict = raw.get("verdict")
+        # 스키마는 severity를 "없음" 문자열로 받는다(도구 호출 스키마의 null 처리 회피,
+        # docs/fit-eval-structural-redesign/PLAN.md 스키마 실측 참고) — 내부적으로는 None으로 통일.
+        raw_severity = raw.get("severity")
+        severity = None if verdict == "met" or raw_severity == "없음" else raw_severity
+        result.append({
+            "id": item_id,
+            "source_item": source_item,
+            "verdict": verdict,
+            "evidence_basis": raw.get("evidence_basis"),
+            "evidence_summary": raw.get("evidence_summary", ""),
+            "evidence_source": raw.get("evidence_source", ""),
+            "evidence_excerpt": raw.get("evidence_excerpt", ""),
+            "reason": raw.get("reason", ""),
+            "severity": severity,
+            "filled_by": "llm",
+        })
+    return result, incomplete
+
+
+def strength_grade(item_id: str) -> str:
+    """항목 id 접두사로 강점 등급을 코드가 결정한다(LLM에 재차 묻지 않음) —
+    required:* → 상, preferred:*/responsibility:* → 중 (기존 H 프롬프트의
+    [강점 등급 기준]을 그대로 이관)."""
+    prefix = item_id.split(":", 1)[0]
+    return _ID_PREFIX_MAP.get(prefix, ("", "중"))[1]
+
+
+def derive_gaps_strengths(items: list[dict]) -> tuple[list[str], list[str]]:
+    """정규화 배열에서 gaps/strengths 문자열 배열을 파생한다.
+
+    근거 있는 met       → strength
+    assumed met          → 어느 목록에도 안 넣음(결격사유형 "충족 간주")
+    unmet / unclear      → 일반 gap (severity 등급 표기)
+    code_fallback verify → "(확인필요)" gap (일반 심각도 갭과 구분)
+    """
+    gaps, strengths = [], []
+    for it in items:
+        verdict = it["verdict"]
+        if verdict == "met":
+            if it.get("evidence_basis") == "assumed":
+                continue
+            grade = strength_grade(it["id"])
+            strengths.append(f"({grade}) {it['source_item']} - {it['evidence_summary']}")
+        elif verdict == "verify":
+            gaps.append(f"(확인필요) {it['source_item']} - {it['evidence_summary']}")
+        else:  # unmet | unclear
+            severity = it.get("severity") or "중"
+            reason = it.get("reason") or it.get("evidence_summary", "")
+            gaps.append(f"({severity}) {it['source_item']} - {reason}")
+    return gaps, strengths
+
+
+def _escape_cell(text: str) -> str:
+    """마크다운 표 셀 이스케이프 — '|'와 줄바꿈이 표 구조를 깨는 것을 방지한다."""
+    return (text or "").replace("|", "\\|").replace("\n", " ").strip()
+
+
+_VERDICT_SYMBOL = {"met": "✅ 충족", "unmet": "❌ 미충족", "unclear": "🔲 불명확", "verify": "🔲 확인필요"}
+
+
+def render_requirement_table(items: list[dict], header: str) -> str:
+    """정규화 배열에서 자격요건/우대사항 표를 코드가 직접 렌더링한다 — LLM이 표를
+    다시 쓰면 근거 없이 unmet을 완화 서술하거나 항목을 누락시킬 수 있어서, 사실
+    영역은 코드가 결정적으로 만든다."""
+    lines = [f"### {header}", "", "| 항목 | 충족 여부 | 근거 |", "|------|----------|------|"]
+    for it in items:
+        symbol = _VERDICT_SYMBOL.get(it["verdict"], it["verdict"])
+        evidence = it.get("evidence_summary") or it.get("reason") or ""
+        lines.append(f"| {_escape_cell(it['source_item'])} | {symbol} | {_escape_cell(evidence)} |")
+    return "\n".join(lines)
+
+
+if __name__ == "__main__":
+    # self-check — mock 기반, 실제 LLM 호출 없음
+    company_data = {
+        "required_skills": ["RDB/MongoDB/Elasticsearch 개발 경험", "TensorFlow 또는 PyTorch"],
+        "preferred_skills": ["문제 정의 및 해결 의지"],
+        "key_responsibilities": [],
+    }
+
+    # 1. build_input_items — id 부여 확인
+    inputs = build_input_items(company_data)
+    assert inputs == [
+        {"id": "required:0", "source_item": "RDB/MongoDB/Elasticsearch 개발 경험"},
+        {"id": "required:1", "source_item": "TensorFlow 또는 PyTorch"},
+        {"id": "preferred:0", "source_item": "문제 정의 및 해결 의지"},
+    ], inputs
+
+    # 2. reconcile_judgments — 정상/누락/중복/미지 id 각각 처리
+    llm_items = [
+        {"id": "required:0", "verdict": "unmet", "severity": "상", "reason": "MongoDB 경험 없음",
+         "evidence_summary": "MongoDB 경험 없음", "source_item": "LLM이 바꿔치기하려는 값 — 무시돼야 함"},
+        # required:1 누락
+        {"id": "preferred:0", "verdict": "met", "evidence_basis": "explicit",
+         "evidence_summary": "Job FitCheck에서 문제 정의·기획·검증 주도"},
+        {"id": "preferred:0", "verdict": "unmet"},  # 중복 반환 — 전체 무효화 대상
+        {"id": "unknown:99", "verdict": "met"},  # 모르는 id — 폐기
+    ]
+    result, incomplete = reconcile_judgments(inputs, llm_items)
+    assert incomplete is True, "누락·중복이 있으니 evaluation_incomplete=True여야 함"
+    by_id = {r["id"]: r for r in result}
+    assert by_id["required:0"]["source_item"] == "RDB/MongoDB/Elasticsearch 개발 경험", \
+        "source_item은 LLM 반환값이 아니라 입력값으로 복원돼야 함"
+    assert by_id["required:0"]["severity"] == "상"
+    assert by_id["required:1"]["filled_by"] == "code_fallback", "누락된 id는 fallback"
+    assert by_id["required:1"]["verdict"] == "verify"
+    assert by_id["required:1"]["severity"] is None, "fallback은 severity 상급 고정 금지"
+    assert by_id["preferred:0"]["filled_by"] == "code_fallback", "중복 반환은 전체 무효화 후 fallback"
+    assert "unknown:99" not in by_id, "모르는 id는 결과에 없어야 함"
+    assert [r["id"] for r in result] == ["required:0", "required:1", "preferred:0"], \
+        "순서는 LLM 반환 순서가 아니라 입력 순서"
+
+    # 3. met인데 severity가 왔으면 코드가 null로 강제
+    inputs2 = [{"id": "required:0", "source_item": "A"}]
+    llm2 = [{"id": "required:0", "verdict": "met", "evidence_basis": "explicit",
+             "severity": "상", "evidence_summary": "근거"}]
+    result2, incomplete2 = reconcile_judgments(inputs2, llm2)
+    assert incomplete2 is False
+    assert result2[0]["severity"] is None, "met은 severity를 코드가 null로 강제해야 함"
+
+    # 3-1. unmet인데 severity가 "없음" 문자열로 오면 None으로 정규화(스키마는 null 대신 "없음" 사용)
+    llm3 = [{"id": "required:0", "verdict": "unmet", "severity": "없음", "reason": "이유"}]
+    result3, _ = reconcile_judgments(inputs2, llm3)
+    assert result3[0]["severity"] is None, '"없음" 문자열은 None으로 정규화돼야 함'
+
+    # 4. derive_gaps_strengths — met(explicit)→strength, met(assumed)→제외, unmet→gap, verify→확인필요 gap
+    items = [
+        {"id": "required:0", "source_item": "A", "verdict": "met", "evidence_basis": "explicit",
+         "evidence_summary": "근거A"},
+        {"id": "required:1", "source_item": "B", "verdict": "met", "evidence_basis": "assumed",
+         "evidence_summary": "평가상 충족 간주"},
+        {"id": "preferred:0", "source_item": "C", "verdict": "unmet", "severity": "중", "reason": "이유C"},
+        {"id": "preferred:1", "source_item": "D", "verdict": "verify", "evidence_summary": "안내문구",
+         "filled_by": "code_fallback"},
+    ]
+    gaps, strengths = derive_gaps_strengths(items)
+    assert strengths == ["(상) A - 근거A"], strengths
+    assert gaps == ["(중) C - 이유C", "(확인필요) D - 안내문구"], gaps
+
+    # 5. render_requirement_table — 이스케이프 확인
+    table_items = [
+        {"id": "required:0", "source_item": "RDB/Mongo | 위험문자", "verdict": "unmet",
+         "evidence_summary": "근거\n줄바꿈 포함"},
+    ]
+    table = render_requirement_table(table_items, "자격요건 충족 현황")
+    assert "RDB/Mongo \\| 위험문자" in table, table
+    assert "근거 줄바꿈 포함" in table, "셀 안 줄바꿈은 공백으로 치환돼야 함"
+
+    print("fit_normalization self-check 통과")
