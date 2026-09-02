@@ -17,6 +17,12 @@ from .base import LLMAPIError, LLMProvider
 
 logger = logging.getLogger(__name__)
 
+# adaptive thinking이 기본 켜진 모델(Sonnet 5, Opus 4.7+)은 temperature 등 sampling
+# 파라미터를 비-기본값으로 주면 400 Bad Request를 반환한다(temperature=0도 예외 없이
+# 거부됨) — Anthropic 공식 마이그레이션 가이드 확인. 이 모델들은 temperature를 아예
+# 안 보낸다(OpenAI provider의 _NO_TEMPERATURE_MODELS와 같은 패턴).
+_NO_TEMPERATURE_MODELS = frozenset({"claude-sonnet-5", "claude-opus-4-7", "claude-opus-4-8"})
+
 
 def _raise_status_error(e: anthropic.APIStatusError) -> None:
     """APIStatusError를 사용자 친화적 메시지로 변환해 raise한다.
@@ -57,11 +63,12 @@ class AnthropicProvider(LLMProvider):
             description=tool_description,
             input_schema=tool_schema,  # type: ignore[arg-type]
         )
+        temperature_kwarg = {} if model in _NO_TEMPERATURE_MODELS else {"temperature": 0.5}
         try:
             response = await self._client.messages.create(
                 model=model,
                 max_tokens=max_tokens,
-                temperature=0.5,
+                **temperature_kwarg,
                 system=system,
                 messages=[{"role": "user", "content": user}],
                 tools=[tool_def],
@@ -294,3 +301,14 @@ if __name__ == "__main__":
         assert "500" in str(e), str(e)
 
     print("OK: 크레딧 소진 400 -> 402 전용 메시지, 그 외는 기존 503 메시지 유지")
+
+    # temperature 생략 모델 — Sonnet 5/Opus 4.7+는 temperature를 아예 안 보내야 함
+    for model in ("claude-sonnet-5", "claude-opus-4-7", "claude-opus-4-8"):
+        assert (
+            {} if model in _NO_TEMPERATURE_MODELS else {"temperature": 0.5}
+        ) == {}, model
+    for model in ("claude-sonnet-4-6", "claude-haiku-4-5", "claude-opus-4-6"):
+        assert (
+            {} if model in _NO_TEMPERATURE_MODELS else {"temperature": 0.5}
+        ) == {"temperature": 0.5}, model
+    print("OK: Sonnet 5/Opus 4.7+는 temperature 생략, 그 외 모델은 기존대로 0.5 유지")
