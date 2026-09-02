@@ -406,8 +406,13 @@ def derive_legacy_checks(decision_factors: dict) -> dict:
 
 
 def _escape_cell(text: str) -> str:
-    """마크다운 표 셀 이스케이프 — '|'와 줄바꿈이 표 구조를 깨는 것을 방지한다."""
-    return (text or "").replace("|", "\\|").replace("\n", " ").strip()
+    """마크다운 표 셀 이스케이프 — '|'와 줄바꿈이 표 구조를 깨는 것을 방지한다. '~'도
+    이스케이프한다 — LLM이 "A~B~C" 같은 구분 기호로 흔히 쓰는데, 프론트(marked.js)가
+    단일 '~'로도 취소선(strikethrough)을 적용해 글자가 깨져 보인다(2026-09-02, prod
+    실사례 그래비티랩스 건에서 확인 — "문제 정의~학습 파이프라인~평가"가 "학습"만
+    취소선으로 렌더링됨). '\\~'는 CommonMark 표준 이스케이프라 화면엔 그대로 '~'로
+    보이고 문법으로만 해석 안 된다."""
+    return (text or "").replace("|", "\\|").replace("~", "\\~").replace("\n", " ").strip()
 
 
 _VERDICT_SYMBOL = {"met": "✅ 충족", "unmet": "❌ 미충족", "unclear": "🔲 불명확", "verify": "🔲 확인필요"}
@@ -691,11 +696,18 @@ if __name__ == "__main__":
     table_items = [
         {"id": "required:0", "source_item": "RDB/Mongo | 위험문자", "verdict": "unmet",
          "evidence_summary": "근거\n줄바꿈 포함"},
+        # "~"를 구분 기호로 쓴 실사례(그래비티랩스, 2026-09-02) — marked.js가 단일 '~'도
+        # 취소선으로 렌더링해 글자가 깨져 보이던 문제 재현·회귀 방지
+        {"id": "required:1", "source_item": "문제 정의~학습 파이프라인~평가", "verdict": "met",
+         "evidence_basis": "explicit", "evidence_summary": "데이터 수집~전처리~적재 경험"},
     ]
     table = render_requirement_table(table_items, "자격요건 충족 현황")
     assert "RDB/Mongo \\| 위험문자" in table, table
     assert "근거 줄바꿈 포함" in table, "셀 안 줄바꿈은 공백으로 치환돼야 함"
     assert "| 항목 | 충족 여부 | 근거 |" in table, "기본 table_kind는 자격요건용 컬럼명이어야 함"
+    assert "문제 정의\\~학습 파이프라인\\~평가" in table, table
+    assert "데이터 수집\\~전처리\\~적재 경험" in table, table
+    assert "~" not in table.replace("\\~", ""), "이스케이프 안 된 '~'가 남아있으면 안 됨"
 
     # 5-1. table_kind="responsibility"는 컬럼명이 달라야 함(2026-09-02, 실제 화면
     # 비교 중 사용자 지적 — 세 표가 전부 같은 컬럼명을 재사용하고 있었음)
