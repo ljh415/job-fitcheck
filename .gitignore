@@ -42,6 +42,7 @@ docs/code-refactoring/
 docs/mcp-server/
 docs/fit-eval-consistency/
 docs/fit-eval-structural-redesign/
+docs/claude-strict-tool-use/
 
 # 데이터 (개인 정보 포함)
 data/
