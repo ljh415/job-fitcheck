@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.7.0 — Claude Sonnet 5 지원 + adaptive thinking 응답 처리 버그 수정 (2026-09-02)
+
+- **Claude Sonnet 5 지원**: 기본 Claude High 모델을 `claude-sonnet-5`로 승격. Sonnet 5는
+  adaptive thinking이 기본 활성화돼 `temperature` 등 비-기본 sampling 파라미터를 주면
+  400 Bad Request를 반환한다(Opus 4.7+부터 있던 제약이 Sonnet까지 내려옴) — 실제로 prod에서
+  사용자가 이 모델로 전환했다가 재현·확인. `_NO_TEMPERATURE_MODELS`를 추가해 해당 모델은
+  `temperature`를 아예 안 보내도록 수정.
+- **adaptive thinking 응답 처리 버그 수정 (심각)**: 위 작업 중 발견 — adaptive thinking이
+  켜진 모델의 응답엔 실제 답변 앞에 `type="thinking"` 블록이 먼저 오는데, 이것도
+  `hasattr(block, "text")`가 참이면서 값은 `None`이다. `complete()`는 이 블록을 만나는 즉시
+  `None`을 반환했고(실제 답변에 도달 못 함), `run_agent()`(QnA/RAG 채팅에 사용)는
+  `"".join()`에서 `TypeError`로 죽었다. 두 곳 다 `block.type == "text"`로 명확히 골라내도록
+  수정. LLM Judge 스크립트를 직접 작성해 실행하던 중 재현으로 발견, 실제 API 응답으로
+  수정 확인 후 반영.
+
 ## v1.6.4 — 소프트스킬 결격사유형 오분류 수정 + 복합 자격요건 판정 규칙 추가 (2026-08-31)
 
 `EVALUATE_FIT_SYSTEM`(REST/MCP 공유) 2단계 후속 검증에서 발견된 버그 두 건.
