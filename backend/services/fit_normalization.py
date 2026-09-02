@@ -100,7 +100,10 @@ def reconcile_judgments(input_items: list[dict], llm_items: list[dict]) -> tuple
             logger.warning("reconcile_judgments: 판정 원소가 dict 아님 — raw=%r", raw)
             continue
         raw_id = raw.get("id")
-        if raw_id is None:
+        # id가 list/dict 등 unhashable이면 dict key로 쓰는 순간 TypeError로 평가 전체가
+        # 죽는다 — dict key로 쓰기 전에 반드시 타입을 먼저 확인한다(2026-09-02 6차 리뷰 반영).
+        if not isinstance(raw_id, str):
+            logger.warning("reconcile_judgments: id가 문자열 아님 — raw=%r", raw_id)
             continue
         by_id.setdefault(raw_id, []).append(raw)
 
@@ -130,9 +133,12 @@ def reconcile_judgments(input_items: list[dict], llm_items: list[dict]) -> tuple
         # evidence_summary/evidence_source/evidence_excerpt/reason은 표·gaps 렌더링에서
         # f-string과 .replace()로 직접 문자열 취급된다 — dict/list 등이 섞여 들어오면
         # 판정 자체는 형식상 맞아도 렌더링 단계에서 죽으므로 여기서 같이 걸러낸다
-        # (2026-09-02 브랜치 전체 리뷰 반영).
+        # (2026-09-02 브랜치 전체 리뷰 반영). 스키마상 이 4개는 전부 required라
+        # 필드 자체가 아예 없는 것도 위반이다 — raw.get(k, "")처럼 기본값을 주면
+        # "필드 누락"이 "빈 문자열이라 유효함"으로 둔갑하므로 기본값 없이 검사한다
+        # (2026-09-02 6차 리뷰 반영).
         descriptive_fields_ok = all(
-            isinstance(raw.get(k, ""), str)
+            isinstance(raw.get(k), str)
             for k in ("evidence_summary", "evidence_source", "evidence_excerpt", "reason")
         )
 
@@ -240,6 +246,13 @@ def validate_decision_factors(decision_factors: dict) -> tuple[dict, bool]:
 
 
 _LOCATION_LOW_LEVEL_STATUS_KEYWORDS = ("조건부", "미달")
+_LEVEL_ORDER = {"없음": 0, "하": 1, "중": 2, "상": 3}
+
+
+def _max_level(a: str | None, b: str) -> str:
+    """severity 순서(없음<하<중<상)로 둘 중 더 높은 등급을 고른다 — "최소 X"
+    규칙에서 기존 값이 이미 더 높으면 깎지 않기 위해 쓴다."""
+    return a if _LEVEL_ORDER.get(a, 0) >= _LEVEL_ORDER.get(b, 0) else b
 
 
 def enforce_deterministic_levels(decision_factors: dict, company_data: dict) -> dict:
@@ -248,7 +261,15 @@ def enforce_deterministic_levels(decision_factors: dict, company_data: dict) -> 
     그대로 LLM 값을 쓴다). LLM이 프롬프트의 임계값 지시를 한 번 놓쳐도 이 함수가
     항상 같은 결과를 강제해, 위험 신호가 level="없음"으로 조용히 사라지는 걸 막는다
     (2026-09-02 브랜치 전체 리뷰 반영). fallback(status=_FALLBACK_STATUS)인 요인은
-    건드리지 않는다 — 판정 실패 표시를 덮어써서 숨기면 안 되기 때문."""
+    건드리지 않는다 — 판정 실패 표시를 덮어써서 숨기면 안 되기 때문.
+
+    jobplanet은 순수 점수 기반 요인이라 항상 코드가 전면 확정한다(2.5 미만→상,
+    3.0 미만→중 "이상"이라 기존이 이미 상이면 유지, 3.0 이상→없음으로 재정규화
+    — LLM이 좋은 점수에 실수로 중/상을 반환해도 걸러진다, 2026-09-02 6차 리뷰 반영:
+    "최소 중"을 "정확히 중"으로 깎던 회귀와 3.0 이상을 안 건드리던 구멍 둘 다 수정).
+    location은 status 부분 문자열이 아니라 정규화(trim)한 값이 정확히 일치할 때만
+    매칭한다 — 부분 매칭이면 "조건부 아님" 같은 부정문도 위험으로 오탐한다(6차 리뷰
+    반영)."""
     result = dict(decision_factors)
 
     jobplanet_score = company_data.get("jobplanet_score")
@@ -260,15 +281,17 @@ def enforce_deterministic_levels(decision_factors: dict, company_data: dict) -> 
         and not isinstance(jobplanet_score, bool)
     ):
         if jobplanet_score < 2.5:
-            result["jobplanet"] = {**jobplanet, "level": "상"}
+            forced_level = "상"
         elif jobplanet_score < 3.0:
-            result["jobplanet"] = {**jobplanet, "level": "중"}
-        # 3.0 이상은 코드가 강제할 하한이 없으므로 LLM의 level을 그대로 둔다.
+            forced_level = _max_level(jobplanet.get("level"), "중")
+        else:
+            forced_level = "없음"
+        result["jobplanet"] = {**jobplanet, "level": forced_level}
 
     location = result.get("location")
     if isinstance(location, dict) and location.get("status") != _FALLBACK_STATUS:
-        status_text = location.get("status") or ""
-        if any(kw in status_text for kw in _LOCATION_LOW_LEVEL_STATUS_KEYWORDS):
+        status_text = (location.get("status") or "").strip()
+        if status_text in _LOCATION_LOW_LEVEL_STATUS_KEYWORDS:
             result["location"] = {**location, "level": "하"}
 
     return result
@@ -409,13 +432,17 @@ if __name__ == "__main__":
     ], inputs
 
     # 2. reconcile_judgments — 정상/누락/중복/미지 id 각각 처리
+    # 서술 필드 4개(evidence_summary/evidence_source/evidence_excerpt/reason)는 스키마상
+    # 전부 required라 실제 준수 응답이라면 항상 다 옴 — 픽스처도 그렇게 맞춘다.
     llm_items = [
         {"id": "required:0", "verdict": "unmet", "evidence_basis": "해당없음", "severity": "상",
          "reason": "MongoDB 경험 없음", "evidence_summary": "MongoDB 경험 없음",
+         "evidence_source": "", "evidence_excerpt": "",
          "source_item": "LLM이 바꿔치기하려는 값 — 무시돼야 함"},
         # required:1 누락
         {"id": "preferred:0", "verdict": "met", "evidence_basis": "explicit",
-         "evidence_summary": "Job FitCheck에서 문제 정의·기획·검증 주도"},
+         "evidence_summary": "Job FitCheck에서 문제 정의·기획·검증 주도",
+         "evidence_source": "", "evidence_excerpt": "", "reason": ""},
         {"id": "preferred:0", "verdict": "unmet"},  # 중복 반환 — 전체 무효화 대상
         {"id": "unknown:99", "verdict": "met"},  # 모르는 id — 폐기
     ]
@@ -456,10 +483,30 @@ if __name__ == "__main__":
     assert incomplete_bad_desc is True
     assert result_bad_desc[0]["filled_by"] == "code_fallback", result_bad_desc
 
+    # 2-3. id가 list/dict 등 unhashable이면 dict key로 쓰다 TypeError로 죽을 수 있음 —
+    # 타입 확인이 dict key 사용보다 먼저 와야 함(2026-09-02 6차 리뷰 반영)
+    result_bad_id, incomplete_bad_id = reconcile_judgments(
+        [{"id": "required:0", "source_item": "A"}],
+        [{"id": ["required:0"], "verdict": "met"}, {"id": {"x": 1}, "verdict": "met"}],
+    )
+    assert incomplete_bad_id is True
+    assert result_bad_id[0]["filled_by"] == "code_fallback", result_bad_id
+
+    # 2-4. 서술 필드가 dict/list가 아니라 아예 누락된 경우도 스키마 위반(required)이라
+    # fallback돼야 함 — raw.get(k, "")처럼 기본값을 주면 "누락"이 "빈 문자열이라
+    # 유효함"으로 둔갑해서 놓쳤던 경계(2026-09-02 6차 리뷰 반영)
+    result_missing_desc, incomplete_missing_desc = reconcile_judgments(
+        [{"id": "required:0", "source_item": "A"}],
+        [{"id": "required:0", "verdict": "met", "evidence_basis": "explicit"}],  # 서술 필드 전부 누락
+    )
+    assert incomplete_missing_desc is True
+    assert result_missing_desc[0]["filled_by"] == "code_fallback", result_missing_desc
+
     # 3. met인데 severity가 왔으면 코드가 null로 강제
     inputs2 = [{"id": "required:0", "source_item": "A"}]
     llm2 = [{"id": "required:0", "verdict": "met", "evidence_basis": "explicit",
-             "severity": "상", "evidence_summary": "근거"}]
+             "severity": "상", "evidence_summary": "근거",
+             "evidence_source": "", "evidence_excerpt": "", "reason": ""}]
     result2, incomplete2 = reconcile_judgments(inputs2, llm2)
     assert incomplete2 is False
     assert result2[0]["severity"] is None, "met은 severity를 코드가 null로 강제해야 함"
@@ -468,7 +515,7 @@ if __name__ == "__main__":
     # required:0의 최초 llm_items에는 severity="상"이 있었으므로 met이 아닌 케이스로 별도 확인:
     # met + evidence_basis 정상 + severity="없음"(→None 정규화, met이라 어차피 무시됨)은 유효해야 함
     llm3 = [{"id": "required:0", "verdict": "met", "evidence_basis": "explicit", "severity": "없음",
-             "evidence_summary": "근거"}]
+             "evidence_summary": "근거", "evidence_source": "", "evidence_excerpt": "", "reason": ""}]
     result3, incomplete3 = reconcile_judgments(inputs2, llm3)
     assert incomplete3 is False
     assert result3[0]["severity"] is None
@@ -514,7 +561,8 @@ if __name__ == "__main__":
 
     # 3-4-1. responsibility+unmet+severity="상"은 합법(핵심 업무+인접 경험뿐인 경우) — 회귀 방지
     inputs_resp = [{"id": "responsibility:0", "source_item": "R"}]
-    llm10 = [{"id": "responsibility:0", "verdict": "unmet", "evidence_basis": "해당없음", "severity": "상", "reason": "핵심 업무+인접 경험뿐"}]
+    llm10 = [{"id": "responsibility:0", "verdict": "unmet", "evidence_basis": "해당없음", "severity": "상",
+              "reason": "핵심 업무+인접 경험뿐", "evidence_summary": "", "evidence_source": "", "evidence_excerpt": ""}]
     result10, incomplete10 = reconcile_judgments(inputs_resp, llm10)
     assert incomplete10 is False, "responsibility+unmet+severity=상은 [심각도 기준]상 합법이라 fallback 안 돼야 함(2026-09-02 3차 리뷰 회귀 수정)"
     assert result10[0]["severity"] == "상"
@@ -648,14 +696,37 @@ if __name__ == "__main__":
     }
     enforced = enforce_deterministic_levels(raw_factors, {"jobplanet_score": 2.4})
     assert enforced["jobplanet"]["level"] == "상", "2.5 미만은 (상)으로 강제"
-    assert enforced["location"]["level"] == "하", "status에 조건부가 있으면 (하)로 강제"
+    assert enforced["location"]["level"] == "하", "status가 정확히 조건부/미달이면 (하)로 강제"
     assert enforced["career_years"]["level"] == "없음", "결정론적 대상이 아닌 요인은 안 건드림"
 
     enforced_mid = enforce_deterministic_levels(raw_factors, {"jobplanet_score": 2.9})
-    assert enforced_mid["jobplanet"]["level"] == "중", "2.5 이상 3.0 미만은 (중)으로 강제"
+    assert enforced_mid["jobplanet"]["level"] == "중", "2.5 이상 3.0 미만, 기존 level=없음은 최소 (중)으로 올림"
 
-    enforced_high = enforce_deterministic_levels(raw_factors, {"jobplanet_score": 3.5})
-    assert enforced_high["jobplanet"]["level"] == "없음", "3.0 이상은 강제할 하한이 없어 LLM 값 유지"
+    # 6-3-1. "최소 중"은 기존에 이미 (상)이면 깎지 않아야 함(2026-09-02 6차 리뷰 회귀 —
+    # 첫 구현이 무조건 (중)으로 덮어써서 기존 (상) 판정을 오히려 약화시켰음)
+    raw_factors_high_level = dict(raw_factors)
+    raw_factors_high_level["jobplanet"] = {"status": "낮음", "level": "상", "note": "2.9점인데 다른 이유로 상"}
+    enforced_preserve = enforce_deterministic_levels(raw_factors_high_level, {"jobplanet_score": 2.9})
+    assert enforced_preserve["jobplanet"]["level"] == "상", "기존 (상)은 (중)으로 깎이면 안 됨"
+
+    # 6-3-2. 정확히 2.5/3.0 경계값
+    assert enforce_deterministic_levels(raw_factors, {"jobplanet_score": 2.5})["jobplanet"]["level"] == "중"
+    assert enforce_deterministic_levels(raw_factors, {"jobplanet_score": 3.0})["jobplanet"]["level"] == "없음"
+
+    # 6-3-3. 3.0 이상은 LLM이 잘못 (상)/(중)을 반환해도 코드가 (없음)으로 재확정해야 함
+    # — "강제할 하한이 없어 LLM 값 유지"는 잘못된 설계였고, 이 필드는 순수 점수 기반이라
+    # 전면 확정이 맞음(2026-09-02 6차 리뷰 반영)
+    raw_factors_wrong_high = dict(raw_factors)
+    raw_factors_wrong_high["jobplanet"] = {"status": "양호", "level": "상", "note": "LLM 착오"}
+    enforced_high = enforce_deterministic_levels(raw_factors_wrong_high, {"jobplanet_score": 3.5})
+    assert enforced_high["jobplanet"]["level"] == "없음", "3.0 이상은 LLM의 잘못된 level도 (없음)으로 재확정"
+
+    # 6-3-4. location은 부분 문자열이 아니라 정확히 일치할 때만 매칭 — "조건부 아님"
+    # 같은 부정문을 위험으로 오탐하면 안 됨(2026-09-02 6차 리뷰 반영)
+    raw_factors_negation = dict(raw_factors)
+    raw_factors_negation["location"] = {"status": "조건부 아님", "level": "없음", "note": "완전 재택 가능"}
+    enforced_negation = enforce_deterministic_levels(raw_factors_negation, {"jobplanet_score": 3.5})
+    assert enforced_negation["location"]["level"] == "없음", "부분 문자열 매칭이면 부정문을 오탐함"
 
     fallback_factors = dict(raw_factors)
     fallback_factors["jobplanet"] = {"status": _FALLBACK_STATUS, "level": "없음", "note": "판정 실패"}
