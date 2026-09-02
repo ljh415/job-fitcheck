@@ -677,7 +677,7 @@ async def _process_company(
         # 이 프로필을 실제로 읽은 시점의 스냅샷 id를 고정 — LLM 호출이 끝날 때까지
         # 기다렸다 조회하면 그 사이 프로필이 갱신된 경우 엉뚱한 버전과 연결된다.
         profile_version_id_at_eval = resolve_profile_version_id_for_eval()
-        fit_data, fit_report = await company_analysis.evaluate_fit(
+        fit_data, fit_report = await company_analysis.evaluate_fit_structured(
             snap, profile_text, extracted, safe_raw_text, operation="적합도 평가",
         )
         logger.info("[4/4] 적합도 평가 완료: %s점 (%s)", fit_data.get("fit_score"), fit_data.get("fit_label"))
@@ -937,17 +937,19 @@ async def refit_company(slug: str):
     # item_judgments/decision_factors/evaluation_incomplete도 같은 이유로 제외한다 —
     # 적합도 평가 구조 개편(docs/fit-eval-structural-redesign/PLAN.md)의 1단계 중간
     # 판정 결과라, 안 빼면 직전 평가의 결론이 "회사 데이터"인 것처럼 다음 평가에
-    # 섞여 들어간다.
+    # 섞여 들어간다. salary_check/stability_check/location_check도 같은 부류(평가
+    # 결과)인데 원래부터 여기 빠져 있었음 — 이번 개편 4차 리뷰 교차검증 중 발견해 같이 뺌.
     _REFIT_EXCLUDE = {
         "strengths", "gaps", "fit_score", "fit_label", "fit_report_body",
         "item_judgments", "decision_factors", "evaluation_incomplete",
+        "salary_check", "stability_check", "location_check",
     }
     company_data = {
         k: v for k, v in record.frontmatter.model_dump().items()
         if k not in _REFIT_EXCLUDE
     }
     try:
-        fit_result, fit_report = await company_analysis.evaluate_fit(
+        fit_result, fit_report = await company_analysis.evaluate_fit_structured(
             snap, profile_text, company_data, raw_text, operation="적합도 재평가",
         )
     except LLMAPIError as e:
