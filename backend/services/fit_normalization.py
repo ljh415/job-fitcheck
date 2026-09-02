@@ -354,6 +354,24 @@ _DECISION_FACTOR_LABELS = {
 }
 
 
+def render_decision_factors_summary(decision_factors: dict) -> str:
+    """비기술 요인(decision_factors) 6개 전부를 코드가 고정된 한 줄로 요약한다.
+
+    2단계 보고서 프롬프트는 gaps 위주라 level="없음"(문제없음)인 판정은 종합
+    의견 산문에 거의 안 나타난다 — 판정 자체를 안 한 게 아니라 결과가 괜찮아서
+    언급을 안 하는 것뿐인데, 사용자 입장에선 이게 구분이 안 된다(2026-09-02,
+    그래비티랩스 실사례로 LLM Judge 비교 실험 중 발견 — 잡플래닛·사용자 지정
+    기준이 실제로는 정확히 판정됐는데 산문에서 빠져 있었음). LLM에게 "언급하라"고
+    시키는 대신 이미 계산된 값을 코드가 그대로 이어붙인다 — 추가 LLM 호출이나
+    입력 토큰 증가 없이(decision_factors는 이미 2단계 프롬프트에 통째로 들어가
+    있음) 판정 여부가 매번 똑같은 형식으로 노출되게 한다."""
+    parts = [
+        f"{label} {(decision_factors.get(key) or {}).get('status') or '확인필요'}"
+        for key, label in _DECISION_FACTOR_LABELS.items()
+    ]
+    return "**비기술 요인**: " + " · ".join(parts)
+
+
 def derive_decision_factor_gaps(decision_factors: dict) -> list[str]:
     """decision_factors에서 gaps 문자열을 파생한다. `level`이 "없음"이 아닌
     요인만(=1단계가 문제 있다고 판단한 것만) gap으로 포함한다. `salary`는 fallback이
@@ -727,6 +745,15 @@ if __name__ == "__main__":
     assert not any("연봉" in g or "salary" in g.lower() for g in df_gaps), \
         "salary는 fallback이 아니면 level 값과 무관하게 절대 파생되면 안 됨"
     assert any("잡플래닛" in g and g.startswith("(상)") for g in df_gaps), df_gaps
+
+    # 6-0. render_decision_factors_summary — level="없음"인 정상 판정도 항상 노출돼야
+    # 함(2026-09-02, LLM Judge 비교 실험에서 잡플래닛 정상 판정이 산문에서 빠지는
+    # 문제 발견 반영). 없는 키는 "확인필요"로 표시.
+    summary_line = render_decision_factors_summary(decision_factors)
+    assert "잡플래닛 평점 낮음" in summary_line, summary_line
+    assert "근무지 충족" in summary_line, summary_line
+    assert "연봉 낮음" in summary_line, summary_line
+    assert "기업 안정성 확인필요" in summary_line, "누락된 키는 확인필요로 표시돼야 함"
 
     # 6-1. fallback(status=_FALLBACK_STATUS)은 level="없음"이어도 "(확인필요)" gap으로
     # 노출돼야 함 — 안 그러면 판정 실패가 리포트에서 조용히 사라짐(2026-09-02 실사례로 발견)

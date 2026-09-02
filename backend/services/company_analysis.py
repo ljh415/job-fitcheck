@@ -200,7 +200,12 @@ async def evaluate_fit_structured(
         reasoning_effort=snap.reasoning_effort,
     )
 
-    fit_report = f"{tables}\n\n{report_prose.strip()}"
+    # 비기술 요인 6개를 코드가 고정된 한 줄로 항상 노출 — LLM 종합 의견은 gap 위주라
+    # level="없음"(문제없음)인 판정은 산문에서 거의 빠지는데, 그게 "판정 안 함"과
+    # 구분이 안 됐다(2026-09-02, LLM Judge 비교 실험 발견). LLM 재호출 없음(입력
+    # 토큰도 안 늘어남 — decision_factors는 이미 report_user에 통째로 들어가 있음).
+    factors_summary = fit_normalization.render_decision_factors_summary(decision_factors)
+    fit_report = f"{tables}\n\n{report_prose.strip()}\n\n{factors_summary}"
     fit_result = {
         "fit_score": fit_score,
         "fit_label": fit_label,
