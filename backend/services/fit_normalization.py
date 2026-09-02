@@ -90,8 +90,15 @@ def reconcile_judgments(input_items: list[dict], llm_items: list[dict]) -> tuple
 
     반환: (정규화된 배열, evaluation_incomplete 여부 — fallback이 하나라도 있으면 True)
     """
+    if not isinstance(llm_items, list):
+        logger.warning("reconcile_judgments: llm_items가 list 아님 — raw=%r", type(llm_items).__name__)
+        llm_items = []
+
     by_id: dict[str, list[dict]] = {}
     for raw in llm_items:
+        if not isinstance(raw, dict):
+            logger.warning("reconcile_judgments: 판정 원소가 dict 아님 — raw=%r", raw)
+            continue
         raw_id = raw.get("id")
         if raw_id is None:
             continue
@@ -120,11 +127,20 @@ def reconcile_judgments(input_items: list[dict], llm_items: list[dict]) -> tuple
         # docs/fit-eval-structural-redesign/PLAN.md 스키마 실측 참고) — 내부적으로는 None으로 통일.
         raw_severity = raw.get("severity")
         normalized_severity = None if raw_severity == "없음" else raw_severity
+        # evidence_summary/evidence_source/evidence_excerpt/reason은 표·gaps 렌더링에서
+        # f-string과 .replace()로 직접 문자열 취급된다 — dict/list 등이 섞여 들어오면
+        # 판정 자체는 형식상 맞아도 렌더링 단계에서 죽으므로 여기서 같이 걸러낸다
+        # (2026-09-02 브랜치 전체 리뷰 반영).
+        descriptive_fields_ok = all(
+            isinstance(raw.get(k, ""), str)
+            for k in ("evidence_summary", "evidence_source", "evidence_excerpt", "reason")
+        )
 
-        if not _is_valid_judgment(item_id, verdict, evidence_basis, normalized_severity):
+        if not descriptive_fields_ok or not _is_valid_judgment(item_id, verdict, evidence_basis, normalized_severity):
             logger.warning(
-                "reconcile_judgments: id=%s 조건 위반(verdict=%r, evidence_basis=%r, severity=%r) → code_fallback",
-                item_id, verdict, evidence_basis, raw_severity,
+                "reconcile_judgments: id=%s 조건 위반(verdict=%r, evidence_basis=%r, severity=%r, "
+                "descriptive_fields_ok=%s) → code_fallback",
+                item_id, verdict, evidence_basis, raw_severity, descriptive_fields_ok,
             )
             result.append(_code_fallback(item_id, source_item))
             incomplete = True
@@ -164,16 +180,17 @@ def label_from_score(fit_score: int) -> str:
 
 
 def safe_fit_score(raw_score) -> tuple[int | None, bool]:
-    """`fit_score`를 안전하게 정수로 변환한다(2026-09-01, 2차 리뷰 반영) — provider가
-    도구 응답 스키마를 서버에서 강제 검증하지 않으므로, 값이 없거나 숫자로 변환
-    불가능할 수 있다. 이 경우 0점 같은 그럴듯한 잘못된 기본값으로 조용히 넘어가지
-    않고 (None, True)를 반환해 `evaluation_incomplete`를 강제한다."""
-    try:
-        score = int(raw_score)
-    except (TypeError, ValueError):
-        logger.warning("safe_fit_score: fit_score 변환 실패 — raw=%r", raw_score)
+    """`fit_score`를 안전하게 정수로 변환한다(2026-09-01 2차 리뷰, 2026-09-02 브랜치
+    전체 리뷰 반영) — provider가 도구 응답 스키마를 서버에서 강제 검증하지 않으므로,
+    값이 없거나 숫자로 변환 불가능할 수 있다. 이 경우 0점 같은 그럴듯한 잘못된
+    기본값으로 조용히 넘어가지 않고 (None, True)를 반환해 `evaluation_incomplete`를
+    강제한다. `int(True)==1`, `int(72.9)==72`처럼 `int()`가 자체적으로 허용하는
+    타입을 그대로 두면 bool·소수점 점수가 조용히 통과하므로, 스키마가 요구하는
+    정수 타입(bool 제외)만 인정한다."""
+    if isinstance(raw_score, bool) or not isinstance(raw_score, int):
+        logger.warning("safe_fit_score: fit_score 타입이 int 아님 — raw=%r", raw_score)
         return None, True
-    return max(0, min(100, score)), False
+    return max(0, min(100, raw_score)), False
 
 
 _DECISION_FACTOR_KEYS = ("career_years", "location", "stability", "jobplanet", "salary", "custom_criteria")
@@ -222,6 +239,41 @@ def validate_decision_factors(decision_factors: dict) -> tuple[dict, bool]:
     return result, incomplete
 
 
+_LOCATION_LOW_LEVEL_STATUS_KEYWORDS = ("조건부", "미달")
+
+
+def enforce_deterministic_levels(decision_factors: dict, company_data: dict) -> dict:
+    """PLAN.md 3.2 — 고정 매핑 가능한 요인(jobplanet/location)의 `level`은 LLM 판단을
+    신뢰하지 않고 코드가 결정한다(경력 연수·custom_criteria처럼 맥락 의존적인 요인은
+    그대로 LLM 값을 쓴다). LLM이 프롬프트의 임계값 지시를 한 번 놓쳐도 이 함수가
+    항상 같은 결과를 강제해, 위험 신호가 level="없음"으로 조용히 사라지는 걸 막는다
+    (2026-09-02 브랜치 전체 리뷰 반영). fallback(status=_FALLBACK_STATUS)인 요인은
+    건드리지 않는다 — 판정 실패 표시를 덮어써서 숨기면 안 되기 때문."""
+    result = dict(decision_factors)
+
+    jobplanet_score = company_data.get("jobplanet_score")
+    jobplanet = result.get("jobplanet")
+    if (
+        isinstance(jobplanet, dict)
+        and jobplanet.get("status") != _FALLBACK_STATUS
+        and isinstance(jobplanet_score, (int, float))
+        and not isinstance(jobplanet_score, bool)
+    ):
+        if jobplanet_score < 2.5:
+            result["jobplanet"] = {**jobplanet, "level": "상"}
+        elif jobplanet_score < 3.0:
+            result["jobplanet"] = {**jobplanet, "level": "중"}
+        # 3.0 이상은 코드가 강제할 하한이 없으므로 LLM의 level을 그대로 둔다.
+
+    location = result.get("location")
+    if isinstance(location, dict) and location.get("status") != _FALLBACK_STATUS:
+        status_text = location.get("status") or ""
+        if any(kw in status_text for kw in _LOCATION_LOW_LEVEL_STATUS_KEYWORDS):
+            result["location"] = {**location, "level": "하"}
+
+    return result
+
+
 def strength_grade(item_id: str) -> str:
     """항목 id 접두사로 강점 등급을 코드가 결정한다(LLM에 재차 묻지 않음) —
     required:* → 상, preferred:*/responsibility:* → 중 (기존 H 프롬프트의
@@ -261,19 +313,26 @@ _DECISION_FACTOR_LABELS = {
     "stability": "기업 안정성",
     "jobplanet": "잡플래닛 평점",
     "custom_criteria": "사용자 지정 평가 기준",
+    # salary는 정상 판정이면 절대 gap으로 파생 안 됨(기존 규칙: 연봉은 감점 근거로
+    # 안 씀, level이 항상 "없음"이라 아래 루프에서 자연히 스킵됨) — 다만 fallback인
+    # 경우까지 숨으면 안 되므로 맵에는 포함시킨다(2026-09-02 브랜치 전체 리뷰 반영,
+    # b632c66에서 salary만 빠뜨렸던 걸 발견).
+    "salary": "연봉",
 }
 
 
 def derive_decision_factor_gaps(decision_factors: dict) -> list[str]:
     """decision_factors에서 gaps 문자열을 파생한다. `level`이 "없음"이 아닌
-    요인만(=1단계가 문제 있다고 판단한 것만) gap으로 포함한다. `salary`는 이
-    맵에 없으므로 절대 파생되지 않는다(기존 규칙: 연봉은 감점 근거로 안 씀).
+    요인만(=1단계가 문제 있다고 판단한 것만) gap으로 포함한다. `salary`는 fallback이
+    아닌 이상 `level` 값과 무관하게 절대 파생되지 않는다(기존 규칙: 연봉은 감점
+    근거로 안 씀 — LLM이 실수로 level을 채워도 무시).
 
     validate_decision_factors()의 fallback도 level="없음"으로 채워지는데, 그대로
     두면 "판정 실패"와 "정상이라 문제없음"이 구분 안 돼 리포트에서 fallback이
     조용히 사라진다(2026-09-02, 실제 refit 결과에서 stability 판정 실패가 리포트에
     전혀 안 보이는 문제를 Codex 교차검증으로 발견) — status가 fallback 표식
-    (_FALLBACK_STATUS)이면 level과 무관하게 "(확인필요)" gap으로 노출한다."""
+    (_FALLBACK_STATUS)이면 level과 무관하게 "(확인필요)" gap으로 노출한다. salary도
+    이 fallback 노출 대상에는 포함된다(정상 salary만 계속 gap 제외)."""
     gaps = []
     for key, label in _DECISION_FACTOR_LABELS.items():
         factor = decision_factors.get(key) or {}
@@ -282,6 +341,10 @@ def derive_decision_factor_gaps(decision_factors: dict) -> list[str]:
         note = factor.get("note", "")
         if status == _FALLBACK_STATUS:
             gaps.append(f"(확인필요) {label} - {note}")
+            continue
+        if key == "salary":
+            # salary는 fallback이 아닌 이상 level 값과 무관하게 절대 gap을 만들지 않는다
+            # (연봉은 감점 근거로 안 씀 — LLM이 실수로 level을 채워도 무시).
             continue
         if not level or level == "없음":
             continue
@@ -370,6 +433,29 @@ if __name__ == "__main__":
     assert [r["id"] for r in result] == ["required:0", "required:1", "preferred:0"], \
         "순서는 LLM 반환 순서가 아니라 입력 순서"
 
+    # 2-1. llm_items 자체가 list가 아니거나 원소가 dict가 아니면 AttributeError 없이
+    # 전부 fallback으로 안전 처리(2026-09-02 브랜치 전체 리뷰 반영 — provider가
+    # tool schema를 심하게 어겨도 예외로 죽지 않아야 함)
+    result_not_list, incomplete_not_list = reconcile_judgments(inputs, {"id": "required:0"})
+    assert incomplete_not_list is True
+    assert all(r["filled_by"] == "code_fallback" for r in result_not_list), result_not_list
+
+    result_bad_elem, incomplete_bad_elem = reconcile_judgments(inputs, ["그냥 문자열", 123, None])
+    assert incomplete_bad_elem is True
+    assert all(r["filled_by"] == "code_fallback" for r in result_bad_elem), result_bad_elem
+
+    # 2-2. 판정 필드는 다 맞아도 서술 필드(evidence_summary 등)가 dict/list면 표·gaps
+    # 렌더링에서 .replace()/f-string이 죽으므로 여기서 미리 걸러 fallback 처리
+    llm_bad_descriptive = [
+        {"id": "required:0", "verdict": "unmet", "evidence_basis": "해당없음", "severity": "상",
+         "evidence_summary": {"이건": "dict임"}, "reason": "MongoDB 경험 없음"},
+    ]
+    result_bad_desc, incomplete_bad_desc = reconcile_judgments(
+        [{"id": "required:0", "source_item": "A"}], llm_bad_descriptive,
+    )
+    assert incomplete_bad_desc is True
+    assert result_bad_desc[0]["filled_by"] == "code_fallback", result_bad_desc
+
     # 3. met인데 severity가 왔으면 코드가 null로 강제
     inputs2 = [{"id": "required:0", "source_item": "A"}]
     llm2 = [{"id": "required:0", "verdict": "met", "evidence_basis": "explicit",
@@ -444,6 +530,11 @@ if __name__ == "__main__":
     assert safe_fit_score("not-a-number") == (None, True)
     assert safe_fit_score(150) == (100, False), "범위 밖 점수는 clamp"
     assert safe_fit_score(-5) == (0, False)
+    # bool은 int의 서브클래스라 int(True)==1이 조용히 통과하므로 명시적으로 막아야 함.
+    # 소수점 float(예: 72.9)도 스키마가 요구하는 정수 타입이 아니므로 실패 처리(2026-09-02
+    # 브랜치 전체 리뷰 반영).
+    assert safe_fit_score(True) == (None, True), "bool은 fit_score로 허용 안 됨"
+    assert safe_fit_score(72.9) == (None, True), "소수점 float은 fit_score로 허용 안 됨"
 
     # 3-7. validate_decision_factors — 누락되거나 level이 enum 밖이면 안전한 기본값+incomplete
     valid_factors = {k: {"status": "충족", "level": "없음", "note": ""} for k in _DECISION_FACTOR_KEYS}
@@ -522,7 +613,7 @@ if __name__ == "__main__":
     assert any("경력 연수" in g and g.startswith("(중)") for g in df_gaps), df_gaps
     assert not any("근무지" in g for g in df_gaps), "level=없음은 파생되면 안 됨"
     assert not any("연봉" in g or "salary" in g.lower() for g in df_gaps), \
-        "salary는 _DECISION_FACTOR_LABELS에 없으므로 절대 파생되면 안 됨"
+        "salary는 fallback이 아니면 level 값과 무관하게 절대 파생되면 안 됨"
     assert any("잡플래닛" in g and g.startswith("(상)") for g in df_gaps), df_gaps
 
     # 6-1. fallback(status=_FALLBACK_STATUS)은 level="없음"이어도 "(확인필요)" gap으로
@@ -533,6 +624,44 @@ if __name__ == "__main__":
     }
     df_gaps_fb = derive_decision_factor_gaps(decision_factors_with_fallback)
     assert any(g.startswith("(확인필요) 기업 안정성") for g in df_gaps_fb), df_gaps_fb
+
+    # 6-2. salary도 fallback이면 (확인필요) 노출 대상에 포함돼야 함(b632c66에서 salary만
+    # 빠뜨렸던 걸 2026-09-02 브랜치 전체 리뷰로 발견)
+    decision_factors_salary_fb = dict(decision_factors)
+    decision_factors_salary_fb["salary"] = {
+        "status": _FALLBACK_STATUS, "level": "없음", "note": "시스템이 이 요인을 판정하지 못함",
+    }
+    df_gaps_salary_fb = derive_decision_factor_gaps(decision_factors_salary_fb)
+    assert any(g.startswith("(확인필요) 연봉") for g in df_gaps_salary_fb), df_gaps_salary_fb
+    # 정상 salary는 여전히 gap으로 안 나가야 함(기존 정책 유지 확인)
+    assert not any("연봉" in g for g in df_gaps), "정상 salary는 여전히 파생되면 안 됨"
+
+    # 6-3. enforce_deterministic_levels — jobplanet/location은 LLM의 level을 무시하고
+    # 코드가 강제(2026-09-02 브랜치 전체 리뷰 반영). fallback인 요인은 건드리지 않음.
+    raw_factors = {
+        "career_years": {"status": "충족", "level": "없음", "note": ""},
+        "location": {"status": "조건부", "level": "없음", "note": "재택 불가"},
+        "stability": {"status": "충족", "level": "없음", "note": ""},
+        "jobplanet": {"status": "낮음", "level": "없음", "note": "2.4점"},
+        "salary": {"status": "미확인", "level": "없음", "note": ""},
+        "custom_criteria": {"status": "해당없음", "level": "없음", "note": ""},
+    }
+    enforced = enforce_deterministic_levels(raw_factors, {"jobplanet_score": 2.4})
+    assert enforced["jobplanet"]["level"] == "상", "2.5 미만은 (상)으로 강제"
+    assert enforced["location"]["level"] == "하", "status에 조건부가 있으면 (하)로 강제"
+    assert enforced["career_years"]["level"] == "없음", "결정론적 대상이 아닌 요인은 안 건드림"
+
+    enforced_mid = enforce_deterministic_levels(raw_factors, {"jobplanet_score": 2.9})
+    assert enforced_mid["jobplanet"]["level"] == "중", "2.5 이상 3.0 미만은 (중)으로 강제"
+
+    enforced_high = enforce_deterministic_levels(raw_factors, {"jobplanet_score": 3.5})
+    assert enforced_high["jobplanet"]["level"] == "없음", "3.0 이상은 강제할 하한이 없어 LLM 값 유지"
+
+    fallback_factors = dict(raw_factors)
+    fallback_factors["jobplanet"] = {"status": _FALLBACK_STATUS, "level": "없음", "note": "판정 실패"}
+    enforced_fb = enforce_deterministic_levels(fallback_factors, {"jobplanet_score": 2.0})
+    assert enforced_fb["jobplanet"]["status"] == _FALLBACK_STATUS, "fallback은 강제 대상에서 제외"
+    assert enforced_fb["jobplanet"]["level"] == "없음"
 
     # 7. derive_legacy_checks — status를 구 필드 어휘로 그대로 옮기되 enum 밖이면 버림
     legacy = derive_legacy_checks(decision_factors)

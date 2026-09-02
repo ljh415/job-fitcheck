@@ -94,21 +94,18 @@ async def evaluate_fit_structured(
     operation: str,
 ) -> tuple[dict, str]:
     """적합도 평가 구조 개편(docs/fit-eval-structural-redesign/PLAN.md) 파이프라인.
+    `_process_company()`/`refit_company()`(backend/routers/companies.py)가 실제로
+    호출하는 현재 활성 경로다 — `evaluate_fit()`은 비교·롤백용으로 코드에 남아있을
+    뿐 런타임 호출자가 없다(2026-09-02, 실호출부 연결 커밋 반영).
 
-    1단계(판정 전용) 호출 → 코드가 완결성 검증·표 렌더링·gaps/strengths 파생 →
-    2단계(보고서 산문 전용) 호출. 아직 검증 전이라 `_process_company`/`refit_company`
-    호출부에는 연결하지 않았다 — `evaluate_fit()`과 나란히 존재하며 회귀 검증
-    (4개 사례) 통과 후 교체 예정.
+    1단계(판정 전용) 호출 → 코드가 완결성 검증·jobplanet/location 등급 강제·표
+    렌더링·gaps/strengths 파생 → 2단계(보고서 산문 전용) 호출, LLM 호출 2회.
 
-    주의(Codex 리뷰 2026-09-01/구현 순서 6번 반영, 4차 리뷰로 설명 정정): 이
-    함수의 반환값은 `evaluate_fit()`과 필드 이름이 다르다(`decision_factors`에
-    중첩된 값에서 `salary_check`/`stability_check`/`location_check`를
-    `fit_normalization.derive_legacy_checks()`로 파생해 같이 채움) — 다만
-    "호출부를 그대로 재사용 가능"은 여전히 아니다. `item_judgments`/
-    `decision_factors`/`evaluation_incomplete`는 `CompanyFrontmatter`에
-    이미 선언돼 저장되고, refit 입력·QnA 컨텍스트에서는 제외된다(구현 순서
-    6번 완료). 아직 안 끝난 건 `_process_company`/`refit_company` 호출부
-    연결(4개 사례 회귀 검증 이후)뿐이다.
+    반환값은 `evaluate_fit()`과 필드 이름이 다르다(`decision_factors`에 중첩된
+    값에서 `salary_check`/`stability_check`/`location_check`를
+    `fit_normalization.derive_legacy_checks()`로 파생해 같이 채움) — 그래서 옛
+    호출부 코드를 그대로 재사용할 수는 없고, 실제로 `routers/companies.py`의
+    두 호출부가 이 함수 전용으로 작성돼 있다.
     """
     high, high_model = high_from_snapshot(snap)
     eval_criteria = storage.read_eval_criteria().strip()
@@ -149,6 +146,10 @@ async def evaluate_fit_structured(
     decision_factors, factors_incomplete = fit_normalization.validate_decision_factors(
         judge_result.get("decision_factors") or {}
     )
+    # jobplanet/location은 고정 매핑 가능한 요인이라 LLM의 level 판단을 신뢰하지 않고
+    # 회사 원본 데이터(jobplanet_score)·판정 status 텍스트로 코드가 다시 강제한다
+    # (PLAN.md 3.2, 2026-09-02 브랜치 전체 리뷰 반영).
+    decision_factors = fit_normalization.enforce_deterministic_levels(decision_factors, company_data)
     gaps = gaps + fit_normalization.derive_decision_factor_gaps(decision_factors)
 
     fit_score, score_incomplete = fit_normalization.safe_fit_score(judge_result.get("fit_score"))
@@ -260,6 +261,50 @@ if __name__ == "__main__":
              patch.object(storage, "read_eval_criteria", return_value=""):
             fit_data, _ = await evaluate_fit(_snap("gemini"), "프로필", {}, "원문", operation="적합도 평가")
         assert len(fit_data["gaps"]) == 1, fit_data["gaps"]
+
+        # 4. evaluate_fit_structured() — 실제 활성 경로(_process_company/refit_company가
+        # 호출하는 함수)를 검증. 위 1~3번은 전부 호출자 없는 evaluate_fit()만 exercise
+        # 했었음(2026-09-02 브랜치 전체 리뷰 지적). 1단계 판정 mock에 jobplanet 낮은
+        # 점수인데 LLM이 level="없음"으로 놓친 상황을 넣어 enforce_deterministic_levels()
+        # 연결까지 같이 확인한다.
+        company_data_structured = {
+            "required_skills": ["Python 경험"],
+            "preferred_skills": [],
+            "key_responsibilities": [],
+            "jobplanet_score": 2.4,
+        }
+        fake_high_structured = SimpleNamespace(
+            extract_structured=AsyncMock(return_value={
+                "fit_score": 65,
+                "item_judgments": [
+                    {"id": "required:0", "verdict": "met", "evidence_basis": "explicit",
+                     "evidence_summary": "프로젝트 X에서 Python 사용", "evidence_source": "X",
+                     "evidence_excerpt": "", "reason": "", "severity": "없음"},
+                ],
+                "decision_factors": {
+                    "career_years": {"status": "충족", "level": "없음", "note": ""},
+                    "location": {"status": "충족", "level": "없음", "note": ""},
+                    "stability": {"status": "충족", "level": "없음", "note": ""},
+                    # LLM이 임계값 지시를 놓친 상황(2.4점인데 level="없음") — 코드가 강제해야 함
+                    "jobplanet": {"status": "낮음", "level": "없음", "note": "2.4점"},
+                    "salary": {"status": "미확인", "level": "없음", "note": ""},
+                    "custom_criteria": {"status": "해당없음", "level": "없음", "note": ""},
+                },
+            }),
+            complete=AsyncMock(return_value="종합의견 텍스트"),
+        )
+        with patch.object(_this, "high_from_snapshot", return_value=(fake_high_structured, "model")), \
+             patch.object(storage, "read_eval_criteria", return_value=""):
+            fit_result, fit_report = await evaluate_fit_structured(
+                _snap("claude"), "프로필", company_data_structured, "원문", operation="적합도 평가",
+            )
+        assert fit_result["item_judgments"][0]["id"] == "required:0", fit_result["item_judgments"]
+        assert fit_result["evaluation_incomplete"] is False, fit_result
+        assert fit_result["decision_factors"]["jobplanet"]["level"] == "상", fit_result["decision_factors"]
+        assert any(g.startswith("(상)") and "잡플래닛" in g for g in fit_result["gaps"]), fit_result["gaps"]
+        assert "종합의견 텍스트" in fit_report, fit_report
+        assert fake_high_structured.extract_structured.call_args.kwargs["operation"] == "적합도 평가"
+        assert fake_high_structured.complete.call_args.kwargs["operation"] == "적합도 평가(보고서)"
 
     asyncio.run(_check())
     print("company_analysis self-check 통과")

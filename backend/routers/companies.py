@@ -918,7 +918,8 @@ async def toggle_pin(slug: str):
 @router.post("/api/companies/{slug}/refit")
 async def refit_company(slug: str):
     """적합도 점수만 재산정한다.
-    기존 frontmatter(구조화 데이터)와 본문을 그대로 두고 High 티어 LLM만 1회 호출한다."""
+    기존 frontmatter(구조화 데이터)와 본문을 그대로 두고 High 티어 LLM만 호출한다
+    (evaluate_fit_structured() 내부에서 1단계 판정 + 2단계 보고서, 총 2회)."""
     record = storage.read_company(slug)
     if not record:
         raise HTTPException(status_code=404, detail="회사를 찾을 수 없습니다.")
