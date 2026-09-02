@@ -13,9 +13,14 @@ _ID_PREFIX_MAP = {
     "responsibility": ("key_responsibilities", "중"),
 }
 
-_VALID_VERDICTS = {"met", "unmet", "unclear"}
-_VALID_EVIDENCE_BASIS = {"explicit", "assumed", "해당없음"}
-_VALID_SEVERITY = {"상", "중", "하"}  # None("없음")은 met일 때만 허용, 별도 처리
+
+# tuple로 둔다(set 아님) — `in`/`not in` 왼쪽 값(verdict/severity)이 LLM 원본이라
+# list/dict 등 unhashable일 수 있는데, set 멤버십 검사는 왼쪽 값을 먼저 해시하려
+# 시도해 TypeError로 죽는다. tuple 멤버십은 ==만 쓰므로 어떤 타입이 와도 안전하게
+# False를 반환한다(2026-09-02 7차 리뷰 반영 + 자체 발견).
+_VALID_VERDICTS = ("met", "unmet", "unclear")
+_VALID_EVIDENCE_BASIS = ("explicit", "assumed", "해당없음")
+_VALID_SEVERITY = ("상", "중", "하")  # None("없음")은 met일 때만 허용, 별도 처리
 
 
 def build_input_items(company_data: dict) -> list[dict]:
@@ -208,6 +213,11 @@ _FALLBACK_STATUS = "확인필요"
 
 # 구 CompanyFrontmatter salary_check/stability_check(Pydantic Literal)와 같은 어휘 —
 # validate_decision_factors()의 enum 검증과 derive_legacy_checks()의 매핑 양쪽에서 쓴다.
+# location은 여기 포함하지 않는다 — 프롬프트가 salary/stability처럼 짧은 고정 어휘를
+# 지시하지 않고("근무지 — 후보자 선호 위치가 설정된 경우만 반영") "정보없음"/"해당없음"
+# 등도 정상값일 수 있어서, enum으로 좁히면 정상 케이스까지 판정 실패로 오분류할 위험이
+# 있다(2026-09-02 7차 리뷰에서 시도했다가 위험성 확인 후 되돌림 — 별도 제품 결정 필요,
+# enforce_deterministic_levels()의 정확 매칭 우회는 낮음 심각도로 남겨둠).
 _SALARY_CHECK_VALUES = {"양호", "미확인", "낮음"}
 _STABILITY_CHECK_VALUES = {"충족", "조건부", "미달"}
 _STATUS_ENUM_BY_KEY = {"salary": _SALARY_CHECK_VALUES, "stability": _STABILITY_CHECK_VALUES}
@@ -502,6 +512,25 @@ if __name__ == "__main__":
     assert incomplete_missing_desc is True
     assert result_missing_desc[0]["filled_by"] == "code_fallback", result_missing_desc
 
+    # 2-5. verdict/severity가 list/dict 등 unhashable이면 _VALID_VERDICTS/_VALID_SEVERITY가
+    # set이었을 때 `in` 체크에서 TypeError로 죽었다 — tuple로 바꿔 방지(2026-09-02 7차
+    # 리뷰 준비 중 자체 발견 + 8차 리뷰 반영). 서술 필드는 전부 채워서 그 경계가 아니라
+    # verdict/severity 타입 때문에 fallback되는지 확인.
+    inputs_type_check = [{"id": "required:0", "source_item": "A"}]
+    full_desc = {"evidence_summary": "근거", "evidence_source": "", "evidence_excerpt": "", "reason": ""}
+    result_bad_verdict, incomplete_bad_verdict = reconcile_judgments(
+        inputs_type_check, [{"id": "required:0", "verdict": ["met"], "evidence_basis": "explicit", **full_desc}],
+    )
+    assert incomplete_bad_verdict is True
+    assert result_bad_verdict[0]["filled_by"] == "code_fallback", result_bad_verdict
+
+    result_bad_severity, incomplete_bad_severity = reconcile_judgments(
+        inputs_type_check,
+        [{"id": "required:0", "verdict": "unmet", "evidence_basis": "해당없음", "severity": {"x": 1}, **full_desc}],
+    )
+    assert incomplete_bad_severity is True
+    assert result_bad_severity[0]["filled_by"] == "code_fallback", result_bad_severity
+
     # 3. met인데 severity가 왔으면 코드가 null로 강제
     inputs2 = [{"id": "required:0", "source_item": "A"}]
     llm2 = [{"id": "required:0", "verdict": "met", "evidence_basis": "explicit",
@@ -522,17 +551,20 @@ if __name__ == "__main__":
 
     # 3-2. 조건부 불변조건 위반은 필드가 다 채워져 있어도 무효 → fallback (Codex 리뷰 2026-09-01 지적)
     # met인데 evidence_basis가 "해당없음"(met에는 explicit/assumed만 허용)
-    llm4 = [{"id": "required:0", "verdict": "met", "evidence_basis": "해당없음", "evidence_summary": "근거 없음"}]
+    llm4 = [{"id": "required:0", "verdict": "met", "evidence_basis": "해당없음", "evidence_summary": "근거 없음",
+             "evidence_source": "", "evidence_excerpt": "", "reason": ""}]
     result4, incomplete4 = reconcile_judgments(inputs2, llm4)
     assert incomplete4 is True, "met+evidence_basis=해당없음은 무효로 fallback 처리돼야 함"
     assert result4[0]["filled_by"] == "code_fallback"
     # unmet인데 severity가 "없음"(정규화 후 None) — unmet/unclear는 severity가 상/중/하 중 하나여야 함
-    llm5 = [{"id": "required:0", "verdict": "unmet", "severity": "없음", "reason": "이유"}]
+    llm5 = [{"id": "required:0", "verdict": "unmet", "severity": "없음", "reason": "이유",
+             "evidence_summary": "", "evidence_source": "", "evidence_excerpt": ""}]
     result5, incomplete5 = reconcile_judgments(inputs2, llm5)
     assert incomplete5 is True, "unmet인데 severity가 없으면 무효로 fallback 처리돼야 함"
     assert result5[0]["filled_by"] == "code_fallback"
     # verdict가 enum 밖 값
-    llm6 = [{"id": "required:0", "verdict": "확실히충족", "severity": "없음"}]
+    llm6 = [{"id": "required:0", "verdict": "확실히충족", "severity": "없음",
+             "evidence_summary": "", "evidence_source": "", "evidence_excerpt": "", "reason": ""}]
     result6, incomplete6 = reconcile_judgments(inputs2, llm6)
     assert incomplete6 is True, "enum 밖 verdict는 무효로 fallback 처리돼야 함"
 
@@ -550,12 +582,14 @@ if __name__ == "__main__":
     # 3-4. 항목 종류별 severity 강제 (2026-09-01, 2차 리뷰 반영, 2026-09-02 3차 리뷰로
     # responsibility 범위 정정) — required+unmet은 반드시 상, preferred+unmet·unclear는
     # 중/하만 허용. responsibility는 상/중/하 전부 합법이라 강제하지 않음.
-    llm7 = [{"id": "required:0", "verdict": "unmet", "evidence_basis": "해당없음", "severity": "하", "reason": "이유"}]
+    llm7 = [{"id": "required:0", "verdict": "unmet", "evidence_basis": "해당없음", "severity": "하", "reason": "이유",
+             "evidence_summary": "", "evidence_source": "", "evidence_excerpt": ""}]
     result7, incomplete7 = reconcile_judgments(inputs2, llm7)
     assert incomplete7 is True, "required+unmet인데 severity가 상이 아니면 무효(fallback)여야 함"
 
     inputs_pref = [{"id": "preferred:0", "source_item": "P"}]
-    llm8 = [{"id": "preferred:0", "verdict": "unmet", "evidence_basis": "해당없음", "severity": "상", "reason": "이유"}]
+    llm8 = [{"id": "preferred:0", "verdict": "unmet", "evidence_basis": "해당없음", "severity": "상", "reason": "이유",
+             "evidence_summary": "", "evidence_source": "", "evidence_excerpt": ""}]
     result8, incomplete8 = reconcile_judgments(inputs_pref, llm8)
     assert incomplete8 is True, "preferred+unmet인데 severity가 상이면 무효(fallback)여야 함"
 
@@ -568,7 +602,8 @@ if __name__ == "__main__":
     assert result10[0]["severity"] == "상"
 
     # 3-5. unmet인데 evidence_basis가 "assumed"(met 전용)면 무효
-    llm9 = [{"id": "required:0", "verdict": "unmet", "evidence_basis": "assumed", "severity": "상"}]
+    llm9 = [{"id": "required:0", "verdict": "unmet", "evidence_basis": "assumed", "severity": "상",
+             "evidence_summary": "", "evidence_source": "", "evidence_excerpt": "", "reason": ""}]
     result9, incomplete9 = reconcile_judgments(inputs2, llm9)
     assert incomplete9 is True, "unmet에 evidence_basis=assumed는 무효(fallback)여야 함"
 

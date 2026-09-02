@@ -1,12 +1,15 @@
 """회사 적합도 평가 — provider별 분기를 하나로 통합한다. 최초 평가(_process_company)와
 재평가(refit_company)가 이 함수를 공유해, 한쪽만 고쳐서 결과가 어긋나는 걸 방지한다."""
 import json
+import logging
 import re
 
 import prompts
 import storage
 from llm.router import LLMSnapshot, high_from_snapshot
 from services import fit_normalization
+
+logger = logging.getLogger(__name__)
 
 
 async def evaluate_fit(
@@ -134,6 +137,15 @@ async def evaluate_fit_structured(
         operation=operation,
         reasoning_effort=snap.reasoning_effort,
     )
+    # judge_result 자체가 dict가 아니면(provider가 tool 인자를 배열 등으로 잘못
+    # 반환) 바로 아래 .get() 호출에서 AttributeError로 평가 전체가 죽어 fallback
+    # 계약에 도달 못 한다 — 유료 1단계 호출은 이미 나간 뒤라 손실이 더 크다.
+    # 빈 dict로 정규화해 이후 세 normalizer(reconcile_judgments/
+    # validate_decision_factors/safe_fit_score)가 항상 하던 대로 fallback+
+    # incomplete 처리하게 한다(2026-09-02 7차 리뷰 반영).
+    if not isinstance(judge_result, dict):
+        logger.warning("evaluate_fit_structured: judge_result가 dict 아님 — raw=%r", judge_result)
+        judge_result = {}
 
     normalized, items_incomplete = fit_normalization.reconcile_judgments(
         input_items, judge_result.get("item_judgments", [])
@@ -305,6 +317,22 @@ if __name__ == "__main__":
         assert "종합의견 텍스트" in fit_report, fit_report
         assert fake_high_structured.extract_structured.call_args.kwargs["operation"] == "적합도 평가"
         assert fake_high_structured.complete.call_args.kwargs["operation"] == "적합도 평가(보고서)"
+
+        # 5. judge_result(1단계 응답) 자체가 dict가 아니면(provider가 tool 인자를 배열
+        # 등으로 잘못 반환) 예외 없이 fallback+incomplete=true로 넘어가야 함(2026-09-02
+        # 7차 리뷰 반영 — 전에는 바로 다음 줄 judge_result.get()에서 AttributeError로
+        # 평가 전체가 죽었음).
+        fake_high_bad_toplevel = SimpleNamespace(
+            extract_structured=AsyncMock(return_value=["이건 배열임 — dict가 아님"]),
+            complete=AsyncMock(return_value="종합의견"),
+        )
+        with patch.object(_this, "high_from_snapshot", return_value=(fake_high_bad_toplevel, "model")), \
+             patch.object(storage, "read_eval_criteria", return_value=""):
+            fit_result_bad, _ = await evaluate_fit_structured(
+                _snap("claude"), "프로필", company_data_structured, "원문", operation="적합도 평가",
+            )
+        assert fit_result_bad["evaluation_incomplete"] is True, fit_result_bad
+        assert fit_result_bad["item_judgments"][0]["filled_by"] == "code_fallback", fit_result_bad["item_judgments"]
 
     asyncio.run(_check())
     print("company_analysis self-check 통과")
