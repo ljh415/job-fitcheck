@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.7.0 — Claude Sonnet 5 지원 + adaptive thinking 응답 처리 버그 수정 (2026-09-02)
+## v1.6.5 — Claude Sonnet 5 지원 + adaptive thinking 응답 처리 버그 수정 (긴급 패치, 2026-09-02)
 
 - **Claude Sonnet 5 지원**: 기본 Claude High 모델을 `claude-sonnet-5`로 승격. Sonnet 5는
   adaptive thinking이 기본 활성화돼 `temperature` 등 비-기본 sampling 파라미터를 주면

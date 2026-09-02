@@ -285,4 +285,4 @@ private 저장소를 지인 대상 셀프호스팅 공개로 전환하기 위한
   실패 시 동작 설명)로 전부 채움. 전환 성공 케이스 자체는 실제 개인 GPU 서버로 검증 완료
   (2026-08-15 이전, RAG 자체 개발 단계) — 이번 merge 회귀 테스트에서는 서버가 꺼져있어
   실패 시나리오만 재확인(503 + override 유지, `docs/rag_testing_checklist.md` 참고).
-- ✅ Claude Sonnet 5 지원 + adaptive thinking 응답 처리 버그 수정 (2026-09-02, v1.7.0)
+- ✅ Claude Sonnet 5 지원 + adaptive thinking 응답 처리 버그 수정 (긴급 패치, 2026-09-02, v1.6.5)
