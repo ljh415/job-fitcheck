@@ -1,5 +1,43 @@
 # Changelog
 
+## v1.7.0 — 적합도 평가 구조 개편 (2026-09-02)
+
+기존 `evaluate_fit()`은 LLM 한 번 호출로 판정·표·gaps·종합의견을 전부 산문으로
+생성해, 표에는 미충족인데 종합의견에는 충족처럼 쓰는 등 내부 모순이 반복적으로
+발생했다. 1단계(판정 전용, ID 기반 정규화 배열 `item_judgments`+`decision_factors`
+생성)와 2단계(보고서 산문 전용, 판정 결과를 바꾸지 못하게 역할 경계 고정)로
+분리하고, 자격요건·우대사항·직무 표는 LLM이 아니라 코드가 정규화 배열에서
+결정적으로 렌더링하도록 재설계(`evaluate_fit_structured()`,
+`backend/services/fit_normalization.py` 신규). `_process_company`/`refit_company`
+모두 이 함수로 교체.
+
+- **완결성 보장**: LLM 응답이 스키마를 어기거나(타입 불일치, 필드 누락, 항목
+  누락·중복) 아예 배열이 아닌 값을 반환해도 예외로 죽지 않고 안전한
+  fallback(`code_fallback`, `evaluation_incomplete=true`)으로 처리.
+- **결정론 보장**: 잡플래닛 평점(2.5/3.0 임계값)·근무지 조건부/미달 같은 고정
+  매핑 가능한 판정은 LLM 값을 신뢰하지 않고 코드가 재확정(`enforce_deterministic_levels()`).
+  점수→라벨 매핑도 항상 코드 계산.
+- **저장·이력·QnA 계약**: 신규 판정 필드를 `CompanyFrontmatter`에 저장하되 refit
+  재평가 입력과 QnA 컨텍스트에서는 제외(자기참조 편향 방지). 구
+  `salary_check`/`stability_check`/`location_check` 필드는 새 `decision_factors`에서
+  파생해 하위 호환 유지(CSV 내보내기·MCP 계약).
+- **검증**: Claude/OpenAI/Gemini 3개 provider 고정 입력 실 API 검증, 실제 4개
+  사례(스펙터·코딧·메딜리티·엑셈) 회귀 검증(도중 프롬프트-스키마 모순으로 일부
+  항목이 통째로 fallback되던 실버그 발견·수정), Codex 코드 리뷰 8라운드(타입
+  경계·불변조건·MCP 응답 크기 등 다수 실버그 발견·수정), 실제 prod/dev에 같은
+  공고를 등록해 Claude·Codex 양쪽에 LLM Judge로 블라인드 비교 평가 — 이 개편이
+  보장하는 건 "의미 판정의 정확도"가 아니라 "평가 계약의 재현성·감사
+  가능성·내부 일관성"이라는 결론.
+- **부수 UX 개선**: 직무 적합도 표 컬럼명을 자격요건 표와 분리("주요 업무 |
+  관련 경험 여부"), 근거 문구 길이 프롬프트 지시 강화, 표 셀의 "~" 문자가
+  마크다운 취소선으로 오해석되던 문제 수정, 비기술 요인(경력연수·근무지·
+  기업안정성·잡플래닛·연봉·사용자지정기준) 6개를 코드가 고정된 한 줄로 항상
+  노출(LLM 산문이 gap 위주라 문제없는 판정은 누락되던 문제 해결, 추가 토큰
+  비용 없음).
+
+`fit-eval-structural-redesign` 브랜치, `main`에 merge 완료(`4cdb528`). MCP는
+계획대로 이번 범위 밖(REST 검증 완료 후 별도 착수 예정).
+
 ## v1.6.5 — Claude Sonnet 5 지원 + adaptive thinking 응답 처리 버그 수정 (긴급 패치, 2026-09-02)
 
 - **Claude Sonnet 5 지원**: 기본 Claude High 모델을 `claude-sonnet-5`로 승격. Sonnet 5는
