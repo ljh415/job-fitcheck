@@ -558,7 +558,7 @@ _ITEM_JUDGMENT_SCHEMA = {
                 "verdict가 met이 아니면 해당없음."
             ),
         },
-        "evidence_summary": {"type": "string", "description": "보고서에 바로 쓸 한두 문장. 근거가 없으면 그 사실을 그대로 서술."},
+        "evidence_summary": {"type": "string", "description": "표 셀에 그대로 들어갑니다 — 한 문장, 60자 이내로 압축하세요(예: \"Docker/K8s 경험 없음, Docker Compose만 사용\"). 상세 설명은 이 필드가 아니라 reason에 쓰세요. 근거가 없으면 그 사실만 짧게 서술."},
         "evidence_source": {"type": "string", "description": "근거가 나온 회사명 또는 프로젝트명. 없으면 빈 문자열."},
         "evidence_excerpt": {"type": "string", "description": "필요한 경우에만 이력서 원문에서 발췌한 짧은 문장. 없으면 빈 문자열."},
         "reason": {"type": "string", "description": "unmet·unclear 판정 이유. met이면 빈 문자열."},
@@ -634,7 +634,7 @@ EVALUATE_FIT_JUDGE_SYSTEM = f"""당신은 구직자의 이력서와 채용공고
 3. 입력으로 받은 항목을 전부 판정하세요 — id별로 정확히 하나씩. 완결성은 시스템이 별도로 검증합니다.
 
 [복합 자격요건 판정 — 필수 준수]
-- 하나의 항목에 여러 기술·역량이 포함된 경우, 그 항목 하나에 대해서만 판정하세요(항목을 쪼개지 마세요). evidence_summary에 구성 요소별 충족 여부를 나열한 뒤 아래 기준으로 집계하세요.
+- 하나의 항목에 여러 기술·역량이 포함된 경우, 그 항목 하나에 대해서만 판정하세요(항목을 쪼개지 마세요). 구성 요소별 충족 여부는 판정 과정에서만 확인하고 아래 기준으로 집계하되, evidence_summary·reason에는 구성 요소를 전부 나열하지 말고 판정에 영향을 준 요소 중심으로 한 문장으로 압축하세요(표 셀에 그대로 들어갑니다).
 - "또는", "중 하나"가 명시된 경우에만 OR 조건으로 해석하고, 구성 요소 중 하나 이상 충족하면 met으로 집계하세요.
 - "및", "모두"가 명시된 경우 AND 조건으로 해석하고, 구성 요소 전부가 충족해야 met으로 집계하세요.
 - "/", ","처럼 연결 관계가 불명확한 표현은 임의로 met 처리하지 말고 unclear로 판정하세요.

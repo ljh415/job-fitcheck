@@ -174,7 +174,7 @@ async def evaluate_fit_structured(
 
     tables = "\n\n".join(
         fit_normalization.render_requirement_table(
-            [it for it in normalized if it["id"].startswith(f"{prefix}:")], header
+            [it for it in normalized if it["id"].startswith(f"{prefix}:")], header, table_kind=prefix
         )
         for prefix, header in (
             ("required", "자격요건 충족 현황"),

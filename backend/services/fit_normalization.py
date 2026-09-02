@@ -412,12 +412,23 @@ def _escape_cell(text: str) -> str:
 
 _VERDICT_SYMBOL = {"met": "✅ 충족", "unmet": "❌ 미충족", "unclear": "🔲 불명확", "verify": "🔲 확인필요"}
 
+# 자격요건/우대사항은 "충족 여부"가 자연스럽지만, 주요 업무(responsibility)는 통과·탈락
+# 기준이 아니라 후보자 경험이 그 업무와 얼마나 맞닿아 있는지를 보는 항목이라 같은 단어를
+# 쓰면 어색하다(2026-09-02, 실제 화면 비교 중 사용자 지적 — 세 표가 전부 자격요건 표의
+# 컬럼명을 그대로 재사용하고 있었음). 판정 구조(met/unmet/unclear + 기호)는 내부 일관성
+# 검증을 위해 그대로 유지하고, 표시되는 컬럼명만 표 종류별로 분리한다.
+_TABLE_COLUMNS = {
+    "default": ("항목", "충족 여부"),
+    "responsibility": ("주요 업무", "관련 경험 여부"),
+}
 
-def render_requirement_table(items: list[dict], header: str) -> str:
-    """정규화 배열에서 자격요건/우대사항 표를 코드가 직접 렌더링한다 — LLM이 표를
+
+def render_requirement_table(items: list[dict], header: str, table_kind: str = "default") -> str:
+    """정규화 배열에서 자격요건/우대사항/직무 표를 코드가 직접 렌더링한다 — LLM이 표를
     다시 쓰면 근거 없이 unmet을 완화 서술하거나 항목을 누락시킬 수 있어서, 사실
     영역은 코드가 결정적으로 만든다."""
-    lines = [f"### {header}", "", "| 항목 | 충족 여부 | 근거 |", "|------|----------|------|"]
+    col1, col2 = _TABLE_COLUMNS.get(table_kind, _TABLE_COLUMNS["default"])
+    lines = [f"### {header}", "", f"| {col1} | {col2} | 근거 |", "|------|----------|------|"]
     for it in items:
         symbol = _VERDICT_SYMBOL.get(it["verdict"], it["verdict"])
         evidence = it.get("evidence_summary") or it.get("reason") or ""
@@ -684,6 +695,12 @@ if __name__ == "__main__":
     table = render_requirement_table(table_items, "자격요건 충족 현황")
     assert "RDB/Mongo \\| 위험문자" in table, table
     assert "근거 줄바꿈 포함" in table, "셀 안 줄바꿈은 공백으로 치환돼야 함"
+    assert "| 항목 | 충족 여부 | 근거 |" in table, "기본 table_kind는 자격요건용 컬럼명이어야 함"
+
+    # 5-1. table_kind="responsibility"는 컬럼명이 달라야 함(2026-09-02, 실제 화면
+    # 비교 중 사용자 지적 — 세 표가 전부 같은 컬럼명을 재사용하고 있었음)
+    resp_table = render_requirement_table(table_items, "직무 적합도 분석", table_kind="responsibility")
+    assert "| 주요 업무 | 관련 경험 여부 | 근거 |" in resp_table, resp_table
 
     # 6. derive_decision_factor_gaps — level이 "없음"이면 제외, salary는 애초에 안 넣으면 파생 안 됨
     decision_factors = {
