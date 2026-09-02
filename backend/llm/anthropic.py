@@ -152,8 +152,13 @@ class AnthropicProvider(LLMProvider):
                     "[%s] 응답이 max_tokens(%d)에 의해 잘렸습니다(재시도 후에도 부족, 출력 %d토큰). 내용이 불완전할 수 있습니다.",
                     operation, current_max_tokens, response.usage.output_tokens,
                 )
+            # adaptive thinking(Sonnet 5 등)이 켜진 모델은 content 맨 앞에 type="thinking"
+            # 블록이 먼저 오는데, 이것도 hasattr(block, "text")가 True이면서 .text는 None이라
+            # 예전 방식(hasattr만 확인)으로는 실제 답변 대신 None을 그대로 반환해버렸다
+            # (2026-09-02, LLM Judge 스크립트 작성 중 실제로 재현해 발견). type이 정확히
+            # "text"인 블록만 골라야 한다.
             for block in response.content:
-                if hasattr(block, "text"):
+                if getattr(block, "type", None) == "text":
                     return block.text  # type: ignore[union-attr]
             return ""
         return ""
@@ -206,7 +211,9 @@ class AnthropicProvider(LLMProvider):
 
             tool_use_blocks = [b for b in response.content if b.type == "tool_use"]
             if not tool_use_blocks:
-                text = "".join(b.text for b in response.content if hasattr(b, "text"))
+                # complete()와 같은 이유 — thinking 블록도 hasattr(b, "text")가 True이면서
+                # .text는 None이라 "".join()이 TypeError로 죽는다(2026-09-02 발견).
+                text = "".join(b.text for b in response.content if b.type == "text")
                 return {"text": text, "tool_calls": tool_calls_trace}
 
             messages.append({"role": "assistant", "content": response.content})
