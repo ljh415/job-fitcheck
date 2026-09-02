@@ -58,16 +58,17 @@ class AnthropicProvider(LLMProvider):
             input_schema=tool_schema,  # type: ignore[arg-type]
         )
         try:
-            response = await self._client.messages.create(
-                model=model,
-                max_tokens=max_tokens,
-                temperature=0.5,
-                system=system,
-                messages=[{"role": "user", "content": user}],
-                tools=[tool_def],
-                # 특정 툴을 반드시 호출하도록 강제 — 텍스트 응답을 방지
-                tool_choice={"type": "tool", "name": tool_name},
-            )
+            with usage_tracker.timer() as t:
+                response = await self._client.messages.create(
+                    model=model,
+                    max_tokens=max_tokens,
+                    temperature=0.5,
+                    system=system,
+                    messages=[{"role": "user", "content": user}],
+                    tools=[tool_def],
+                    # 특정 툴을 반드시 호출하도록 강제 — 텍스트 응답을 방지
+                    tool_choice={"type": "tool", "name": tool_name},
+                )
         except anthropic.AuthenticationError:
             raise LLMAPIError("LLM API 인증 실패 — 설정에서 Anthropic API 키를 확인해주세요.", 401)
         except anthropic.RateLimitError:
@@ -81,6 +82,7 @@ class AnthropicProvider(LLMProvider):
             model=model,
             input_tokens=response.usage.input_tokens,
             output_tokens=response.usage.output_tokens,
+            duration_ms=t["ms"],
         )
         if response.stop_reason == "max_tokens":
             import logging as _logging
@@ -111,12 +113,13 @@ class AnthropicProvider(LLMProvider):
         # (32768 도달 시 더 늘려도 소용없으니 중단) — 사용자가 직접 재시도하지 않아도 되게 함.
         for attempt in range(2):
             try:
-                response = await self._client.messages.create(
-                    model=model,
-                    max_tokens=current_max_tokens,
-                    system=system,
-                    messages=[{"role": "user", "content": msg_content}],  # type: ignore[arg-type]
-                )
+                with usage_tracker.timer() as t:
+                    response = await self._client.messages.create(
+                        model=model,
+                        max_tokens=current_max_tokens,
+                        system=system,
+                        messages=[{"role": "user", "content": msg_content}],  # type: ignore[arg-type]
+                    )
             except anthropic.AuthenticationError:
                 raise LLMAPIError("LLM API 인증 실패 — 설정에서 Anthropic API 키를 확인해주세요.", 401)
             except anthropic.RateLimitError:
@@ -130,6 +133,7 @@ class AnthropicProvider(LLMProvider):
                 model=model,
                 input_tokens=response.usage.input_tokens,
                 output_tokens=response.usage.output_tokens,
+                duration_ms=t["ms"],
             )
             stop_reason = response.stop_reason
             if stop_reason == "max_tokens" and attempt == 0 and current_max_tokens < 32768:
@@ -174,13 +178,14 @@ class AnthropicProvider(LLMProvider):
 
         for _ in range(max_iterations):
             try:
-                response = await self._client.messages.create(
-                    model=model,
-                    max_tokens=4096,
-                    system=system,
-                    messages=messages,  # type: ignore[arg-type]
-                    tools=tool_defs,
-                )
+                with usage_tracker.timer() as t:
+                    response = await self._client.messages.create(
+                        model=model,
+                        max_tokens=4096,
+                        system=system,
+                        messages=messages,  # type: ignore[arg-type]
+                        tools=tool_defs,
+                    )
             except anthropic.AuthenticationError:
                 raise LLMAPIError("LLM API 인증 실패 — 설정에서 Anthropic API 키를 확인해주세요.", 401)
             except anthropic.RateLimitError:
@@ -195,6 +200,7 @@ class AnthropicProvider(LLMProvider):
                 model=model,
                 input_tokens=response.usage.input_tokens,
                 output_tokens=response.usage.output_tokens,
+                duration_ms=t["ms"],
             )
 
             tool_use_blocks = [b for b in response.content if b.type == "tool_use"]
@@ -246,21 +252,23 @@ class AnthropicProvider(LLMProvider):
         max_tokens: int = 4096,
     ) -> AsyncIterator[str]:
         try:
-            async with self._client.messages.stream(
-                model=model,
-                max_tokens=max_tokens,
-                system=system,
-                messages=messages,  # type: ignore[arg-type]
-            ) as s:
-                async for text in s.text_stream:
-                    yield text
-                msg = await s.get_final_message()
-                usage_tracker.append_usage(
-                    operation=operation,
+            with usage_tracker.timer() as t:
+                async with self._client.messages.stream(
                     model=model,
-                    input_tokens=msg.usage.input_tokens,
-                    output_tokens=msg.usage.output_tokens,
-                )
+                    max_tokens=max_tokens,
+                    system=system,
+                    messages=messages,  # type: ignore[arg-type]
+                ) as s:
+                    async for text in s.text_stream:
+                        yield text
+                    msg = await s.get_final_message()
+            usage_tracker.append_usage(
+                operation=operation,
+                model=model,
+                input_tokens=msg.usage.input_tokens,
+                output_tokens=msg.usage.output_tokens,
+                duration_ms=t["ms"],
+            )
         except anthropic.AuthenticationError:
             raise LLMAPIError("LLM API 인증 실패 — 설정에서 Anthropic API 키를 확인해주세요.", 401)
         except anthropic.RateLimitError:

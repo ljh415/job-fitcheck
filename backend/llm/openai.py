@@ -67,28 +67,29 @@ class OpenAIProvider(LLMProvider):
         if reasoning_kwarg:
             max_tokens = max(max_tokens, 16384)
         try:
-            response = await self._client.chat.completions.create(
-                model=model,
-                **temperature_kwarg,
-                **_max_tokens_kwarg(model, max_tokens),
-                **reasoning_kwarg,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-                tools=[
-                    {
-                        "type": "function",
-                        "function": {
-                            "name": tool_name,
-                            "description": tool_description,
-                            "parameters": tool_schema,
-                        },
-                    }
-                ],
-                # 특정 함수를 반드시 호출하도록 강제
-                tool_choice={"type": "function", "function": {"name": tool_name}},
-            )
+            with usage_tracker.timer() as t:
+                response = await self._client.chat.completions.create(
+                    model=model,
+                    **temperature_kwarg,
+                    **_max_tokens_kwarg(model, max_tokens),
+                    **reasoning_kwarg,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                    tools=[
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": tool_name,
+                                "description": tool_description,
+                                "parameters": tool_schema,
+                            },
+                        }
+                    ],
+                    # 특정 함수를 반드시 호출하도록 강제
+                    tool_choice={"type": "function", "function": {"name": tool_name}},
+                )
         except openai_lib.AuthenticationError:
             raise LLMAPIError("LLM API 인증 실패 — 설정에서 OpenAI API 키를 확인해주세요.", 401)
         except openai_lib.RateLimitError:
@@ -103,6 +104,7 @@ class OpenAIProvider(LLMProvider):
                 model=model,
                 input_tokens=response.usage.prompt_tokens,
                 output_tokens=response.usage.completion_tokens,
+                duration_ms=t["ms"],
             )
         tool_call = response.choices[0].message.tool_calls
         if not tool_call:
@@ -143,15 +145,16 @@ class OpenAIProvider(LLMProvider):
         # (32768 도달 시 더 늘려도 소용없으니 중단) — 사용자가 직접 재시도하지 않아도 되게 함.
         for attempt in range(2):
             try:
-                response = await self._client.chat.completions.create(
-                    model=model,
-                    **_max_tokens_kwarg(model, current_max_tokens),
-                    **reasoning_kwarg,
-                    messages=[
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": msg_content},  # type: ignore[arg-type]
-                    ],
-                )
+                with usage_tracker.timer() as t:
+                    response = await self._client.chat.completions.create(
+                        model=model,
+                        **_max_tokens_kwarg(model, current_max_tokens),
+                        **reasoning_kwarg,
+                        messages=[
+                            {"role": "system", "content": system},
+                            {"role": "user", "content": msg_content},  # type: ignore[arg-type]
+                        ],
+                    )
             except openai_lib.AuthenticationError:
                 raise LLMAPIError("LLM API 인증 실패 — 설정에서 OpenAI API 키를 확인해주세요.", 401)
             except openai_lib.RateLimitError:
@@ -166,6 +169,7 @@ class OpenAIProvider(LLMProvider):
                     model=model,
                     input_tokens=response.usage.prompt_tokens,
                     output_tokens=response.usage.completion_tokens,
+                    duration_ms=t["ms"],
                 )
             finish_reason = response.choices[0].finish_reason
             if finish_reason == "length" and attempt == 0 and current_max_tokens < 32768:
@@ -216,14 +220,15 @@ class OpenAIProvider(LLMProvider):
 
         for _ in range(max_iterations):
             try:
-                response = await self._client.chat.completions.create(
-                    model=model,
-                    **temperature_kwarg,
-                    **_max_tokens_kwarg(model, max_tokens),
-                    **reasoning_kwarg,
-                    messages=messages,  # type: ignore[arg-type]
-                    tools=tool_defs,
-                )
+                with usage_tracker.timer() as t:
+                    response = await self._client.chat.completions.create(
+                        model=model,
+                        **temperature_kwarg,
+                        **_max_tokens_kwarg(model, max_tokens),
+                        **reasoning_kwarg,
+                        messages=messages,  # type: ignore[arg-type]
+                        tools=tool_defs,
+                    )
             except openai_lib.AuthenticationError:
                 raise LLMAPIError("LLM API 인증 실패 — 설정에서 OpenAI API 키를 확인해주세요.", 401)
             except openai_lib.RateLimitError:
@@ -239,6 +244,7 @@ class OpenAIProvider(LLMProvider):
                     model=model,
                     input_tokens=response.usage.prompt_tokens,
                     output_tokens=response.usage.completion_tokens,
+                    duration_ms=t["ms"],
                 )
 
             message = response.choices[0].message
@@ -302,20 +308,21 @@ class OpenAIProvider(LLMProvider):
         input_tokens = 0
         output_tokens = 0
         try:
-            async with await self._client.chat.completions.create(
-                model=model,
-                **_max_tokens_kwarg(model, max_tokens),
-                messages=full_messages,  # type: ignore[arg-type]
-                stream=True,
-                stream_options={"include_usage": True},
-            ) as s:
-                async for chunk in s:
-                    if chunk.usage:
-                        input_tokens = chunk.usage.prompt_tokens
-                        output_tokens = chunk.usage.completion_tokens
-                    delta = chunk.choices[0].delta.content if chunk.choices else None
-                    if delta:
-                        yield delta
+            with usage_tracker.timer() as t:
+                async with await self._client.chat.completions.create(
+                    model=model,
+                    **_max_tokens_kwarg(model, max_tokens),
+                    messages=full_messages,  # type: ignore[arg-type]
+                    stream=True,
+                    stream_options={"include_usage": True},
+                ) as s:
+                    async for chunk in s:
+                        if chunk.usage:
+                            input_tokens = chunk.usage.prompt_tokens
+                            output_tokens = chunk.usage.completion_tokens
+                        delta = chunk.choices[0].delta.content if chunk.choices else None
+                        if delta:
+                            yield delta
         except openai_lib.AuthenticationError:
             raise LLMAPIError("LLM API 인증 실패 — 설정에서 OpenAI API 키를 확인해주세요.", 401)
         except openai_lib.RateLimitError:
@@ -330,4 +337,5 @@ class OpenAIProvider(LLMProvider):
                 model=model,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
+                duration_ms=t["ms"],
             )
