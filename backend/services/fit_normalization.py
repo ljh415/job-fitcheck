@@ -171,10 +171,14 @@ def reconcile_judgments(input_items: list[dict], llm_items: list[dict]) -> tuple
         )
 
         if not descriptive_fields_ok or not _is_valid_judgment(item_id, verdict, evidence_basis, normalized_severity):
+            # 사용자가 fallback 사유를 직접 판단할 수 있도록 원본 근거 텍스트도 남긴다
+            # (2026-09-02 — verdict/evidence_basis 값만으로는 실제로 애매한 판정이었는지
+            # 확인할 방법이 없다는 지적 반영).
             logger.warning(
                 "reconcile_judgments: id=%s 조건 위반(verdict=%r, evidence_basis=%r, severity=%r, "
-                "descriptive_fields_ok=%s) → code_fallback",
+                "descriptive_fields_ok=%s) → code_fallback | reason=%r evidence_summary=%r",
                 item_id, verdict, evidence_basis, raw_severity, descriptive_fields_ok,
+                raw.get("reason"), raw.get("evidence_summary"),
             )
             result.append(_code_fallback(item_id, source_item))
             incomplete = True
