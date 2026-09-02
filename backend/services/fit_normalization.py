@@ -178,6 +178,10 @@ def safe_fit_score(raw_score) -> tuple[int | None, bool]:
 
 _DECISION_FACTOR_KEYS = ("career_years", "location", "stability", "jobplanet", "salary", "custom_criteria")
 _VALID_LEVEL = {"상", "중", "하", "없음"}
+# validate_decision_factors()가 fallback에 채우는 status 표식 — derive_decision_factor_gaps()가
+# 이 값을 보고 level="없음"이어도 "판정 실패"임을 알아채 gaps에 노출한다(두 함수가 문자열을
+# 각자 하드코딩하면 한쪽만 바뀔 때 조용히 어긋나므로 상수 하나로 공유).
+_FALLBACK_STATUS = "확인필요"
 
 # 구 CompanyFrontmatter salary_check/stability_check(Pydantic Literal)와 같은 어휘 —
 # validate_decision_factors()의 enum 검증과 derive_legacy_checks()의 매핑 양쪽에서 쓴다.
@@ -211,7 +215,7 @@ def validate_decision_factors(decision_factors: dict) -> tuple[dict, bool]:
             or (allowed_status is not None and factor.get("status") not in allowed_status)
         ):
             logger.warning("validate_decision_factors: %s 누락 또는 level/status/note 유효하지 않음 — raw=%r", key, factor)
-            result[key] = {"status": "확인필요", "level": "없음", "note": "시스템이 이 요인을 판정하지 못함"}
+            result[key] = {"status": _FALLBACK_STATUS, "level": "없음", "note": "시스템이 이 요인을 판정하지 못함"}
             incomplete = True
         else:
             result[key] = factor
@@ -263,15 +267,24 @@ _DECISION_FACTOR_LABELS = {
 def derive_decision_factor_gaps(decision_factors: dict) -> list[str]:
     """decision_factors에서 gaps 문자열을 파생한다. `level`이 "없음"이 아닌
     요인만(=1단계가 문제 있다고 판단한 것만) gap으로 포함한다. `salary`는 이
-    맵에 없으므로 절대 파생되지 않는다(기존 규칙: 연봉은 감점 근거로 안 씀)."""
+    맵에 없으므로 절대 파생되지 않는다(기존 규칙: 연봉은 감점 근거로 안 씀).
+
+    validate_decision_factors()의 fallback도 level="없음"으로 채워지는데, 그대로
+    두면 "판정 실패"와 "정상이라 문제없음"이 구분 안 돼 리포트에서 fallback이
+    조용히 사라진다(2026-09-02, 실제 refit 결과에서 stability 판정 실패가 리포트에
+    전혀 안 보이는 문제를 Codex 교차검증으로 발견) — status가 fallback 표식
+    (_FALLBACK_STATUS)이면 level과 무관하게 "(확인필요)" gap으로 노출한다."""
     gaps = []
     for key, label in _DECISION_FACTOR_LABELS.items():
         factor = decision_factors.get(key) or {}
         level = factor.get("level")
+        status = factor.get("status", "")
+        note = factor.get("note", "")
+        if status == _FALLBACK_STATUS:
+            gaps.append(f"(확인필요) {label} - {note}")
+            continue
         if not level or level == "없음":
             continue
-        note = factor.get("note", "")
-        status = factor.get("status", "")
         gaps.append(f"({level}) {label} {status} - {note}".replace("  ", " "))
     return gaps
 
@@ -511,6 +524,15 @@ if __name__ == "__main__":
     assert not any("연봉" in g or "salary" in g.lower() for g in df_gaps), \
         "salary는 _DECISION_FACTOR_LABELS에 없으므로 절대 파생되면 안 됨"
     assert any("잡플래닛" in g and g.startswith("(상)") for g in df_gaps), df_gaps
+
+    # 6-1. fallback(status=_FALLBACK_STATUS)은 level="없음"이어도 "(확인필요)" gap으로
+    # 노출돼야 함 — 안 그러면 판정 실패가 리포트에서 조용히 사라짐(2026-09-02 실사례로 발견)
+    decision_factors_with_fallback = dict(decision_factors)
+    decision_factors_with_fallback["stability"] = {
+        "status": _FALLBACK_STATUS, "level": "없음", "note": "시스템이 이 요인을 판정하지 못함",
+    }
+    df_gaps_fb = derive_decision_factor_gaps(decision_factors_with_fallback)
+    assert any(g.startswith("(확인필요) 기업 안정성") for g in df_gaps_fb), df_gaps_fb
 
     # 7. derive_legacy_checks — status를 구 필드 어휘로 그대로 옮기되 enum 밖이면 버림
     legacy = derive_legacy_checks(decision_factors)
