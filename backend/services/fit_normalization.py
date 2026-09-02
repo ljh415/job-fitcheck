@@ -90,6 +90,13 @@ def reconcile_judgments(input_items: list[dict], llm_items: list[dict]) -> tuple
       불명, unmet인데 severity 없음) 필드 개수가 맞아도 무효로 보고 fallback으로 채운다.
     - source_item은 LLM 반환값을 신뢰하지 않고 입력값으로 강제 복원한다.
     - severity는 met일 때 null로 강제, "없음" 문자열은 None으로 정규화한다.
+    - evidence_basis는 verdict가 met이 아닌데 유효한 enum 밖 값(빈 문자열 등)이면
+      정답이 "해당없음" 하나뿐이므로 폐기하지 않고 코드가 직접 보정한다. 단 verdict
+      자체가 무효거나 evidence_basis가 enum 안의 다른 값(예: explicit)이면 보정하지
+      않는다 — met을 의도했는데 verdict를 잘못 반환했을 가능성이 있어 그 모순은
+      그대로 fallback으로 드러내야 한다(2026-09-02, Codex 의견 반영).
+    - severity도 required+unmet 조합은 정답이 "상" 하나뿐이므로 LLM 값과 무관하게
+      코드가 직접 확정한다(동일 근거, 2026-09-02).
     - 최종 순서는 LLM이 돌려준 순서가 아니라 입력 순서를 따른다.
     - 빠진/무효 id는 code_fallback으로 채운다(재요청하지 않음).
 
@@ -135,6 +142,22 @@ def reconcile_judgments(input_items: list[dict], llm_items: list[dict]) -> tuple
         # docs/fit-eval-structural-redesign/PLAN.md 스키마 실측 참고) — 내부적으로는 None으로 통일.
         raw_severity = raw.get("severity")
         normalized_severity = None if raw_severity == "없음" else raw_severity
+
+        # 정답이 결정론적으로 하나뿐인 두 필드는 LLM이 스키마 enum을 벗어나도
+        # 항목 전체를 버리지 않고 코드가 직접 확정한다(2026-09-02, Codex 의견 반영).
+        if verdict in ("unmet", "unclear") and evidence_basis not in _VALID_EVIDENCE_BASIS:
+            logger.warning(
+                "reconcile_judgments: id=%s evidence_basis 자동 보정 %r → '해당없음'",
+                item_id, evidence_basis,
+            )
+            evidence_basis = "해당없음"
+        prefix = item_id.split(":", 1)[0]
+        if prefix == "required" and verdict == "unmet" and normalized_severity != "상":
+            logger.warning(
+                "reconcile_judgments: id=%s severity 자동 보정 %r → '상'",
+                item_id, normalized_severity,
+            )
+            normalized_severity = "상"
         # evidence_summary/evidence_source/evidence_excerpt/reason은 표·gaps 렌더링에서
         # f-string과 .replace()로 직접 문자열 취급된다 — dict/list 등이 섞여 들어오면
         # 판정 자체는 형식상 맞아도 렌더링 단계에서 죽으므로 여기서 같이 걸러낸다
@@ -558,9 +581,10 @@ if __name__ == "__main__":
     assert incomplete_bad_verdict is True
     assert result_bad_verdict[0]["filled_by"] == "code_fallback", result_bad_verdict
 
+    # verdict=unclear(required+unmet 자동보정 대상 아님)로 바꿔 unhashable severity 안전성만 확인
     result_bad_severity, incomplete_bad_severity = reconcile_judgments(
         inputs_type_check,
-        [{"id": "required:0", "verdict": "unmet", "evidence_basis": "해당없음", "severity": {"x": 1}, **full_desc}],
+        [{"id": "required:0", "verdict": "unclear", "evidence_basis": "해당없음", "severity": {"x": 1}, **full_desc}],
     )
     assert incomplete_bad_severity is True
     assert result_bad_severity[0]["filled_by"] == "code_fallback", result_bad_severity
@@ -590,11 +614,13 @@ if __name__ == "__main__":
     result4, incomplete4 = reconcile_judgments(inputs2, llm4)
     assert incomplete4 is True, "met+evidence_basis=해당없음은 무효로 fallback 처리돼야 함"
     assert result4[0]["filled_by"] == "code_fallback"
-    # unmet인데 severity가 "없음"(정규화 후 None) — unmet/unclear는 severity가 상/중/하 중 하나여야 함
-    llm5 = [{"id": "required:0", "verdict": "unmet", "severity": "없음", "reason": "이유",
+    # unmet인데 severity가 "없음"(정규화 후 None) — preferred는 severity가 결정론적으로
+    # 보정되는 대상이 아니라서(required+unmet만 보정) 그대로 무효여야 함
+    inputs_pref_llm5 = [{"id": "preferred:0", "source_item": "P"}]
+    llm5 = [{"id": "preferred:0", "verdict": "unmet", "evidence_basis": "해당없음", "severity": "없음", "reason": "이유",
              "evidence_summary": "", "evidence_source": "", "evidence_excerpt": ""}]
-    result5, incomplete5 = reconcile_judgments(inputs2, llm5)
-    assert incomplete5 is True, "unmet인데 severity가 없으면 무효로 fallback 처리돼야 함"
+    result5, incomplete5 = reconcile_judgments(inputs_pref_llm5, llm5)
+    assert incomplete5 is True, "preferred+unmet인데 severity가 없으면 무효로 fallback 처리돼야 함"
     assert result5[0]["filled_by"] == "code_fallback"
     # verdict가 enum 밖 값
     llm6 = [{"id": "required:0", "verdict": "확실히충족", "severity": "없음",
@@ -614,12 +640,14 @@ if __name__ == "__main__":
     assert label_from_score(0) == "비추천"
 
     # 3-4. 항목 종류별 severity 강제 (2026-09-01, 2차 리뷰 반영, 2026-09-02 3차 리뷰로
-    # responsibility 범위 정정) — required+unmet은 반드시 상, preferred+unmet·unclear는
-    # 중/하만 허용. responsibility는 상/중/하 전부 합법이라 강제하지 않음.
+    # responsibility 범위 정정, 2026-09-02 Codex 의견 반영으로 required+unmet은 fallback
+    # 대신 코드가 "상"으로 직접 보정) — preferred+unmet·unclear는 중/하만 허용.
+    # responsibility는 상/중/하 전부 합법이라 강제하지 않음.
     llm7 = [{"id": "required:0", "verdict": "unmet", "evidence_basis": "해당없음", "severity": "하", "reason": "이유",
              "evidence_summary": "", "evidence_source": "", "evidence_excerpt": ""}]
     result7, incomplete7 = reconcile_judgments(inputs2, llm7)
-    assert incomplete7 is True, "required+unmet인데 severity가 상이 아니면 무효(fallback)여야 함"
+    assert incomplete7 is False, "required+unmet은 severity를 코드가 상으로 자동 보정해야 함"
+    assert result7[0]["severity"] == "상", result7
 
     inputs_pref = [{"id": "preferred:0", "source_item": "P"}]
     llm8 = [{"id": "preferred:0", "verdict": "unmet", "evidence_basis": "해당없음", "severity": "상", "reason": "이유",
@@ -640,6 +668,15 @@ if __name__ == "__main__":
              "evidence_summary": "", "evidence_source": "", "evidence_excerpt": "", "reason": ""}]
     result9, incomplete9 = reconcile_judgments(inputs2, llm9)
     assert incomplete9 is True, "unmet에 evidence_basis=assumed는 무효(fallback)여야 함"
+
+    # 3-5-1. unclear인데 evidence_basis가 enum 밖 빈 문자열이면 "해당없음"으로 자동 보정
+    # (2026-09-02, 그래비티랩스 재분석 재현 + Codex 의견 반영 — 정답이 하나뿐인 필드는
+    # 항목 전체를 버리지 않고 코드가 직접 확정한다)
+    llm11 = [{"id": "required:0", "verdict": "unclear", "evidence_basis": "", "severity": "하",
+              "evidence_summary": "", "evidence_source": "", "evidence_excerpt": "", "reason": "이유"}]
+    result11, incomplete11 = reconcile_judgments(inputs2, llm11)
+    assert incomplete11 is False, "unclear+evidence_basis 빈 문자열은 해당없음으로 자동 보정돼야 함"
+    assert result11[0]["evidence_basis"] == "해당없음", result11
 
     # 3-6. safe_fit_score — 누락·비숫자는 None+incomplete, 정상값은 그대로, 범위 밖은 clamp
     assert safe_fit_score(72) == (72, False)
