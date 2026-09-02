@@ -581,6 +581,26 @@ _DECISION_FACTOR_SCHEMA = {
     "required": ["status", "level", "note"],
 }
 
+# stability/salary는 백엔드 검증(fit_normalization.validate_decision_factors)이 status를
+# 구 CompanyFrontmatter salary_check/stability_check(Literal)와 같은 3개 값으로 엄격히
+# 제한한다. 위 공용 스키마는 status를 자유 서술로 유도해 "불안정" 같은 동의어가 나오면
+# 검증에서 통째로 폐기(판정 실패 fallback)되던 버그가 있었음(2026-09-02) — 두 필드만
+# enum으로 강제해 LLM이 검증 어휘를 벗어나지 않게 한다.
+_DECISION_FACTOR_SCHEMA_STABILITY = {
+    **_DECISION_FACTOR_SCHEMA,
+    "properties": {
+        **_DECISION_FACTOR_SCHEMA["properties"],
+        "status": {"type": "string", "enum": ["충족", "조건부", "미달"], "description": "이 요인의 판정 상태"},
+    },
+}
+_DECISION_FACTOR_SCHEMA_SALARY = {
+    **_DECISION_FACTOR_SCHEMA,
+    "properties": {
+        **_DECISION_FACTOR_SCHEMA["properties"],
+        "status": {"type": "string", "enum": ["양호", "미확인", "낮음"], "description": "이 요인의 판정 상태"},
+    },
+}
+
 EVALUATE_FIT_JUDGE_TOOL_SCHEMA = {
     "type": "object",
     "properties": {
@@ -601,9 +621,9 @@ EVALUATE_FIT_JUDGE_TOOL_SCHEMA = {
             "properties": {
                 "career_years": _DECISION_FACTOR_SCHEMA,
                 "location": _DECISION_FACTOR_SCHEMA,
-                "stability": _DECISION_FACTOR_SCHEMA,
+                "stability": _DECISION_FACTOR_SCHEMA_STABILITY,
                 "jobplanet": _DECISION_FACTOR_SCHEMA,
-                "salary": _DECISION_FACTOR_SCHEMA,
+                "salary": _DECISION_FACTOR_SCHEMA_SALARY,
                 "custom_criteria": _DECISION_FACTOR_SCHEMA,
             },
             "required": ["career_years", "location", "stability", "jobplanet", "salary", "custom_criteria"],
