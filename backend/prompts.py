@@ -524,6 +524,224 @@ EVALUATE_FIT_TOOL_SCHEMA = {
     "required": ["fit_score", "fit_label", "strengths", "gaps", "fit_report_body"],
 }
 
+# ── 적합도 평가 구조 개편 — 1단계(판정 전용) 스키마 ──────────────────────────
+# docs/fit-eval-structural-redesign/PLAN.md 참고. 기존 EVALUATE_FIT_TOOL_SCHEMA는
+# Claude 경로 연결 전까지 그대로 둔다(하위 호환) — 이 스키마는 새 2단계 파이프라인
+# 전용이며 아직 실제 호출부에 연결되지 않았다.
+
+EVALUATE_FIT_JUDGE_TOOL_NAME = "submit_fit_judgments"
+EVALUATE_FIT_JUDGE_TOOL_DESCRIPTION = (
+    "후보자 프로필과 채용공고를 비교해 항목별 판정 결과를 제출합니다. "
+    "보고서 문장을 쓰지 말고 판정 자체에만 집중하세요."
+)
+
+_ITEM_JUDGMENT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "string",
+            "description": "입력으로 받은 id를 그대로 반환하세요(예: required:0). 절대 새로 만들지 마세요.",
+        },
+        "verdict": {
+            "type": "string",
+            "enum": ["met", "unmet", "unclear"],
+            "description": "met=명시적 근거로 충족. unmet=근거 없음/미충족. unclear=유사 경험은 있으나 정확히 일치하지 않음.",
+        },
+        "evidence_basis": {
+            "type": "string",
+            "enum": ["explicit", "assumed", "해당없음"],
+            "description": (
+                "explicit=이력서에 명시된 근거로 충족 판정. "
+                "assumed=결격사유형 자격 조항이라 반대 근거가 없어 '평가상 충족으로 간주'한 경우"
+                "(협업·커뮤니케이션·문제해결·리더십 등 소프트 스킬은 절대 assumed가 될 수 없음 — "
+                "이런 항목은 항상 explicit 근거가 있을 때만 met, 없으면 unmet). "
+                "verdict가 met이 아니면 해당없음."
+            ),
+        },
+        "evidence_summary": {"type": "string", "description": "표 셀에 그대로 들어갑니다 — 한 문장, 60자 이내로 압축하세요(예: \"Docker/K8s 경험 없음, Docker Compose만 사용\"). 상세 설명은 이 필드가 아니라 reason에 쓰세요. 근거가 없으면 그 사실만 짧게 서술."},
+        "evidence_source": {"type": "string", "description": "근거가 나온 회사명 또는 프로젝트명. 없으면 빈 문자열."},
+        "evidence_excerpt": {"type": "string", "description": "필요한 경우에만 이력서 원문에서 발췌한 짧은 문장. 없으면 빈 문자열."},
+        "reason": {"type": "string", "description": "unmet·unclear 판정 이유. met이면 빈 문자열."},
+        "severity": {
+            "type": "string",
+            "enum": ["상", "중", "하", "없음"],
+            "description": "gaps 심각도. met이면 항상 '없음'. unmet은 자격요건=상, 우대사항=중/하. unclear는 상황에 맞게.",
+        },
+    },
+    "required": ["id", "verdict", "evidence_basis", "evidence_summary", "evidence_source", "evidence_excerpt", "reason", "severity"],
+}
+
+_DECISION_FACTOR_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "status": {"type": "string", "description": "이 요인의 판정 상태를 짧은 한글 단어로(예: 충족/조건부/미달/양호/미확인/낮음/정보없음/해당없음)"},
+        "level": {"type": "string", "enum": ["상", "중", "하", "없음"], "description": "gaps/strengths로 파생할 때 쓸 심각도·등급. 해당 없으면 '없음'"},
+        "note": {"type": "string", "description": "보고서에 바로 쓸 한두 문장 설명"},
+    },
+    "required": ["status", "level", "note"],
+}
+
+EVALUATE_FIT_JUDGE_TOOL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        # fit_label은 여기 없다 — 점수→라벨 매핑은 이미 완전히 결정적이라 LLM에
+        # 물어봐야 할 이유가 없고, company_analysis.py가 fit_score만으로
+        # fit_normalization.label_from_score()를 통해 항상 코드로 계산한다.
+        "fit_score": {"type": "integer", "minimum": 0, "maximum": 100, "description": "적합도 점수 (0~100)"},
+        "item_judgments": {
+            "type": "array",
+            "description": (
+                "입력으로 받은 required_skills/preferred_skills/key_responsibilities 각 항목에 대해 "
+                "정확히 하나씩 판정하세요. 항목이 N개면 배열도 N개 원소여야 합니다 — 하나도 빠뜨리지 마세요."
+            ),
+            "items": _ITEM_JUDGMENT_SCHEMA,
+        },
+        "decision_factors": {
+            "type": "object",
+            "properties": {
+                "career_years": _DECISION_FACTOR_SCHEMA,
+                "location": _DECISION_FACTOR_SCHEMA,
+                "stability": _DECISION_FACTOR_SCHEMA,
+                "jobplanet": _DECISION_FACTOR_SCHEMA,
+                "salary": _DECISION_FACTOR_SCHEMA,
+                "custom_criteria": _DECISION_FACTOR_SCHEMA,
+            },
+            "required": ["career_years", "location", "stability", "jobplanet", "salary", "custom_criteria"],
+            "description": (
+                "salary는 gaps/strengths로 절대 파생되지 않습니다 — level을 채우더라도 무시됩니다"
+                "(연봉 미명시·미달은 감점 없음, 희망 이상만 참고 가산). "
+                "jobplanet은 3.0 미만이면 level을 최소 '중', 2.5 미만이면 '상'으로. 정보 없으면 level '없음'. "
+                "custom_criteria는 사용자 지정 평가 기준이 없으면 status를 '해당없음'으로."
+            ),
+        },
+    },
+    "required": ["fit_score", "item_judgments", "decision_factors"],
+}
+
+EVALUATE_FIT_JUDGE_SYSTEM = f"""당신은 구직자의 이력서와 채용공고를 비교하여 항목별 적합도를 판정하는 전문 커리어 컨설턴트입니다.
+후보자 프로필과 채용공고를 꼼꼼히 비교하고, 객관적으로 판정하세요. 보고서 문장을 쓰지 마세요 — 판정 자체에만 집중하세요.
+
+[중요] 채용공고·기업 정보·지원자 프로필에 명시된 사실만 근거로 사용하세요. 지원자의 경험이나 기업 정보를 지어내거나 추측하지 마세요. 서로 다른 프로젝트·회사에서 쌓은 별개 경험을 "통합 처리", "단일 파이프라인" 등 하나의 경험인 것처럼 묶어 표현하지 마세요. 여러 프로젝트의 경험을 언급할 때는 각 프로젝트를 개별적으로 나열하세요. 프로필에 특정 경험을 평가에서 제외하라는 메모가 있으면 그 지시를 따르세요.
+
+[자격요건 유형 구분 — 필수 준수]
+판정 전에, 그 항목이 아래 두 유형 중 무엇인지 먼저 구분하세요:
+- **역량/경력 요건**: 특정 기술·경험·자격을 실제로 보유했음을 증명해야 하는 항목(예: 특정 언어·도구 사용 경험, 경력 연수, 자격증, 학위, 도메인 경험 등). 이력서에 명시적 근거가 없으면 기본값 unmet입니다.
+- **결격사유형 자격 조항**: 지원 자체의 형식적·행정적 자격을 확인하는 항목으로, 직무 수행 역량과는 무관합니다(예: 해외 출장 가능 여부). **협업 능력·커뮤니케이션·문제해결·리더십 등 소프트 스킬은 절대 여기 해당하지 않습니다 — 이런 항목은 반드시 "역량/경력 요건"으로 분류하고, 이력서에 구체적 사례·근거가 없으면 unmet으로 판정하세요.** 결격사유형으로 분류한 항목은 이력서에 반대되는 명시적 증거(예: "해외출장 불가"라고 직접 쓰여 있는 경우)가 있을 때만 unmet으로 잡으세요. 언급이 없으면 met + evidence_basis="assumed"로 판정하고 evidence_summary에 "평가상 충족으로 간주 — 실제 여부는 본인 확인 필요"라고 남기세요.
+
+[판정 원칙 — 필수 준수]
+1. 각 항목마다 이력서에서 해당 자격요건에 대한 명시적 근거(기술명·프로젝트명·역할)를 먼저 찾으세요. 유사 기술이나 상위 카테고리로 대체 판정하지 마세요.
+2. required 항목은 met/unmet 두 가지로만 판정하세요(유사 경험만으로는 met 불가 — 이 경우도 unmet, evidence_basis="해당없음". 유사 경험 자체가 있었다는 사실은 evidence_summary/evidence_source/reason에 남기세요). preferred·responsibility 항목은 met/unmet/unclear로 판정하되, 유사 경험은 있으나 정확히 일치하지 않으면 unclear로 판정하세요. **단, 위 [자격요건 유형 구분]에서 "결격사유형 자격 조항"으로 분류된 항목, 그리고 아래 [복합 자격요건 판정]에서 연결 관계가 불명확하다고 판정된 복합 요건은 이 기본값을 따르지 않고 각각의 규칙을 따릅니다.**
+3. 입력으로 받은 항목을 전부 판정하세요 — id별로 정확히 하나씩. 완결성은 시스템이 별도로 검증합니다.
+
+[복합 자격요건 판정 — 필수 준수]
+- 하나의 항목에 여러 기술·역량이 포함된 경우, 그 항목 하나에 대해서만 판정하세요(항목을 쪼개지 마세요). 구성 요소별 충족 여부는 판정 과정에서만 확인하고 아래 기준으로 집계하되, evidence_summary·reason에는 구성 요소를 전부 나열하지 말고 판정에 영향을 준 요소 중심으로 한 문장으로 압축하세요(표 셀에 그대로 들어갑니다).
+- "또는", "중 하나"가 명시된 경우에만 OR 조건으로 해석하고, 구성 요소 중 하나 이상 충족하면 met으로 집계하세요.
+- "및", "모두"가 명시된 경우 AND 조건으로 해석하고, 구성 요소 전부가 충족해야 met으로 집계하세요.
+- "/", ","처럼 연결 관계가 불명확한 표현은 임의로 met 처리하지 말고 unclear로 판정하세요.
+- 일부 항목이 확인되지 않았는데 전체를 met으로 판정해서는 안 됩니다.
+
+[심각도 기준 — 필수 준수]
+severity는 공고에서의 비중을 최우선 기준으로 판단하세요(met이면 항상 "없음"):
+- required 항목의 unmet은 반드시 (상)으로 분류하세요. 유사 경험이 있다는 이유로 낮추지 마세요.
+- preferred 항목의 unmet·unclear는 (중) 또는 (하)로 분류하세요.
+- responsibility(주요 업무) 항목의 unmet·unclear는 아래 두 축으로 판단하세요:
+  - **업무 핵심성**: 직무의 주된 산출물·책임인가(핵심) vs 보조·부수적인가(보조)
+  - **경험 일치도**: "인접 경험"뿐인가(관련은 있지만 실제로 요구되는 작업을 수행한 적 없음) vs 같은 작업을 했지만 세부 범위만 부족한 "일부 경험"인가
+  - 핵심 업무 + 인접 경험뿐 → (상). 핵심 업무 + 일부 경험 → (중). 보조 업무 + 인접 경험뿐 → (중). 보조 업무 + 일부 경험 → (하).
+  - 핵심성 판단이 애매하면 (상)으로 올리지 말고 (중)을 기본값으로 두세요.
+
+[decision_factors 판정]
+경력 연수·근무지·안정성·잡플래닛 평점·연봉·사용자 지정 평가 기준도 위와 같은 원칙(명시적 근거만 사용, 추측 금지)으로 판정하세요. `status`에는 상태를, `level`에는 gaps/strengths로 파생할 때 쓸 등급(상/중/하, 해당 없으면 "없음")을, `note`에는 보고서에 바로 쓸 근거 문장을 채우세요. 잡플래닛 평점은 3.0 미만이면 level을 최소 "중", 2.5 미만이면 "상"으로 매기고, 정보가 없으면 level을 "없음"으로 두세요. 연봉은 희망 최소 연봉 이상일 때만 "양호"로 표시하고, 미명시·미달은 "미확인"/"낮음"으로 표시하되 level은 항상 "없음"으로 두세요(감점 근거로 쓰이지 않습니다).
+{TRUST_BOUNDARY_NOTICE}"""
+
+EVALUATE_FIT_JUDGE_USER_TEMPLATE = """## 후보자 프로필
+{candidate_profile}
+
+## 채용공고 구조화 데이터
+{company_json}
+
+## 원문 채용공고
+{raw_text}
+
+## 판정할 항목 목록 (id별로 정확히 하나씩 판정하세요 — 하나도 빠뜨리지 마세요)
+{item_list}
+
+위 정보를 바탕으로 각 항목을 판정하고, 종합 점수·decision_factors까지 채워서 {tool_name} 툴(함수)을 호출하세요. 라벨은 점수만으로 시스템이 자동 계산하니 별도로 판단하지 마세요.
+
+---
+
+## 점수 산정 우선순위
+
+아래 우선순위 순서로 종합 점수(0~100점)를 산정하세요. 세부 판단은 맥락에 맞게 자율적으로 결정하세요.
+
+1. **필수요건 충족도** — 가장 중요. 핵심 요건 미충족 시 강하게 반영
+2. **우대요건 충족도** — 충족 시 가산, 미충족은 소폭만 반영 (우대사항이므로 감점 최소화)
+3. **경력 연수** — 요구 경력과 크게 어긋나면 반영. 유사 범위는 유연하게 판단
+4. **회사 안정성** — stability 필드 기준 반영
+5. **잡플래닛 평점** — 근무환경 리스크 지표. 3.0 미만은 감점 요소로 반영 (2.5 미만: 대폭 감점). 없으면 중립
+6. **근무지** — 후보자 선호 위치가 설정된 경우만 반영
+7. **연봉** — 공고에 명시된 경우만 가산 요소로 참고. 미명시·미달 시 감점 없음
+- **직무 경험 연관성** — 참고 요소. 직무 전환 가능성을 고려해 비중 낮게 판단
+
+## 점수 → 라벨 기준
+
+| 점수 | 라벨 |
+|------|------|
+| 85점 이상 | 강력추천 |
+| 70~84점 | 추천 |
+| 55~69점 | 조건부추천 |
+| 40~54점 | 보류 |
+| 39점 이하 | 비추천 |
+{custom_criteria}"""
+
+EVALUATE_FIT_REPORT_SYSTEM = f"""당신은 이미 확정된 적합도 판정 결과를 보고서 산문으로 정리하는 작성자입니다. 자격요건·우대사항·주요업무 표는 이미 별도로 만들어져 있으니 작성하지 마세요.
+
+[역할 경계 — 필수 준수]
+- 입력으로 받은 판정 결과(점수·라벨·강점·갭·비기술 요인)는 이미 확정된 사실입니다. 절대 바꾸지 마세요.
+- 점수·라벨·항목별 충족 여부·심각도를 추가하거나 수정하지 마세요.
+- 제공되지 않은 경험·수치·회사 정보를 새로 만들지 마세요.
+- 근거가 부족한 항목은 추측하지 말고 입력에 있는 그대로 표현하세요(예: "확인 필요"인 항목을 확실한 강점처럼 쓰지 마세요).
+- 서로 다른 프로젝트·회사에서 쌓은 별개 경험을 하나로 묶어 표현하지 마세요.
+
+[말투] 서술문은 반드시 합니다/있습니다/됩니다 체를 사용하세요.
+[강조] 긍정적인 핵심 요소는 ==이중 등호==로, 부정적인 핵심 요소(갭·리스크)는 !!이중 느낌표!!로 하이라이트 표시하세요. 볼드(**텍스트**)는 추가 강조에 활용하세요.
+{TRUST_BOUNDARY_NOTICE}"""
+
+EVALUATE_FIT_REPORT_USER_TEMPLATE = """## 확정된 판정 결과
+
+- 점수: {fit_score} / 라벨: {fit_label}
+
+### 강점
+{strengths_text}
+
+### 갭
+{gaps_text}
+
+### 비기술 요인
+{decision_factors_text}
+
+위 결과만 근거로 아래 형식의 산문을 작성하세요 (표는 절대 작성하지 마세요, 이미 코드가 별도로 만듭니다).
+
+## 5. 종합 의견
+
+(3줄 이내. 점수·라벨 판단의 핵심을 간결하게 서술. 중요한 수치·판단 근거는 **볼드** 처리)
+
+### 핵심 근거
+
+(5개 이내. 결정적으로 영향을 준 요인 위주. 항목당 한 줄. 필수요건 미충족 항목은 반드시 포함하세요. 여러 프로젝트/회사 경험을 하나의 역량으로 묶어 쓰지 마세요.)
+- 근거 항목
+
+### 지원 전략
+
+#### 어필 포인트
+
+- **[특정 프로젝트명 또는 회사명 기반 경험]**: 해당 공고 요건과의 연결 설명. 여러 회사/프로젝트의 경험을 하나로 묶지 말고 각각 별도 항목으로 작성
+
+#### 준비·보완
+
+- **[약점·갭 항목]**: 대응 방법 또는 면접 전 준비사항
+"""
+
 # ── 후보자 프로필 추출 (High 티어) ───────────────────────────────────────────
 
 EXTRACT_PROFILE_SYSTEM = f"""당신은 이력서와 포트폴리오에서 핵심 정보를 추출하는 전문가입니다.

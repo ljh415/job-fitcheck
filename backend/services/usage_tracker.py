@@ -5,12 +5,32 @@ LLM API 사용량 추적 및 비용 계산.
 """
 import json
 import logging
+import time
+from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime
 
 from config import settings
 
 logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def timer():
+    """API 호출 소요시간(ms) 측정용 공통 유틸 — provider 3개(anthropic/openai/gemini)
+    파일마다 time.monotonic() 계산식을 따로 반복하지 않게 한다. with 블록으로 SDK
+    호출 하나를 감싸면, 반환된 box["ms"]를 append_usage(duration_ms=...)에 넘기면 된다.
+
+        with usage_tracker.timer() as t:
+            response = await client.messages.create(...)
+        usage_tracker.append_usage(..., duration_ms=t["ms"])
+    """
+    t0 = time.monotonic()
+    box = {"ms": 0}
+    try:
+        yield box
+    finally:
+        box["ms"] = round((time.monotonic() - t0) * 1000)
 
 # Agent 요청 1건 동안의 LLM 호출들을 rag_agent_log.jsonl과 연결하기 위한 상관관계 id.
 # usage_log.jsonl은 여전히 "비용 추적"만 하고, rag_agent_log.jsonl은 여전히 "도구 라우팅/입출력
@@ -63,8 +83,12 @@ def calc_cost(model: str, input_tokens: int, output_tokens: int) -> float:
     return (input_tokens * price["input"] + output_tokens * price["output"]) / 1_000_000
 
 
-def append_usage(operation: str, model: str, input_tokens: int, output_tokens: int) -> float:
-    """사용 기록을 JSONL 파일에 추가하고 비용을 반환한다."""
+def append_usage(
+    operation: str, model: str, input_tokens: int, output_tokens: int, duration_ms: int | None = None,
+) -> float:
+    """사용 기록을 JSONL 파일에 추가하고 비용을 반환한다. duration_ms는 API 호출
+    자체(요청 전송~응답 수신)의 소요시간 — 재시도·에러 처리 등 부가 로직은 제외하고
+    호출부가 직접 측정해서 넘긴다."""
     cost = calc_cost(model, input_tokens, output_tokens)
     entry = {
         "ts": datetime.now().isoformat(timespec="seconds"),
@@ -74,6 +98,8 @@ def append_usage(operation: str, model: str, input_tokens: int, output_tokens: i
         "output_tokens": output_tokens,
         "cost_usd": round(cost, 6),
     }
+    if duration_ms is not None:
+        entry["duration_ms"] = duration_ms
     request_id = current_request_id.get()
     if request_id is not None:
         entry["request_id"] = request_id

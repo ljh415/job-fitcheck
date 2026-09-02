@@ -166,13 +166,15 @@ class GeminiProvider(LLMProvider):
             temperature=0.3,
         )
         last_exc: Exception | None = None
+        t = {"ms": 0}
         for attempt in range(3):
             try:
-                response = await self._client.aio.models.generate_content(
-                    model=model,
-                    contents=[types.Content(role="user", parts=[types.Part.from_text(text=user)])],
-                    config=config,
-                )
+                with usage_tracker.timer() as t:
+                    response = await self._client.aio.models.generate_content(
+                        model=model,
+                        contents=[types.Content(role="user", parts=[types.Part.from_text(text=user)])],
+                        config=config,
+                    )
                 break
             except Exception as e:
                 last_exc = e
@@ -194,6 +196,7 @@ class GeminiProvider(LLMProvider):
                 model=model,
                 input_tokens=response.usage_metadata.prompt_token_count or 0,
                 output_tokens=response.usage_metadata.candidates_token_count or 0,
+                duration_ms=t["ms"],
             )
 
         candidates = response.candidates or []
@@ -229,13 +232,15 @@ class GeminiProvider(LLMProvider):
                 max_output_tokens=current_max_tokens,
             )
             last_exc: Exception | None = None
+            t = {"ms": 0}
             for attempt in range(3):
                 try:
-                    response = await self._client.aio.models.generate_content(
-                        model=model,
-                        contents=[types.Content(role="user", parts=parts)],
-                        config=config,
-                    )
+                    with usage_tracker.timer() as t:
+                        response = await self._client.aio.models.generate_content(
+                            model=model,
+                            contents=[types.Content(role="user", parts=parts)],
+                            config=config,
+                        )
                     break
                 except Exception as e:
                     last_exc = e
@@ -262,6 +267,7 @@ class GeminiProvider(LLMProvider):
                     model=model,
                     input_tokens=response.usage_metadata.prompt_token_count or 0,
                     output_tokens=response.usage_metadata.candidates_token_count or 0,
+                    duration_ms=t["ms"],
                 )
             if was_truncated and truncation_attempt == 0 and current_max_tokens < 32768:
                 retry_max_tokens = min(current_max_tokens * 2, 32768)
@@ -312,11 +318,13 @@ class GeminiProvider(LLMProvider):
         for _ in range(max_iterations):
             last_exc: Exception | None = None
             response = None
+            call_t = {"ms": 0}
             for attempt in range(3):
                 try:
-                    response = await self._client.aio.models.generate_content(
-                        model=model, contents=contents, config=config,
-                    )
+                    with usage_tracker.timer() as call_t:
+                        response = await self._client.aio.models.generate_content(
+                            model=model, contents=contents, config=config,
+                        )
                     break
                 except Exception as e:
                     last_exc = e
@@ -338,6 +346,7 @@ class GeminiProvider(LLMProvider):
                     model=model,
                     input_tokens=response.usage_metadata.prompt_token_count or 0,
                     output_tokens=response.usage_metadata.candidates_token_count or 0,
+                    duration_ms=call_t["ms"],
                 )
 
             candidates = response.candidates or []
@@ -431,20 +440,22 @@ class GeminiProvider(LLMProvider):
         output_tokens = 0
         last_exc: Exception | None = None
         yielded_any = False
+        t = {"ms": 0}
         for attempt in range(3):
             try:
-                stream_resp = await self._client.aio.models.generate_content_stream(
-                    model=model,
-                    contents=contents,
-                    config=config,
-                )
-                async for chunk in stream_resp:
-                    if chunk.usage_metadata:
-                        input_tokens = chunk.usage_metadata.prompt_token_count or 0
-                        output_tokens = chunk.usage_metadata.candidates_token_count or 0
-                    if chunk.text:
-                        yielded_any = True
-                        yield chunk.text
+                with usage_tracker.timer() as t:
+                    stream_resp = await self._client.aio.models.generate_content_stream(
+                        model=model,
+                        contents=contents,
+                        config=config,
+                    )
+                    async for chunk in stream_resp:
+                        if chunk.usage_metadata:
+                            input_tokens = chunk.usage_metadata.prompt_token_count or 0
+                            output_tokens = chunk.usage_metadata.candidates_token_count or 0
+                        if chunk.text:
+                            yielded_any = True
+                            yield chunk.text
                 break
             except LLMAPIError:
                 raise
@@ -469,4 +480,5 @@ class GeminiProvider(LLMProvider):
                 model=model,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
+                duration_ms=t["ms"],
             )

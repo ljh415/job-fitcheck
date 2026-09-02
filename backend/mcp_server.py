@@ -37,6 +37,10 @@ mcp = MCPServer(name="job-fitcheck")
 _LIST_COMPANIES_EXCLUDED_FIELDS = {
     "strengths", "gaps", "key_responsibilities",
     "required_skills", "preferred_skills", "benefits", "hiring_process",
+    # 적합도 평가 구조 개편(docs/fit-eval-structural-redesign/PLAN.md) 1단계 중간
+    # 판정 결과 — 디버깅·감사용 상세 배열이라 목록 크기만 키운다(4차 리뷰 반영,
+    # 116개 기준 1MB SSE 제한 재초과 재현됨). 상세는 get_company로.
+    "item_judgments", "decision_factors",
 }
 
 # 웹 경로(REST)는 이 분석 하나만을 위한 격리된 단발성 API 호출이라 애초에 문제가 안 되지만,
