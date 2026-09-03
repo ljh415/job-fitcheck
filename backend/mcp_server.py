@@ -498,4 +498,12 @@ async def create_company(
     companies.snapshot_fit_history(slug, fm.fit_score, fm.fit_label, profile_version_id)
     await send_notification(companies.build_fit_notification_materials(fm))
     trigger_reindex_background()
-    return record.model_dump()
+    result = record.model_dump()
+    result["next_step"] = (
+        f"저장이 완료됐습니다. 사용자에게 회사명({fm.display_name or fm.company_name})·직무({fm.job_title}), "
+        f"적합도 점수({fm.fit_score}점, {fm.fit_label}), 핵심 근거 2~3가지를 요약해서 보여주세요."
+        if judge_result else
+        f"저장이 완료됐습니다. 사용자에게 회사명({fm.display_name or fm.company_name})·직무({fm.job_title}) 등"
+        " 주요 정보를 요약해서 보여주세요."
+    )
+    return result
