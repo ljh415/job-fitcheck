@@ -326,21 +326,28 @@ async def prepare_company_import(url: str | None = None, raw_text: str | None = 
             "company_json은 extract_company 결과를 JSON 문자열로, raw_text는 "
             "raw_text_escaped 앞 4000자를 넣는 게 기존 파이프라인 관례.",
         },
-        "evaluate_fit": {
+        "evaluate_fit_judge": {
             "available": has_profile,
-            "system": prompts.EVALUATE_FIT_SYSTEM + _MCP_ISOLATION_NOTICE,
-            "user_template": prompts.EVALUATE_FIT_USER_TEMPLATE,
-            "output_schema": prompts.EVALUATE_FIT_TOOL_SCHEMA,
+            "system": prompts.EVALUATE_FIT_JUDGE_SYSTEM + _MCP_ISOLATION_NOTICE,
+            "user_template": prompts.EVALUATE_FIT_JUDGE_USER_TEMPLATE,
+            "output_schema": prompts.EVALUATE_FIT_JUDGE_TOOL_SCHEMA,
             "candidate_profile": profile_text,
             "profile_version_id": profile_version_id,
             "custom_criteria": custom_criteria,
-            "note": "user_template엔 {candidate_profile}·{company_json}·{raw_text}·"
+            "note": "REST와 동일한 1단계 판정 전용 스키마 — fit_report_body(산문)는 여기 없음, "
+            "보고서는 별도 2단계(prepare_fit_report 도구)에서 작성한다. user_template엔 "
+            "{candidate_profile}·{company_json}·{raw_text}·{item_list}·{tool_name}·"
             "{custom_criteria} 자리가 아직 안 채워져 있음 — candidate_profile·custom_criteria는 "
             "위 값을 그대로, company_json은 extract_company 결과, raw_text는 "
-            "raw_text_escaped 앞 4000자를 넣는 게 기존 파이프라인 관례. available이 False면 "
-            "프로필이 없어 적합도 평가를 생략해야 한다(웹 파이프라인과 동일). profile_version_id는 "
-            "이 프로필을 평가에 실제로 사용했다면 그대로 create_company에 다시 전달할 것 — "
-            "이력에 정확한 프로필 버전을 연결하는 데 쓰인다.",
+            "raw_text_escaped 앞 4000자, tool_name은 'evaluate_fit_judge'를 넣는 게 기존 "
+            "파이프라인 관례. item_list는 extract_company 결과의 required_skills/"
+            "preferred_skills/key_responsibilities 각 배열을 0부터 순서대로 "
+            "'required:0', 'preferred:0', 'responsibility:0' 형식 id로 붙여 "
+            "'- required:0: <항목 원문>' 한 줄씩 나열한 것(서버가 나중에 판정 결과를 "
+            "정규화할 때 이 id로 원본 항목과 다시 짝짓는다 — 순서·prefix가 어긋나면 안 됨). "
+            "available이 False면 프로필이 없어 적합도 평가를 생략해야 한다(웹 파이프라인과 "
+            "동일). profile_version_id는 이 프로필을 평가에 실제로 사용했다면 그대로 "
+            "create_company에 다시 전달할 것 — 이력에 정확한 프로필 버전을 연결하는 데 쓰인다.",
         },
     }
 
