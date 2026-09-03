@@ -389,32 +389,45 @@ async def prepare_fit_report(judge_result: dict, company_data: dict) -> dict:
     }
 
 
-# extract_company/evaluate_fit 스키마 필드만 허용 — status/pinned/created_at 등은 여기 없어 자동 제외된다.
-_CREATE_COMPANY_ALLOWED_FIELDS = set(prompts.EXTRACT_COMPANY_TOOL_SCHEMA["properties"]) | (
-    set(prompts.EVALUATE_FIT_TOOL_SCHEMA["properties"]) - {"fit_report_body"}
-)
+# extract_company 스키마 필드만 허용 — 적합도 평가 필드(fit_score/gaps/decision_factors 등)는
+# judge_result에서만 받아 서버가 직접 재정규화해 채운다(company_data로 직접 제출 불가 —
+# 2026-09-03 MCP 구조화 계약 전환, 클라이언트가 판정을 조작해 제출하는 경로를 원천 차단).
+# status/pinned/created_at 등도 여기 없어 자동 제외된다.
+_CREATE_COMPANY_ALLOWED_FIELDS = set(prompts.EXTRACT_COMPANY_TOOL_SCHEMA["properties"])
 
 
 @mcp.tool()
 async def create_company(
     company_data: dict,
-    body: str,
+    base_body: str,
     raw_text: str,
+    judge_result: dict | None = None,
+    report_prose: str | None = None,
     source_url: str | None = None,
     profile_version_id: int | None = None,
 ) -> dict:
     """prepare_company_import로 받은 분석 패킷을 클라이언트가 직접 처리한 결과를 저장한다.
     확인 없이 즉시 실행된다(기존 데이터를 덮어쓰지 않는 순수 추가).
 
-    company_data: extract_company 결과 JSON에 evaluate_fit 결과 필드(fit_score, fit_label,
-    strengths, gaps, salary_check, stability_check, location_check 등, fit_report_body는
-    제외 — 그건 body에 포함)를 합친 것. 이 필드 집합 밖의 키(status/pinned/created_at 등
-    사용자·서버 관리 필드)는 무시된다. body: 마크다운 본문(생성한 본문 + 적합도 리포트
-    섹션까지 이미 합쳐진 상태) — 지원 상태 로그 섹션은 이 도구가 자동으로 추가한다.
-    profile_version_id: prepare_company_import의 evaluate_fit.profile_version_id를 평가에
-    실제로 썼다면 그대로 전달 — 여기서 다시 조회하지 않는 이유는 조회 시점(저장 직전)이
-    실제 평가 시점과 다를 수 있어(그 사이 프로필이 갱신되면) 엉뚱한 버전과 연결될 수 있기
-    때문. 안 주면 이전 버전 불명(None)으로 기록된다."""
+    company_data: extract_company 결과 JSON(required_skills/preferred_skills/
+    key_responsibilities 등 판정에 쓰인 원본 배열 포함 — normalize_and_render가 다시
+    쓴다). fit_score/gaps/decision_factors 등 적합도 관련 필드를 여기 넣어도 무시된다
+    (judge_result만 신뢰). base_body: 마크다운 본문 중 1~3절(회사 정보 등)만 —
+    적합도 리포트(4~5절)는 이 도구가 서버에서 직접 조립하므로 포함하면 안 된다.
+
+    judge_result: evaluate_fit_judge 도구 호출 결과(또는 prepare_fit_report 반환값)를
+    그대로 — 클라이언트를 신뢰하지 않고 저장 직전 서버가 같은 정규화를 한 번 더
+    실행한다(방어적 재정규화). 프로필이 없어 애초에 평가를 안 했다면 None(또는 생략) —
+    이 경우 적합도 관련 필드는 전부 비어있는 상태(미평가)로 저장된다. report_prose:
+    prepare_fit_report가 준 프롬프트로 작성한 종합 의견 산문 — judge_result가 있으면
+    필수. 재정규화 결과 evaluation_incomplete=true면(판정 항목이 채워지지 않았거나
+    형식이 깨짐) 저장을 거부하고 어느 항목이 문제인지 구체적으로 반환하니, 그 항목만
+    다시 판정해 evaluate_fit_judge부터 재시도할 것.
+
+    profile_version_id: prepare_company_import의 evaluate_fit_judge.profile_version_id를
+    평가에 실제로 썼다면 그대로 전달 — 여기서 다시 조회하지 않는 이유는 조회 시점(저장
+    직전)이 실제 평가 시점과 다를 수 있어(그 사이 프로필이 갱신되면) 엉뚱한 버전과
+    연결될 수 있기 때문. 안 주면 이전 버전 불명(None)으로 기록된다."""
     # company_data["source_url"](raw_text만 줘도 extract_company가 채울 수 있음)도 함께 고려해
     # 중복검사·source_type·최종 저장을 전부 이 값 하나로 통일한다.
     effective_source_url = source_url or company_data.get("source_url")
@@ -433,18 +446,55 @@ async def create_company(
     if not (projected.get("company_name") or "").strip() or not (projected.get("job_title") or "").strip():
         raise ToolError("company_data에는 비어 있지 않은 company_name과 job_title이 필요합니다.")
 
+    fit_fields: dict = {}
+    fit_report_section = ""
+    if judge_result:
+        if not (report_prose or "").strip():
+            raise ToolError("judge_result가 있으면 report_prose(prepare_fit_report로 작성한 종합 의견)도 필요합니다.")
+        # 클라이언트가 prepare_fit_report를 실제로 거쳤는지 서버는 신뢰할 수 없다 —
+        # 저장 직전 같은 함수로 다시 정규화한다(멱등, PLAN.md §6.2/§5.3).
+        normalized = fit_normalization.normalize_and_render(judge_result, company_data)
+        if normalized["evaluation_incomplete"]:
+            fallback_items = [
+                it["id"] for it in normalized["item_judgments"] if it.get("filled_by") == "code_fallback"
+            ]
+            fallback_factors = [
+                k for k, v in normalized["decision_factors"].items()
+                if v.get("status") == fit_normalization._FALLBACK_STATUS
+            ]
+            raise ToolError(
+                "판정이 불완전해 저장을 거부합니다 — evaluate_fit_judge를 다시 호출해 "
+                f"아래 항목을 재제출하세요. 판정 누락/무효 id: {fallback_items or '없음'}, "
+                f"비기술 요인 판정 실패: {fallback_factors or '없음'}"
+            )
+        fit_fields = {
+            "fit_score": normalized["fit_score"],
+            "fit_label": normalized["fit_label"],
+            "strengths": normalized["strengths"],
+            "gaps": normalized["gaps"],
+            "item_judgments": normalized["item_judgments"],
+            "decision_factors": normalized["decision_factors"],
+            "evaluation_incomplete": normalized["evaluation_incomplete"],
+            "salary_check": normalized["salary_check"],
+            "stability_check": normalized["stability_check"],
+            "location_check": normalized["location_check"],
+        }
+        fit_report_section = f"{normalized['tables']}\n\n{report_prose.strip()}\n\n{normalized['factors_summary']}"
+
     fm_data = {
         **projected,
+        **fit_fields,
         "source_url": effective_source_url,
         "source_type": "url" if effective_source_url else "text_paste",
         "llm_provider": "mcp",
     }
     fm = CompanyFrontmatter(**fm_data)
 
-    body = companies.append_status_log(body, "분석 완료")
+    final_body = f"{base_body}\n\n{fit_report_section}" if fit_report_section else base_body
+    final_body = companies.append_status_log(final_body, "분석 완료")
     slug = storage.make_slug(fm.company_name, fm.job_title or "")
     storage.write_raw_text(slug, raw_text)
-    record = storage.write_company(slug, fm, body)
+    record = storage.write_company(slug, fm, final_body)
     companies.snapshot_fit_history(slug, fm.fit_score, fm.fit_label, profile_version_id)
     await send_notification(companies.build_fit_notification_materials(fm))
     trigger_reindex_background()
