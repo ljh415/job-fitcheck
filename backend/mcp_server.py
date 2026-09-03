@@ -27,7 +27,7 @@ from rag.postgres.query_router import list_postings
 from rag.postgres.retrieval import search_chunks
 from rag.reindex_service import trigger_background as trigger_reindex_background
 from routers import companies, profile, rag
-from services import scraper
+from services import fit_normalization, scraper
 
 mcp = MCPServer(name="job-fitcheck")
 
@@ -348,6 +348,43 @@ async def prepare_company_import(url: str | None = None, raw_text: str | None = 
             "available이 False면 프로필이 없어 적합도 평가를 생략해야 한다(웹 파이프라인과 "
             "동일). profile_version_id는 이 프로필을 평가에 실제로 사용했다면 그대로 "
             "create_company에 다시 전달할 것 — 이력에 정확한 프로필 버전을 연결하는 데 쓰인다.",
+        },
+    }
+
+
+@mcp.tool()
+async def prepare_fit_report(judge_result: dict, company_data: dict) -> dict:
+    """evaluate_fit_judge 판정 결과를 받아 REST와 동일한 규칙(fit_normalization)으로
+    검증·보정·확정한 뒤, 2단계 보고서(종합 의견) 작성에 필요한 프롬프트를 채워 반환한다.
+    LLM을 호출하지 않으므로 비용이 들지 않는다 — evaluate_fit_judge 도구 호출 직후,
+    보고서를 쓰기 전에 반드시 거쳐야 한다(판정을 먼저 확정한 뒤에만 보고서를 쓰게 해서,
+    판정과 서술이 서로 다른 내용을 말하는 걸 막는 목적).
+
+    judge_result: evaluate_fit_judge 스키마로 호출한 결과 JSON 그대로(fit_score/
+    item_judgments/decision_factors). company_data: extract_company 결과. 둘 다
+    court-of-record 취급 — 형식이 깨지거나 항목이 빠져도 예외 없이 안전한 기본값+
+    evaluation_incomplete로 보정된다(재요청 불필요).
+
+    반환값의 report.user는 EVALUATE_FIT_REPORT_USER_TEMPLATE을 이미 채운 상태 —
+    그대로 산문(종합 의견)을 완성해서(도구 호출 아닌 일반 텍스트 응답) create_company의
+    report_prose에 전달하면 된다. 반환값의 item_judgments/decision_factors/gaps/
+    strengths/fit_score는 이 도구가 확정한 canonical 값이니, 그와 다른 내용을 보고서에
+    쓰면 안 된다. 표·비기술 요인 요약 줄은 create_company가 저장 시점에 직접 렌더링하므로
+    여기서는 반환하지 않는다(중복 방지)."""
+    normalized = fit_normalization.normalize_and_render(judge_result, company_data)
+    return {
+        "fit_score": normalized["fit_score"],
+        "fit_label": normalized["fit_label"],
+        "gaps": normalized["gaps"],
+        "strengths": normalized["strengths"],
+        "evaluation_incomplete": normalized["evaluation_incomplete"],
+        "item_judgments": normalized["item_judgments"],
+        "decision_factors": normalized["decision_factors"],
+        "report": {
+            "system": prompts.EVALUATE_FIT_REPORT_SYSTEM + _MCP_ISOLATION_NOTICE,
+            "user": normalized["report_user"],
+            "note": "위 system+user로 일반 텍스트 완성(도구 호출 아님)을 요청하면 산문이 나온다. "
+            "그 결과를 그대로(다듬지 말고) create_company의 report_prose 인자로 전달할 것.",
         },
     }
 
