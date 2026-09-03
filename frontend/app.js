@@ -702,9 +702,13 @@ async function initDetail(slug) {
         if (el?.tagName === 'TABLE') el.classList.add('info-table');
       }
     }
-    // 충족 현황 테이블 열 너비 고정 + 2번째 칸(이모지+라벨) 이모지 뒤 줄바꿈, 라벨은 줄바꿈 없이
+    // 충족 현황 테이블(자격요건·우대사항) + 직무 적합도 분석 표(주요 업무) 열 너비 고정 +
+    // 2번째 칸(이모지+라벨) 이모지 뒤 줄바꿈, 라벨은 줄바꿈 없이 — 세 표 모두 backend
+    // render_requirement_table()이 만드는 동일한 3열 구조(항목/충족 여부/근거 계열)라
+    // 같은 레이아웃을 써야 한다(2026-09-03, "직무 적합도 분석" 표만 열 너비가 안 고정돼
+    // 있다는 지적 반영).
     for (const h3 of bodyEl.querySelectorAll('h3')) {
-      if (h3.textContent.includes('충족 현황')) {
+      if (h3.textContent.includes('충족 현황') || h3.textContent.includes('직무 적합도 분석')) {
         let el = h3.nextElementSibling;
         while (el && el.tagName !== 'TABLE' && el.tagName !== 'H3') el = el.nextElementSibling;
         if (el?.tagName === 'TABLE') {
