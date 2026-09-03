@@ -245,7 +245,11 @@ tr.company-row:hover { background: var(--table-row-hover); }
 .markdown-body table.fit-check-table th:first-child,
 .markdown-body table.fit-check-table td:first-child { width: 220px; }
 .markdown-body table.fit-check-table th:nth-child(2),
-.markdown-body table.fit-check-table td:nth-child(2) { width: 90px; text-align: center; }
+.markdown-body table.fit-check-table td:nth-child(2) { width: 130px; text-align: center; }
+/* "관련 경험 여부"(7자, 직무 적합도 분석 표 헤더)가 기존 90px에서 옆 칸을 침범하던 문제
+   (2026-09-03 실사용 중 발견) — 항목 칸(1번째)은 그대로 두고 이 칸만 오른쪽으로 넓혀서
+   해결. 혹시 모를 더 긴 라벨에 대비해 줄바꿈도 같이 허용. */
+.markdown-body table.fit-check-table th:nth-child(2) { white-space: normal; }
 
 /* ── 폼 ──────────────────────────────────────────────────────────── */
 .form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-bottom: 12px; }
@@ -539,13 +543,15 @@ label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-w
   .export-dropdown-panel { min-width: unset; width: max-content; max-width: calc(100vw - 48px); }
   .profile-upload-footer { flex-direction: column; align-items: flex-start; }
 
-  /* 마크다운 본문 테이블: 데스크톱 고정폭이 좁은 화면에서 근거/내용 칸을 과도하게 압박하지 않도록 3:2:4 비율로 조정 */
+  /* 마크다운 본문 테이블: 데스크톱 고정폭이 좁은 화면에서 근거/내용 칸을 과도하게 압박하지 않도록
+     비율로 조정. "충족 여부" 칸이 "관련 경험 여부"(7자) 헤더를 못 담아 옆 칸을 침범하던 문제
+     (2026-09-03)를 항목 칸은 그대로 두고 이 칸만 오른쪽으로(근거 칸 쪽에서) 넓혀서 해결. */
   .markdown-body table.fit-check-table th:first-child,
   .markdown-body table.fit-check-table td:first-child { width: 33.3%; }
   .markdown-body table.fit-check-table th:nth-child(2),
-  .markdown-body table.fit-check-table td:nth-child(2) { width: 22.2%; }
+  .markdown-body table.fit-check-table td:nth-child(2) { width: 30%; }
   .markdown-body table.fit-check-table th:nth-child(3),
-  .markdown-body table.fit-check-table td:nth-child(3) { width: 44.5%; }
+  .markdown-body table.fit-check-table td:nth-child(3) { width: 36.7%; }
   .markdown-body table.info-table th:first-child,
   .markdown-body table.info-table td:first-child { width: 84px; }
 }

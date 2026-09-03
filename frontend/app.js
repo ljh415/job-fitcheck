@@ -5,7 +5,14 @@ function parseMarkdown(text) {
   // "**따옴표**뒤텍스트"처럼 닫는 **의 앞이 구두점이고 뒤에 공백 없이 글자가 바로 이어지면
   // CommonMark 강조(emphasis) 판정 규칙상 marked가 볼드로 인식하지 못해 **가 그대로 노출되는
   // 경우가 있어(한국어 LLM 응답에서 자주 발생), marked 파싱 전에 **쌍을 직접 <strong>으로 치환한다.
-  const normalized = (text || '').replace(/\*\*([^*\n]+?)\*\*/g, '<strong>$1</strong>');
+  // 마찬가지로 marked는 GFM 표준(~~이중~~)과 달리 단일 ~ 쌍도 취소선으로 해석한다 — "2~3개...
+  // 5~10점"처럼 문장에 ~가 두 번 나오면 그 사이 전체가 취소선으로 렌더링되고 ~ 문자 자체도
+  // 사라지는 버그가 있었다(2026-09-03, QnA 답변에서 실제 재현). 이미 이스케이프(\~)된 것은
+  // 건너뛰어 이중 이스케이프를 막는다(백엔드 fit_normalization._escape_cell()이 표 셀은
+  // 이미 이스케이프함).
+  const normalized = (text || '')
+    .replace(/(?<!\\)~/g, '\\~')
+    .replace(/\*\*([^*\n]+?)\*\*/g, '<strong>$1</strong>');
   let html = marked.parse(normalized);
   html = html.replace(/==([^=\n]+)==/g, '<mark class="mark-pos">$1</mark>');
   html = html.replace(/!!([^!\n]+)!!/g, '<mark class="mark-neg">$1</mark>');
@@ -695,9 +702,13 @@ async function initDetail(slug) {
         if (el?.tagName === 'TABLE') el.classList.add('info-table');
       }
     }
-    // 충족 현황 테이블 열 너비 고정 + 2번째 칸(이모지+라벨) 이모지 뒤 줄바꿈, 라벨은 줄바꿈 없이
+    // 충족 현황 테이블(자격요건·우대사항) + 직무 적합도 분석 표(주요 업무) 열 너비 고정 +
+    // 2번째 칸(이모지+라벨) 이모지 뒤 줄바꿈, 라벨은 줄바꿈 없이 — 세 표 모두 backend
+    // render_requirement_table()이 만드는 동일한 3열 구조(항목/충족 여부/근거 계열)라
+    // 같은 레이아웃을 써야 한다(2026-09-03, "직무 적합도 분석" 표만 열 너비가 안 고정돼
+    // 있다는 지적 반영).
     for (const h3 of bodyEl.querySelectorAll('h3')) {
-      if (h3.textContent.includes('충족 현황')) {
+      if (h3.textContent.includes('충족 현황') || h3.textContent.includes('직무 적합도 분석')) {
         let el = h3.nextElementSibling;
         while (el && el.tagName !== 'TABLE' && el.tagName !== 'H3') el = el.nextElementSibling;
         if (el?.tagName === 'TABLE') {
