@@ -27,7 +27,7 @@ from rag.postgres.query_router import list_postings
 from rag.postgres.retrieval import search_chunks
 from rag.reindex_service import trigger_background as trigger_reindex_background
 from routers import companies, profile, rag
-from services import fit_normalization, scraper
+from services import fit_normalization, mcp_workflow_cache, scraper
 
 mcp = MCPServer(name="job-fitcheck")
 
@@ -262,7 +262,12 @@ async def prepare_company_import(url: str | None = None, raw_text: str | None = 
     호출한 클라이언트(자신의 세션 모델)가 직접: 1) extract_company로 구조화 JSON을 뽑고,
     2) 그 결과로 generate_body의 {company_json} 자리를 채워 마크다운 본문(섹션 1~3)을
     만들고, 3) evaluate_fit이 available이면 적합도를 평가해 본문에 "## 4. 적합도 리포트"
-    섹션을 이어붙인 뒤, create_company를 호출해 저장해야 한다."""
+    섹션을 이어붙인 뒤, create_company를 호출해 저장해야 한다.
+
+    반환값의 workflow_id는 이 등록 작업 전체(raw_text 포함)를 서버가 짧은 시간(TTL)
+    동안 기억해두는 참조 id — 이후 prepare_fit_report·create_company 호출 시 그대로
+    전달하면 raw_text를 다시 통째로 보낼 필요가 없다. TTL 만료 전에 저장까지 끝내야
+    한다."""
     if not url and not raw_text:
         raise ToolError("url 또는 raw_text 중 하나가 필요합니다.")
     if raw_text and len(raw_text) > 100_000:
@@ -308,9 +313,11 @@ async def prepare_company_import(url: str | None = None, raw_text: str | None = 
         f"\n\n## 추가 평가 기준 (사용자 지정)\n{eval_criteria}{prompts.CUSTOM_CRITERIA_BOUNDARY_NOTICE}"
         if eval_criteria else ""
     )
+    workflow_id = mcp_workflow_cache.create({"raw_text": text, "source_url": url})
 
     return {
         "duplicate": False,
+        "workflow_id": workflow_id,
         "raw_text": text,
         "raw_text_escaped": safe_text,
         "source_url": url,
