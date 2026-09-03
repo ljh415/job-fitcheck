@@ -43,6 +43,7 @@ docs/mcp-server/
 docs/fit-eval-consistency/
 docs/fit-eval-structural-redesign/
 docs/claude-strict-tool-use/
+docs/mcp-structured-contract/
 
 # 데이터 (개인 정보 포함)
 data/
