@@ -360,12 +360,17 @@ async def prepare_company_import(url: str | None = None, raw_text: str | None = 
 
 
 @mcp.tool()
-async def prepare_fit_report(judge_result: dict, company_data: dict) -> dict:
+async def prepare_fit_report(workflow_id: str, judge_result: dict, company_data: dict) -> dict:
     """evaluate_fit_judge 판정 결과를 받아 REST와 동일한 규칙(fit_normalization)으로
     검증·보정·확정한 뒤, 2단계 보고서(종합 의견) 작성에 필요한 프롬프트를 채워 반환한다.
     LLM을 호출하지 않으므로 비용이 들지 않는다 — evaluate_fit_judge 도구 호출 직후,
     보고서를 쓰기 전에 반드시 거쳐야 한다(판정을 먼저 확정한 뒤에만 보고서를 쓰게 해서,
     판정과 서술이 서로 다른 내용을 말하는 걸 막는 목적).
+
+    workflow_id: prepare_company_import가 발급한 참조 id를 그대로 전달 — 이 호출로
+    company_data/judge_result가 서버에 캐싱되어, 이후 create_company에서 다시 통째로
+    보낼 필요가 없어진다(workflow_id만 전달). id가 없거나 만료됐으면 ToolError로
+    거부하니 prepare_company_import부터 다시 시작할 것.
 
     judge_result: evaluate_fit_judge 스키마로 호출한 결과 JSON 그대로(fit_score/
     item_judgments/decision_factors). company_data: extract_company 결과. 둘 다
@@ -378,6 +383,10 @@ async def prepare_fit_report(judge_result: dict, company_data: dict) -> dict:
     strengths/fit_score는 이 도구가 확정한 canonical 값이니, 그와 다른 내용을 보고서에
     쓰면 안 된다. 표·비기술 요인 요약 줄은 create_company가 저장 시점에 직접 렌더링하므로
     여기서는 반환하지 않는다(중복 방지)."""
+    try:
+        mcp_workflow_cache.update(workflow_id, company_data=company_data, judge_result=judge_result)
+    except mcp_workflow_cache.WorkflowNotFoundError as e:
+        raise ToolError(str(e))
     normalized = fit_normalization.normalize_and_render(judge_result, company_data)
     return {
         "fit_score": normalized["fit_score"],
