@@ -2,7 +2,10 @@
 1단계 산출물을 다룬다. 완결성 검증·코드 fallback·gaps/strengths 파생·표 렌더링을
 provider(Claude/OpenAI/Gemini) 공통으로 담당해, 각 provider가 같은 규칙을 따로
 구현하지 않게 한다."""
+import json
 import logging
+
+import prompts
 
 logger = logging.getLogger(__name__)
 
@@ -486,6 +489,75 @@ def render_requirement_table(items: list[dict], header: str, table_kind: str = "
     return "\n".join(lines)
 
 
+def normalize_and_render(judge_result: dict, company_data: dict) -> dict:
+    """1단계 판정 원본(judge_result)과 company_data를 받아, 이 파일의 정규화
+    함수 전부를 정해진 순서로 실행한 뒤 결정론적 산출물을 한 번에 반환한다.
+
+    REST(`company_analysis.evaluate_fit_structured()`)와 MCP(신규 구조화
+    계약)가 이 함수 하나를 공유한다 — 순서를 두 곳에 각각 복제하면 서서히
+    달라질 위험이 있어(2026-09-03 Codex 리뷰 반영), 정규화 로직은 여기
+    한 곳에만 존재한다.
+
+    반환값의 report_user는 EVALUATE_FIT_REPORT_USER_TEMPLATE을 이미 채운
+    상태 — 호출자는 이 문자열을 그대로 2단계 보고서 LLM 호출(REST) 또는
+    외부 클라이언트에게 반환(MCP)하면 된다."""
+    if not isinstance(judge_result, dict):
+        logger.warning("normalize_and_render: judge_result가 dict 아님 — raw=%r", judge_result)
+        judge_result = {}
+
+    input_items = build_input_items(company_data)
+    normalized, items_incomplete = reconcile_judgments(
+        input_items, judge_result.get("item_judgments", [])
+    )
+    gaps, strengths = derive_gaps_strengths(normalized)
+
+    decision_factors, factors_incomplete = validate_decision_factors(
+        judge_result.get("decision_factors") or {}
+    )
+    decision_factors = enforce_deterministic_levels(decision_factors, company_data)
+    gaps = gaps + derive_decision_factor_gaps(decision_factors)
+
+    fit_score, score_incomplete = safe_fit_score(judge_result.get("fit_score"))
+    incomplete = items_incomplete or factors_incomplete or score_incomplete
+    fit_label = label_from_score(fit_score if fit_score is not None else 0)
+    fit_score = fit_score if fit_score is not None else 0
+
+    tables = "\n\n".join(
+        render_requirement_table(
+            [it for it in normalized if it["id"].startswith(f"{prefix}:")], header, table_kind=prefix
+        )
+        for prefix, header in (
+            ("required", "자격요건 충족 현황"),
+            ("preferred", "우대사항 충족 현황"),
+            ("responsibility", "직무 적합도 분석"),
+        )
+        if any(it["id"].startswith(f"{prefix}:") for it in normalized)
+    )
+    factors_summary = render_decision_factors_summary(decision_factors)
+
+    report_user = prompts.EVALUATE_FIT_REPORT_USER_TEMPLATE.format(
+        fit_score=fit_score,
+        fit_label=fit_label,
+        strengths_text="\n".join(f"- {s}" for s in strengths) or "(없음)",
+        gaps_text="\n".join(f"- {g}" for g in gaps) or "(없음)",
+        decision_factors_text=json.dumps(decision_factors, ensure_ascii=False),
+    )
+
+    return {
+        "fit_score": fit_score,
+        "fit_label": fit_label,
+        "gaps": gaps,
+        "strengths": strengths,
+        "evaluation_incomplete": incomplete,
+        "item_judgments": normalized,
+        "decision_factors": decision_factors,
+        "tables": tables,
+        "factors_summary": factors_summary,
+        "report_user": report_user,
+        **derive_legacy_checks(decision_factors),
+    }
+
+
 if __name__ == "__main__":
     # self-check — mock 기반, 실제 LLM 호출 없음
     company_data = {
@@ -876,5 +948,53 @@ if __name__ == "__main__":
     # 자체도 방어해야 함 — set 멤버십에 dict가 들어오면 TypeError로 죽을 수 있음)
     unsafe = derive_legacy_checks({"salary": {"status": {"x": 1}}, "location": {"status": {"y": 2}}})
     assert unsafe == {"salary_check": None, "stability_check": None, "location_check": None}, unsafe
+
+    # 8. normalize_and_render — REST/MCP 공유 정규화 함수 통합 테스트
+    # (2026-09-03, MCP 구조화 계약 전환 1단계). company_analysis.evaluate_fit_structured()가
+    # 하던 걸 그대로 이 함수 하나로 옮긴 것이라, 여기서의 정상/이상 케이스가 두 경로 모두를 검증한다.
+    nr_company_data = {
+        "required_skills": ["Python 3년 이상"],
+        "preferred_skills": ["AWS 경험"],
+        "key_responsibilities": [],
+        "jobplanet_score": 3.5,
+    }
+    nr_judge_result = {
+        "fit_score": 78,
+        "item_judgments": [
+            {"id": "required:0", "verdict": "met", "evidence_basis": "explicit",
+             "evidence_summary": "3년 경력", "evidence_source": "이력서", "evidence_excerpt": "",
+             "reason": "", "severity": "없음"},
+            {"id": "preferred:0", "verdict": "unmet", "evidence_basis": "해당없음",
+             "evidence_summary": "언급 없음", "evidence_source": "", "evidence_excerpt": "",
+             "reason": "AWS 경험 없음", "severity": "중"},
+        ],
+        "decision_factors": {
+            "career_years": {"status": "충족", "level": "없음", "note": ""},
+            "location": {"status": "충족", "level": "없음", "note": ""},
+            "stability": {"status": "조건부", "level": "중", "note": ""},
+            "jobplanet": {"status": "양호", "level": "없음", "note": ""},
+            "salary": {"status": "미확인", "level": "없음", "note": ""},
+            "custom_criteria": {"status": "해당없음", "level": "없음", "note": ""},
+        },
+    }
+    nr_result = normalize_and_render(nr_judge_result, nr_company_data)
+    assert nr_result["fit_score"] == 78
+    assert nr_result["fit_label"] == label_from_score(78)
+    assert nr_result["evaluation_incomplete"] is False, nr_result
+    assert len(nr_result["item_judgments"]) == 2
+    assert "자격요건 충족 현황" in nr_result["tables"] and "우대사항 충족 현황" in nr_result["tables"]
+    assert "직무 적합도 분석" not in nr_result["tables"], "key_responsibilities가 없으면 해당 표는 생략돼야 함"
+    assert nr_result["factors_summary"].startswith("**비기술 요인**:")
+    assert nr_result["salary_check"] == "미확인" and nr_result["location_check"] == "충족", nr_result
+    # report_user에 실제로 정규화된 fit_score·gaps 내용이 채워져 들어갔는지(REST가
+    # 2단계 프롬프트에 넣던 것과 동일한 입력이어야 함)
+    assert any("AWS" in g for g in nr_result["gaps"]), nr_result["gaps"]
+    assert str(nr_result["fit_score"]) in nr_result["report_user"]
+    assert "AWS" in nr_result["report_user"]
+
+    # 8-1. judge_result가 dict가 아니어도(malformed) 죽지 않고 전부 fallback+incomplete
+    nr_bad = normalize_and_render(["이건 배열임"], nr_company_data)
+    assert nr_bad["evaluation_incomplete"] is True
+    assert nr_bad["item_judgments"][0]["filled_by"] == "code_fallback"
 
     print("fit_normalization self-check 통과")

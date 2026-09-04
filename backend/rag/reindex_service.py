@@ -80,16 +80,30 @@ def trigger_background() -> bool:
     사용자에게 보여줄 응답이 없으므로, RAG 꺼짐이면 즉시 False, 진행 중이면 예외 대신
     pending만 세워 조용히 뒤로 미룬다. 실패해도(임베딩 API 오류 등) CRUD 요청 자체는 이미
     끝난 뒤라 사용자에게 영향 없음 — 다음 트리거(수동/자동 무관) 때 diff 기반으로 자연히
-    재시도된다."""
+    재시도된다.
+
+    provider 해석은 _reindex_in_progress를 세우기 전에 끝낸다 — 여기서 예외가 나면 아예
+    상태를 안 건드리니 다음 트리거가 정상적으로 재시도할 수 있다. 상태를 세운 뒤
+    asyncio.create_task() 예약 자체가 실패하는 경우(동기 예외)엔 _run_sync()가 아예
+    시작되지 않아 자체 복구 코드도 못 도니, 여기서 직접 in_progress/pending을 원복하고
+    예외를 그대로 다시 던진다 — 그러지 않으면 재색인이 프로세스 재시작 전까지 영구
+    멈춘다(2026-09-04 Codex 리뷰)."""
     global _reindex_in_progress, _reindex_pending
     if not settings.rag_postgres_host:
         return False
+    provider = resolve_rag_embedding_provider()
     with _reindex_lock:
         if _reindex_in_progress:
             _reindex_pending = True
             return False
         _reindex_in_progress = True
-    asyncio.create_task(asyncio.to_thread(_run_sync, resolve_rag_embedding_provider()))
+    try:
+        asyncio.create_task(asyncio.to_thread(_run_sync, provider))
+    except Exception:
+        with _reindex_lock:
+            _reindex_in_progress = False
+            _reindex_pending = False
+        raise
     return True
 
 
@@ -140,6 +154,31 @@ if __name__ == "__main__":
         assert calls == ["google", "google"], calls
         assert _reindex_in_progress is False
         assert _reindex_pending is False
+    _reset()
+
+    # 5. provider 해석 실패 → in_progress를 아예 세우지 않아 다음 트리거가 정상 동작
+    with patch.object(settings, "rag_postgres_host", "dummy"), \
+         patch("rag.reindex_service.resolve_rag_embedding_provider", side_effect=RuntimeError("provider boom")):
+        try:
+            trigger_background()
+            assert False, "예외가 발생했어야 함"
+        except RuntimeError:
+            pass
+        assert _reindex_in_progress is False, "provider 해석 실패는 in_progress를 건드리면 안 됨"
+    _reset()
+
+    # 6. asyncio.create_task() 예약 자체가 실패해도 상태가 원복돼야 함(그러지 않으면
+    # 재색인이 프로세스 재시작 전까지 영구 멈춤)
+    with patch.object(settings, "rag_postgres_host", "dummy"), \
+         patch("rag.reindex_service.resolve_rag_embedding_provider", return_value="google"), \
+         patch("asyncio.create_task", side_effect=RuntimeError("no event loop")):
+        try:
+            trigger_background()
+            assert False, "예외가 발생했어야 함"
+        except RuntimeError:
+            pass
+        assert _reindex_in_progress is False, "task 예약 실패 후 in_progress가 원복돼야 함"
+        assert _reindex_pending is False, "task 예약 실패 후 pending도 원복돼야 함"
     _reset()
 
     print("reindex_service self-check 통과")

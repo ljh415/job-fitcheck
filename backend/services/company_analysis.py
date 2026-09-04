@@ -137,63 +137,14 @@ async def evaluate_fit_structured(
         operation=operation,
         reasoning_effort=snap.reasoning_effort,
     )
-    # judge_result 자체가 dict가 아니면(provider가 tool 인자를 배열 등으로 잘못
-    # 반환) 바로 아래 .get() 호출에서 AttributeError로 평가 전체가 죽어 fallback
-    # 계약에 도달 못 한다 — 유료 1단계 호출은 이미 나간 뒤라 손실이 더 크다.
-    # 빈 dict로 정규화해 이후 세 normalizer(reconcile_judgments/
-    # validate_decision_factors/safe_fit_score)가 항상 하던 대로 fallback+
-    # incomplete 처리하게 한다(2026-09-02 7차 리뷰 반영).
-    if not isinstance(judge_result, dict):
-        logger.warning("evaluate_fit_structured: judge_result가 dict 아님 — raw=%r", judge_result)
-        judge_result = {}
+    # judge_result 자체가 dict가 아니어도(provider가 tool 인자를 배열 등으로 잘못
+    # 반환) normalize_and_render()가 내부에서 빈 dict로 정규화해 fallback+incomplete
+    # 계약을 그대로 지킨다(2026-09-02 7차 리뷰 반영, 2026-09-03 공유 함수로 이관).
+    normalized = fit_normalization.normalize_and_render(judge_result, company_data)
 
-    normalized, items_incomplete = fit_normalization.reconcile_judgments(
-        input_items, judge_result.get("item_judgments", [])
-    )
-    gaps, strengths = fit_normalization.derive_gaps_strengths(normalized)
-
-    # 1단계 응답의 최상위 필드(fit_score/decision_factors)도 provider가 스키마를
-    # 서버에서 강제하지 않으므로 여기서 직접 검증한다(2026-09-01, 2차 리뷰 반영) —
-    # 값이 없거나 이상해도 조용히 그럴듯한 기본값으로 넘어가지 않고 incomplete로 표시.
-    decision_factors, factors_incomplete = fit_normalization.validate_decision_factors(
-        judge_result.get("decision_factors") or {}
-    )
-    # jobplanet/location은 고정 매핑 가능한 요인이라 LLM의 level 판단을 신뢰하지 않고
-    # 회사 원본 데이터(jobplanet_score)·판정 status 텍스트로 코드가 다시 강제한다
-    # (PLAN.md 3.2, 2026-09-02 브랜치 전체 리뷰 반영).
-    decision_factors = fit_normalization.enforce_deterministic_levels(decision_factors, company_data)
-    gaps = gaps + fit_normalization.derive_decision_factor_gaps(decision_factors)
-
-    fit_score, score_incomplete = fit_normalization.safe_fit_score(judge_result.get("fit_score"))
-    incomplete = items_incomplete or factors_incomplete or score_incomplete
-    # 점수·라벨은 이미 완전히 결정적인 매핑이므로 LLM 값을 신뢰하지 않고 코드가 계산한다.
-    # fit_score를 못 구했으면(위에서 이미 incomplete=True로 표시됨) 라벨 계산을 위한
-    # 최소한의 폴백으로만 0을 쓴다.
-    fit_label = fit_normalization.label_from_score(fit_score if fit_score is not None else 0)
-    fit_score = fit_score if fit_score is not None else 0
-
-    tables = "\n\n".join(
-        fit_normalization.render_requirement_table(
-            [it for it in normalized if it["id"].startswith(f"{prefix}:")], header, table_kind=prefix
-        )
-        for prefix, header in (
-            ("required", "자격요건 충족 현황"),
-            ("preferred", "우대사항 충족 현황"),
-            ("responsibility", "직무 적합도 분석"),
-        )
-        if any(it["id"].startswith(f"{prefix}:") for it in normalized)
-    )
-
-    report_user = prompts.EVALUATE_FIT_REPORT_USER_TEMPLATE.format(
-        fit_score=fit_score,
-        fit_label=fit_label,
-        strengths_text="\n".join(f"- {s}" for s in strengths) or "(없음)",
-        gaps_text="\n".join(f"- {g}" for g in gaps) or "(없음)",
-        decision_factors_text=json.dumps(decision_factors, ensure_ascii=False),
-    )
     report_prose = await high.complete(
         system=prompts.EVALUATE_FIT_REPORT_SYSTEM,
-        user=report_user,
+        user=normalized["report_user"],
         model=high_model,
         operation=f"{operation}(보고서)",
         max_tokens=4096,
@@ -204,19 +155,20 @@ async def evaluate_fit_structured(
     # level="없음"(문제없음)인 판정은 산문에서 거의 빠지는데, 그게 "판정 안 함"과
     # 구분이 안 됐다(2026-09-02, LLM Judge 비교 실험 발견). LLM 재호출 없음(입력
     # 토큰도 안 늘어남 — decision_factors는 이미 report_user에 통째로 들어가 있음).
-    factors_summary = fit_normalization.render_decision_factors_summary(decision_factors)
-    fit_report = f"{tables}\n\n{report_prose.strip()}\n\n{factors_summary}"
+    fit_report = f"{normalized['tables']}\n\n{report_prose.strip()}\n\n{normalized['factors_summary']}"
     fit_result = {
-        "fit_score": fit_score,
-        "fit_label": fit_label,
-        "gaps": gaps,
-        "strengths": strengths,
-        "evaluation_incomplete": incomplete,
-        "item_judgments": normalized,
-        "decision_factors": decision_factors,
+        "fit_score": normalized["fit_score"],
+        "fit_label": normalized["fit_label"],
+        "gaps": normalized["gaps"],
+        "strengths": normalized["strengths"],
+        "evaluation_incomplete": normalized["evaluation_incomplete"],
+        "item_judgments": normalized["item_judgments"],
+        "decision_factors": normalized["decision_factors"],
         # 구 salary_check/stability_check/location_check 필드 하위 호환(CSV 내보내기·
         # MCP 계약, 4번 열린 질문 결정: B). decision_factors로 대체하지 않고 계속 채운다.
-        **fit_normalization.derive_legacy_checks(decision_factors),
+        "salary_check": normalized["salary_check"],
+        "stability_check": normalized["stability_check"],
+        "location_check": normalized["location_check"],
     }
     return fit_result, fit_report
 

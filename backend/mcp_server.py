@@ -8,6 +8,7 @@
 설계 배경: docs/planning/mcp_plan_notes.md(로컬 전용), 진행 기록: docs/mcp-server/(로컬 전용).
 """
 import asyncio
+import logging
 from typing import Literal
 
 import httpx
@@ -27,7 +28,9 @@ from rag.postgres.query_router import list_postings
 from rag.postgres.retrieval import search_chunks
 from rag.reindex_service import trigger_background as trigger_reindex_background
 from routers import companies, profile, rag
-from services import scraper
+from services import fit_normalization, mcp_workflow_cache, scraper
+
+logger = logging.getLogger(__name__)
 
 mcp = MCPServer(name="job-fitcheck")
 
@@ -262,7 +265,12 @@ async def prepare_company_import(url: str | None = None, raw_text: str | None = 
     호출한 클라이언트(자신의 세션 모델)가 직접: 1) extract_company로 구조화 JSON을 뽑고,
     2) 그 결과로 generate_body의 {company_json} 자리를 채워 마크다운 본문(섹션 1~3)을
     만들고, 3) evaluate_fit이 available이면 적합도를 평가해 본문에 "## 4. 적합도 리포트"
-    섹션을 이어붙인 뒤, create_company를 호출해 저장해야 한다."""
+    섹션을 이어붙인 뒤, create_company를 호출해 저장해야 한다.
+
+    반환값의 workflow_id는 이 등록 작업 전체(raw_text 포함)를 서버가 짧은 시간(TTL)
+    동안 기억해두는 참조 id — 이후 prepare_fit_report·create_company 호출 시 그대로
+    전달하면 raw_text를 다시 통째로 보낼 필요가 없다. TTL 만료 전에 저장까지 끝내야
+    한다."""
     if not url and not raw_text:
         raise ToolError("url 또는 raw_text 중 하나가 필요합니다.")
     if raw_text and len(raw_text) > 100_000:
@@ -308,9 +316,16 @@ async def prepare_company_import(url: str | None = None, raw_text: str | None = 
         f"\n\n## 추가 평가 기준 (사용자 지정)\n{eval_criteria}{prompts.CUSTOM_CRITERIA_BOUNDARY_NOTICE}"
         if eval_criteria else ""
     )
+    workflow_id = mcp_workflow_cache.create({
+        "raw_text": text,
+        "source_url": url,
+        "profile_version_id": profile_version_id,
+        "has_profile": has_profile,
+    })
 
     return {
         "duplicate": False,
+        "workflow_id": workflow_id,
         "raw_text": text,
         "raw_text_escaped": safe_text,
         "source_url": url,
@@ -326,82 +341,280 @@ async def prepare_company_import(url: str | None = None, raw_text: str | None = 
             "company_json은 extract_company 결과를 JSON 문자열로, raw_text는 "
             "raw_text_escaped 앞 4000자를 넣는 게 기존 파이프라인 관례.",
         },
-        "evaluate_fit": {
+        "evaluate_fit_judge": {
             "available": has_profile,
-            "system": prompts.EVALUATE_FIT_SYSTEM + _MCP_ISOLATION_NOTICE,
-            "user_template": prompts.EVALUATE_FIT_USER_TEMPLATE,
-            "output_schema": prompts.EVALUATE_FIT_TOOL_SCHEMA,
+            "system": prompts.EVALUATE_FIT_JUDGE_SYSTEM + _MCP_ISOLATION_NOTICE,
+            "user_template": prompts.EVALUATE_FIT_JUDGE_USER_TEMPLATE,
+            "output_schema": prompts.EVALUATE_FIT_JUDGE_TOOL_SCHEMA,
             "candidate_profile": profile_text,
             "profile_version_id": profile_version_id,
             "custom_criteria": custom_criteria,
-            "note": "user_template엔 {candidate_profile}·{company_json}·{raw_text}·"
+            "note": "REST와 동일한 1단계 판정 전용 스키마 — fit_report_body(산문)는 여기 없음, "
+            "보고서는 별도 2단계(prepare_fit_report 도구)에서 작성한다. user_template엔 "
+            "{candidate_profile}·{company_json}·{raw_text}·{item_list}·{tool_name}·"
             "{custom_criteria} 자리가 아직 안 채워져 있음 — candidate_profile·custom_criteria는 "
             "위 값을 그대로, company_json은 extract_company 결과, raw_text는 "
-            "raw_text_escaped 앞 4000자를 넣는 게 기존 파이프라인 관례. available이 False면 "
-            "프로필이 없어 적합도 평가를 생략해야 한다(웹 파이프라인과 동일). profile_version_id는 "
-            "이 프로필을 평가에 실제로 사용했다면 그대로 create_company에 다시 전달할 것 — "
-            "이력에 정확한 프로필 버전을 연결하는 데 쓰인다.",
+            "raw_text_escaped 앞 4000자, tool_name은 'evaluate_fit_judge'를 넣는 게 기존 "
+            "파이프라인 관례. item_list는 extract_company 결과의 required_skills/"
+            "preferred_skills/key_responsibilities 각 배열을 0부터 순서대로 "
+            "'required:0', 'preferred:0', 'responsibility:0' 형식 id로 붙여 "
+            "'- required:0: <항목 원문>' 한 줄씩 나열한 것(서버가 나중에 판정 결과를 "
+            "정규화할 때 이 id로 원본 항목과 다시 짝짓는다 — 순서·prefix가 어긋나면 안 됨). "
+            "available이 False면 프로필이 없어 적합도 평가를 생략해야 한다(웹 파이프라인과 "
+            "동일). profile_version_id는 이 workflow_id에 이미 고정·캐싱돼 있어 "
+            "create_company가 저장 시점에 자동으로 사용한다 — 따로 다시 전달할 필요 없음.",
         },
     }
 
 
-# extract_company/evaluate_fit 스키마 필드만 허용 — status/pinned/created_at 등은 여기 없어 자동 제외된다.
-_CREATE_COMPANY_ALLOWED_FIELDS = set(prompts.EXTRACT_COMPANY_TOOL_SCHEMA["properties"]) | (
-    set(prompts.EVALUATE_FIT_TOOL_SCHEMA["properties"]) - {"fit_report_body"}
-)
+@mcp.tool()
+async def prepare_fit_report(workflow_id: str, judge_result: dict, company_data: dict) -> dict:
+    """evaluate_fit_judge 판정 결과를 받아 REST와 동일한 규칙(fit_normalization)으로
+    검증·보정·확정한 뒤, 2단계 보고서(종합 의견) 작성에 필요한 프롬프트를 채워 반환한다.
+    LLM을 호출하지 않으므로 비용이 들지 않는다 — evaluate_fit_judge 도구 호출 직후,
+    보고서를 쓰기 전에 반드시 거쳐야 한다(판정을 먼저 확정한 뒤에만 보고서를 쓰게 해서,
+    판정과 서술이 서로 다른 내용을 말하는 걸 막는 목적).
+
+    workflow_id: prepare_company_import가 발급한 참조 id를 그대로 전달 — 이 호출로
+    company_data/judge_result가 서버에 캐싱되어, 이후 create_company에서 다시 통째로
+    보낼 필요가 없어진다(workflow_id만 전달). id가 없거나 만료됐으면 ToolError로
+    거부하니 prepare_company_import부터 다시 시작할 것.
+
+    judge_result: evaluate_fit_judge 스키마로 호출한 결과 JSON 그대로(fit_score/
+    item_judgments/decision_factors). company_data: extract_company 결과. 둘 다
+    court-of-record 취급 — 형식이 깨지거나 항목이 빠져도 예외 없이 안전한 기본값+
+    evaluation_incomplete로 보정된다(재요청 불필요).
+
+    반환값의 report.user는 EVALUATE_FIT_REPORT_USER_TEMPLATE을 이미 채운 상태 —
+    그대로 산문(종합 의견)을 완성해서(도구 호출 아닌 일반 텍스트 응답) create_company의
+    report_prose에 전달하면 된다. 반환값의 item_judgments/decision_factors/gaps/
+    strengths/fit_score는 이 도구가 확정한 canonical 값이니, 그와 다른 내용을 보고서에
+    쓰면 안 된다. 표·비기술 요인 요약 줄은 create_company가 저장 시점에 직접 렌더링하므로
+    여기서는 반환하지 않는다(중복 방지)."""
+    # complete()는 대용량 데이터를 비우므로(has_profile 포함), 완료된 workflow를
+    # 먼저 구분하지 않으면 아래 has_profile 체크가 기본값(False)에 걸려 "프로필
+    # 없음"이라는 잘못된 안내가 나간다(Codex 리뷰 2026-09-04 r2 낮음1).
+    if mcp_workflow_cache.get_completed_result(workflow_id) is not None:
+        raise ToolError(
+            "이 workflow는 이미 저장이 완료됐습니다 — 다시 판정할 필요 없이 "
+            "create_company(workflow_id=...)를 그대로 다시 호출하면 그때 저장한 결과를 반환합니다."
+        )
+    try:
+        cached = mcp_workflow_cache.get(workflow_id)
+    except mcp_workflow_cache.WorkflowNotFoundError as e:
+        raise ToolError(str(e))
+    if not cached.get("has_profile", False):
+        # 프로필 없는 workflow는 애초에 적합도 평가 대상이 아니다 — 여기서 막지 않으면
+        # create_company의 has_profile=false 분기(캐시 우선)를 통해 "프로필 없으면
+        # 평가 생략"이라는 경계를 정상 호출만으로 우회할 수 있다(Codex 리뷰
+        # 2026-09-04 중간2).
+        raise ToolError(
+            "이 workflow는 프로필이 없는 상태로 시작됐습니다 — 적합도 평가를 저장할 수 없습니다. "
+            "company_data만으로 create_company를 바로 호출하세요(judge_result/report_prose 생략)."
+        )
+    try:
+        mcp_workflow_cache.update(workflow_id, company_data=company_data, judge_result=judge_result)
+    except mcp_workflow_cache.WorkflowNotFoundError as e:
+        raise ToolError(str(e))
+    normalized = fit_normalization.normalize_and_render(judge_result, company_data)
+    return {
+        "fit_score": normalized["fit_score"],
+        "fit_label": normalized["fit_label"],
+        "gaps": normalized["gaps"],
+        "strengths": normalized["strengths"],
+        "evaluation_incomplete": normalized["evaluation_incomplete"],
+        "item_judgments": normalized["item_judgments"],
+        "decision_factors": normalized["decision_factors"],
+        "report": {
+            "system": prompts.EVALUATE_FIT_REPORT_SYSTEM + _MCP_ISOLATION_NOTICE,
+            "user": normalized["report_user"],
+            "note": "위 system+user로 일반 텍스트 완성(도구 호출 아님)을 요청하면 산문이 나온다. "
+            "그 결과를 그대로(다듬지 말고) create_company의 report_prose 인자로 전달할 것.",
+        },
+    }
+
+
+# extract_company 스키마 필드만 허용 — 적합도 평가 필드(fit_score/gaps/decision_factors 등)는
+# judge_result에서만 받아 서버가 직접 재정규화해 채운다(company_data로 직접 제출 불가 —
+# 2026-09-03 MCP 구조화 계약 전환, 클라이언트가 판정을 조작해 제출하는 경로를 원천 차단).
+# status/pinned/created_at 등도 여기 없어 자동 제외된다.
+_CREATE_COMPANY_ALLOWED_FIELDS = set(prompts.EXTRACT_COMPANY_TOOL_SCHEMA["properties"])
 
 
 @mcp.tool()
 async def create_company(
-    company_data: dict,
-    body: str,
-    raw_text: str,
-    source_url: str | None = None,
-    profile_version_id: int | None = None,
+    workflow_id: str,
+    base_body: str,
+    report_prose: str | None = None,
+    company_data: dict | None = None,
 ) -> dict:
-    """prepare_company_import로 받은 분석 패킷을 클라이언트가 직접 처리한 결과를 저장한다.
+    """prepare_company_import·prepare_fit_report로 준비한 워크플로를 저장한다.
     확인 없이 즉시 실행된다(기존 데이터를 덮어쓰지 않는 순수 추가).
 
-    company_data: extract_company 결과 JSON에 evaluate_fit 결과 필드(fit_score, fit_label,
-    strengths, gaps, salary_check, stability_check, location_check 등, fit_report_body는
-    제외 — 그건 body에 포함)를 합친 것. 이 필드 집합 밖의 키(status/pinned/created_at 등
-    사용자·서버 관리 필드)는 무시된다. body: 마크다운 본문(생성한 본문 + 적합도 리포트
-    섹션까지 이미 합쳐진 상태) — 지원 상태 로그 섹션은 이 도구가 자동으로 추가한다.
-    profile_version_id: prepare_company_import의 evaluate_fit.profile_version_id를 평가에
-    실제로 썼다면 그대로 전달 — 여기서 다시 조회하지 않는 이유는 조회 시점(저장 직전)이
-    실제 평가 시점과 다를 수 있어(그 사이 프로필이 갱신되면) 엉뚱한 버전과 연결될 수 있기
-    때문. 안 주면 이전 버전 불명(None)으로 기록된다."""
-    # company_data["source_url"](raw_text만 줘도 extract_company가 채울 수 있음)도 함께 고려해
-    # 중복검사·source_type·최종 저장을 전부 이 값 하나로 통일한다.
-    effective_source_url = source_url or company_data.get("source_url")
+    workflow_id: prepare_company_import가 발급한 참조 id. raw_text·source_url·
+    profile_version_id·has_profile은 여기서 다시 받지 않고 이 id로 서버 캐시에서
+    조회한다. 프로필이 있는 워크플로(has_profile=true)는 반드시 prepare_fit_report를
+    거쳐 company_data·judge_result가 캐시에 있어야 하며, 이 경로에서 company_data
+    인자는 완전히 무시한다(평가 경로에서는 직접 전달 자체를 인정하지 않음). 프로필이
+    없는 워크플로(has_profile=false)는 애초에 prepare_fit_report를 탈 일이 없으므로
+    — 즉 재전송이 아니라 서버가 처음 받는 것이므로 — company_data를 인자로 1회
+    직접 전달해야 한다. 캐시에 company_data가 이미 있는데도 인자로 또 전달하면
+    캐시 값이 우선하고 인자는 조용히 무시된다.
 
-    if effective_source_url:
-        duplicate = next(
-            (c for c in storage.list_companies() if c.frontmatter.source_url == effective_source_url), None
+    base_body: 마크다운 본문 중 1~3절(회사 정보 등)만 — 적합도 리포트(4~5절)는
+    이 도구가 서버에서 직접 조립하므로 포함하면 안 된다.
+
+    report_prose: prepare_fit_report가 준 프롬프트로 작성한 종합 의견 산문 —
+    캐시에 judge_result가 있으면(=적합도 평가를 했으면) 필수. 재정규화 결과
+    evaluation_incomplete=true면(판정 항목이 채워지지 않았거나 형식이 깨짐)
+    저장을 거부하고 어느 항목이 문제인지 구체적으로 반환하니, 그 항목만 다시
+    판정해 evaluate_fit_judge부터 재시도할 것.
+
+    같은 workflow_id로 이미 저장에 성공한 뒤 재호출하면(예: 응답을 못 받아
+    재시도) 다시 저장하지 않고 그때 저장한 결과를 그대로 돌려준다(멱등 재호출).
+    동일 workflow_id로 동시에 저장이 진행 중이면 거부한다(중복 저장 방지)."""
+    existing = mcp_workflow_cache.get_completed_result(workflow_id)
+    if existing is not None:
+        return existing
+
+    try:
+        started = mcp_workflow_cache.try_begin_save(workflow_id)
+    except mcp_workflow_cache.WorkflowNotFoundError as e:
+        raise ToolError(str(e))
+    if not started:
+        raise ToolError(
+            "이 workflow_id는 이미 다른 저장 요청이 진행 중입니다 — 잠시 후 다시 시도하세요."
         )
-        if duplicate:
+
+    try:
+        cached = mcp_workflow_cache.get(workflow_id)
+    except mcp_workflow_cache.WorkflowNotFoundError as e:
+        mcp_workflow_cache.release_save(workflow_id)
+        raise ToolError(str(e))
+
+    try:
+        raw_text = cached.get("raw_text")
+        if not raw_text:
+            raise ToolError("이 workflow에 raw_text가 없습니다 — prepare_company_import부터 다시 시작하세요.")
+        profile_version_id = cached.get("profile_version_id")
+        judge_result = cached.get("judge_result")
+        has_profile = cached.get("has_profile", False)
+        cached_company_data = cached.get("company_data")
+
+        if has_profile:
+            if not cached_company_data or not judge_result:
+                raise ToolError(
+                    "프로필이 있는 워크플로는 prepare_fit_report를 거쳐야 합니다 — "
+                    "evaluate_fit_judge → prepare_fit_report를 먼저 호출한 뒤 다시 시도하세요."
+                )
+            effective_company_data = cached_company_data  # 평가 경로에서는 직접 전달된 company_data 무시
+        elif cached_company_data:
+            effective_company_data = cached_company_data  # 캐시가 있으면 캐시 우선(인자는 무시)
+        elif company_data:
+            effective_company_data = company_data  # 프로필 없음 — 재전송이 아니라 최초 전달이므로 허용
+        else:
             raise ToolError(
-                f"이미 등록된 URL입니다: {duplicate.slug} "
-                f"({duplicate.frontmatter.display_name or duplicate.frontmatter.company_name})"
+                "company_data가 없습니다 — 프로필이 없는 워크플로는 company_data를 인자로 직접 전달해야 합니다."
             )
+        # company_data["source_url"](raw_text만 줘도 extract_company가 채울 수 있음)도 함께
+        # 고려해 중복검사·source_type·최종 저장을 전부 이 값 하나로 통일한다.
+        effective_source_url = cached.get("source_url") or effective_company_data.get("source_url")
 
-    projected = {k: v for k, v in company_data.items() if k in _CREATE_COMPANY_ALLOWED_FIELDS}
-    if not (projected.get("company_name") or "").strip() or not (projected.get("job_title") or "").strip():
-        raise ToolError("company_data에는 비어 있지 않은 company_name과 job_title이 필요합니다.")
+        if effective_source_url:
+            duplicate = next(
+                (c for c in storage.list_companies() if c.frontmatter.source_url == effective_source_url), None
+            )
+            if duplicate:
+                raise ToolError(
+                    f"이미 등록된 URL입니다: {duplicate.slug} "
+                    f"({duplicate.frontmatter.display_name or duplicate.frontmatter.company_name})"
+                )
 
-    fm_data = {
-        **projected,
-        "source_url": effective_source_url,
-        "source_type": "url" if effective_source_url else "text_paste",
-        "llm_provider": "mcp",
-    }
-    fm = CompanyFrontmatter(**fm_data)
+        projected = {k: v for k, v in effective_company_data.items() if k in _CREATE_COMPANY_ALLOWED_FIELDS}
+        if not (projected.get("company_name") or "").strip() or not (projected.get("job_title") or "").strip():
+            raise ToolError("company_data에는 비어 있지 않은 company_name과 job_title이 필요합니다.")
 
-    body = companies.append_status_log(body, "분석 완료")
-    slug = storage.make_slug(fm.company_name, fm.job_title or "")
-    storage.write_raw_text(slug, raw_text)
-    record = storage.write_company(slug, fm, body)
-    companies.snapshot_fit_history(slug, fm.fit_score, fm.fit_label, profile_version_id)
-    await send_notification(companies.build_fit_notification_materials(fm))
-    trigger_reindex_background()
-    return record.model_dump()
+        fit_fields: dict = {}
+        fit_report_section = ""
+        if judge_result:
+            if not (report_prose or "").strip():
+                raise ToolError("judge_result가 있으면 report_prose(prepare_fit_report로 작성한 종합 의견)도 필요합니다.")
+            # 클라이언트가 prepare_fit_report를 실제로 거쳤는지 서버는 신뢰할 수 없다 —
+            # 저장 직전 같은 함수로 다시 정규화한다(멱등, PLAN.md §6.2/§5.3).
+            normalized = fit_normalization.normalize_and_render(judge_result, effective_company_data)
+            if normalized["evaluation_incomplete"]:
+                fallback_items = [
+                    it["id"] for it in normalized["item_judgments"] if it.get("filled_by") == "code_fallback"
+                ]
+                fallback_factors = [
+                    k for k, v in normalized["decision_factors"].items()
+                    if v.get("status") == fit_normalization._FALLBACK_STATUS
+                ]
+                raise ToolError(
+                    "판정이 불완전해 저장을 거부합니다 — evaluate_fit_judge를 다시 호출해 "
+                    f"아래 항목을 재제출하세요. 판정 누락/무효 id: {fallback_items or '없음'}, "
+                    f"비기술 요인 판정 실패: {fallback_factors or '없음'}"
+                )
+            fit_fields = {
+                "fit_score": normalized["fit_score"],
+                "fit_label": normalized["fit_label"],
+                "strengths": normalized["strengths"],
+                "gaps": normalized["gaps"],
+                "item_judgments": normalized["item_judgments"],
+                "decision_factors": normalized["decision_factors"],
+                "evaluation_incomplete": normalized["evaluation_incomplete"],
+                "salary_check": normalized["salary_check"],
+                "stability_check": normalized["stability_check"],
+                "location_check": normalized["location_check"],
+            }
+            fit_report_section = f"{normalized['tables']}\n\n{report_prose.strip()}\n\n{normalized['factors_summary']}"
+
+        fm_data = {
+            **projected,
+            **fit_fields,
+            "source_url": effective_source_url,
+            "source_type": "url" if effective_source_url else "text_paste",
+            "llm_provider": "mcp",
+        }
+        fm = CompanyFrontmatter(**fm_data)
+
+        final_body = f"{base_body}\n\n{fit_report_section}" if fit_report_section else base_body
+        final_body = companies.append_status_log(final_body, "분석 완료")
+        slug = storage.make_slug(fm.company_name, fm.job_title or "")
+        storage.write_raw_text(slug, raw_text)
+        record = storage.write_company(slug, fm, final_body)
+        companies.snapshot_fit_history(slug, fm.fit_score, fm.fit_label, profile_version_id)
+        result = record.model_dump()
+        result["next_step"] = (
+            f"저장이 완료됐습니다. 사용자에게 회사명({fm.display_name or fm.company_name})·직무({fm.job_title}), "
+            f"적합도 점수({fm.fit_score}점, {fm.fit_label}), 핵심 근거 2~3가지를 요약해서 보여주세요."
+            if judge_result else
+            f"저장이 완료됐습니다. 사용자에게 회사명({fm.display_name or fm.company_name})·직무({fm.job_title}) 등"
+            " 주요 정보를 요약해서 보여주세요."
+        )
+    except Exception:
+        mcp_workflow_cache.release_save(workflow_id)
+        raise
+
+    # 회사 파일·이력 저장은 여기서 이미 끝났다 — 재시도가 중복 저장을 만들지
+    # 않도록 알림/재색인(후처리)보다 먼저 완료 처리한다(Codex 리뷰 2026-09-04
+    # 중간1: 취소·후처리 예외가 completed 표식 이전에 나면 release_save로
+    # 잠금이 풀려 재시도가 두 번째 회사를 만들었음).
+    mcp_workflow_cache.complete(workflow_id, result)
+
+    # RAG 재색인 트리거를 알림 await보다 먼저 호출한다 — 알림 대기 중 요청이
+    # 취소되면(asyncio.CancelledError는 except Exception에 안 걸림) 그 뒤에 있는
+    # 코드는 아예 실행되지 않으므로, 재색인 예약을 먼저 끝내둬야 취소돼도 새
+    # 회사가 RAG 색인에서 영구히 빠지지 않는다(Codex 리뷰 2026-09-04 r2 중간1).
+    try:
+        trigger_reindex_background()
+    except Exception:
+        logger.exception("create_company: RAG 재색인 트리거 실패(저장은 이미 완료됨, slug=%s)", slug)
+
+    try:
+        await send_notification(companies.build_fit_notification_materials(fm))
+    except Exception:
+        # 저장은 이미 완료됐으니 알림 실패를 저장 실패로 취급하지 않는다.
+        logger.exception("create_company: 알림 발송 실패(저장은 이미 완료됨, slug=%s)", slug)
+
+    return result
