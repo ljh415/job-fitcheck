@@ -90,23 +90,38 @@ claude mcp list
 1. prepare_company_import(url 또는 raw_text)
    → 원문 수집 + 분석용 프롬프트 반환(구조화 추출/본문 생성/1단계 판정)
    → 이 단계는 LLM을 호출하지 않음(Job FitCheck API 비용 0원)
+   → 응답에 workflow_id가 포함됨 — 이 등록 작업 전체(원문 등)를 서버가 짧은
+     시간(TTL) 동안 기억해두는 참조 id로, 이후 단계에서 원문을 다시 보낼
+     필요가 없어짐. 프로필 유무(has_profile)도 이 시점에 고정되어 이후
+     단계에 계속 적용됨
 
-2. Codex/Claude 자신의 세션 모델이 구조화 추출 → 본문 생성 → 1단계 판정
-   (evaluate_fit_judge 스키마 — 항목별 충족 여부·점수·비기술 요인만, 산문 없음)
-   을 순서대로 직접 수행
+2. Codex/Claude 자신의 세션 모델이 구조화 추출 → 본문 생성 → (프로필이
+   있으면) 1단계 판정(evaluate_fit_judge 스키마 — 항목별 충족 여부·점수·
+   비기술 요인만, 산문 없음)을 순서대로 직접 수행
 
-3. prepare_fit_report(judge_result, company_data)
+3. [프로필이 있을 때만] prepare_fit_report(workflow_id, judge_result, company_data)
    → 판정 결과를 검증·보정(항목 누락/형식 오류를 자동으로 정정)하고, 그 확정된
-     결과를 근거로 2단계 보고서(종합 의견)를 쓸 프롬프트를 반환
+     결과를 근거로 2단계 보고서(종합 의견)를 쓸 프롬프트를 반환. 이 호출로
+     company_data·judge_result가 workflow_id에 캐싱되어 5단계에서 다시 보낼
+     필요가 없어짐
    → 이 단계도 LLM을 호출하지 않음(순수 검증 로직, 비용 없음)
+   → 프로필이 없는 워크플로에서 호출하면 거부됨(적합도 평가 대상이 아님)
 
-4. Codex/Claude가 그 프롬프트로 종합 의견 산문만 작성
+4. [프로필이 있을 때만] Codex/Claude가 그 프롬프트로 종합 의견 산문만 작성
 
-5. create_company(company_data, judge_result, base_body, report_prose, ...)
-   → 저장 직전 판정을 다시 한 번 검증(클라이언트를 신뢰하지 않음), 표·비기술
-     요인 요약은 서버가 직접 렌더링해 최종 본문 조립, 적합도 이력 기록, 알림
-     발송, RAG 재색인까지 자동. 판정이 불완전하면(항목 누락 등) 저장을 거부하고
-     어느 항목이 문제인지 알려주니 2단계부터 다시 시도
+5. create_company(workflow_id, base_body, report_prose, company_data)
+   → 프로필이 있었다면(3~4단계를 거쳤다면): workflow_id, base_body,
+     report_prose만 전달 — raw_text/company_data/judge_result는 전부 서버
+     캐시에서 조회하므로 다시 보내지 않음(company_data를 인자로 줘도 무시).
+     저장 직전 판정을 다시 한 번 검증(클라이언트를 신뢰하지 않음)
+   → 프로필이 없었다면(3~4단계를 건너뛰었다면): company_data를 이때 처음이자
+     한 번만 인자로 직접 전달(재전송이 아니라 서버가 처음 받는 값이라 캐싱
+     대상이 아님)
+   → 표·비기술 요인 요약은 서버가 직접 렌더링해 최종 본문 조립, 적합도 이력
+     기록, 알림 발송, RAG 재색인까지 자동. 판정이 불완전하면(항목 누락 등)
+     저장을 거부하고 어느 항목이 문제인지 알려주니 2단계부터 다시 시도.
+     같은 workflow_id로 저장 성공 후 재호출하면(응답 유실 등) 다시 저장하지
+     않고 그때 결과를 그대로 반환(멱등)
 ```
 
 즉 **회사 하나를 등록해도 Job FitCheck 자체 LLM API 비용이 전혀 들지 않습니다** — 분석은
@@ -136,11 +151,11 @@ claude mcp list
 
 > "https://www.wanted.co.kr/wd/12345 이 공고 분석해서 등록해줘"
 
-1. Claude/Codex가 `prepare_company_import(url=...)`로 원문+프롬프트를 받음
+1. Claude/Codex가 `prepare_company_import(url=...)`로 원문+프롬프트+`workflow_id`를 받음
 2. 원문을 읽고 구조화 정보 추출 → 마크다운 본문 생성 → (프로필 있으면) 1단계 판정까지 직접 수행
-3. `prepare_fit_report(judge_result, company_data)`로 판정을 정규화하고 보고서 프롬프트를 받음
+3. (프로필 있으면) `prepare_fit_report(workflow_id, judge_result, company_data)`로 판정을 정규화하고 보고서 프롬프트를 받음
 4. 그 프롬프트로 종합 의견 산문 작성
-5. `create_company(...)`로 저장 요청
+5. `create_company(workflow_id, base_body, report_prose)`로 저장 요청(프로필 없으면 `company_data`를 여기서 직접 전달)
 6. 완료되면 지원 상태 로그·적합도 이력·알림(설정돼 있으면 텔레그램/슬랙/디스코드)까지 자동 반영
 
 > "지원한 회사들 상태 어떻게 됐어?"
