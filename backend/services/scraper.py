@@ -148,8 +148,14 @@ async def fetch_url_text(url: str) -> str:
         response.raise_for_status()
         html = response.text
 
-        # 원티드는 SSR JSON에 구조화된 공고 데이터가 있어 파싱 품질이 높음
-        if "wanted.co.kr" in url:
+        # 원티드는 SSR JSON에 구조화된 공고 데이터가 있어 파싱 품질이 높음.
+        # 개별 공고(/wd/)가 아니라 회사 채용정보 목록(/company/) 등 다른 페이지면
+        # __NEXT_DATA__에 job/initialData가 없어 _parse_wanted()가 None을 반환하는데,
+        # 이때 아래 범용 스크래핑으로 넘어가면 회사 소개문 등을 공고 원문으로 오인해
+        # 실제 요건과 무관한 분석·적합도 평가가 생성된다(2026-09-06 실사용 중 발견 —
+        # /company/{id} URL로 등록 시 회사 소개 텍스트가 공고인 것처럼 분석됨). 원티드
+        # 도메인이 확인되면 구조화 파싱 실패 시 바로 명확히 거부한다.
+        if is_wanted_host(url):
             text, company_id = _parse_wanted(html)
             if text:
                 if company_id:
@@ -157,12 +163,20 @@ async def fetch_url_text(url: str) -> str:
                     if extra:
                         text = text + "\n\n" + extra
                 return text[:_MAX_TEXT_CHARS]
+            raise ValueError(
+                "이 URL에서 채용공고 정보를 찾을 수 없습니다. 회사 페이지가 아니라 "
+                "개별 채용공고 페이지(wanted.co.kr/wd/...) URL인지 확인해주세요."
+            )
 
-        # 리멤버 커리어도 __NEXT_DATA__ JSON에 구조화 데이터 포함
+        # 리멤버 커리어도 __NEXT_DATA__ JSON에 구조화 데이터 포함 — 같은 이유로
+        # 구조화 파싱 실패 시 범용 스크래핑으로 넘어가지 않고 거부한다.
         if "rememberapp.co.kr" in url:
             text = _parse_remember(html)
             if text:
                 return text[:_MAX_TEXT_CHARS]
+            raise ValueError(
+                "이 URL에서 채용공고 정보를 찾을 수 없습니다. 개별 채용공고 페이지 URL인지 확인해주세요."
+            )
 
     soup = BeautifulSoup(html, "lxml")
     text = _extract_main_content(soup)
