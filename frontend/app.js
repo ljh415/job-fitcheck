@@ -1260,18 +1260,20 @@ async function submitImage() {
       headers: token ? { 'Authorization': `Bearer ${token}` } : {},
       body: formData,
     });
-    setProgress(null);
-    if (res.status === 401) { localStorage.removeItem(TOKEN_KEY); navigate('login', null, true); return; }
+    if (res.status === 401) { setProgress(null); localStorage.removeItem(TOKEN_KEY); navigate('login', null, true); return; }
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
-      showToast(typeof err.detail === 'string' ? err.detail : '요청 실패', 'error');
+      const msg = typeof err.detail === 'string' ? err.detail : '요청 실패';
+      setProgressError(msg);
+      showToast(msg, 'error');
       return;
     }
     const record = await res.json();
+    setProgress(null);
     showToast(`${record.frontmatter.company_name} 분석 완료!`);
     navigate('detail', record.slug);
   } catch (e) {
-    setProgress(null);
+    setProgressError(e.message);
     showToast(e.message, 'error');
   }
 }
@@ -1295,7 +1297,8 @@ function setProgress(msg) {
   if (_progressTimer) { clearInterval(_progressTimer); _progressTimer = null; }
 
   if (msg) {
-    box.classList.remove('hidden');
+    box.classList.remove('hidden', 'error');
+    box.querySelector('.spinner')?.classList.remove('hidden');
     msgEl.textContent = msg;
     if (elapsedEl) elapsedEl.textContent = '0초 경과';
     if (barEl) barEl.style.width = '0%';
@@ -1322,6 +1325,20 @@ function setProgress(msg) {
   }
 }
 
+function setProgressError(msg) {
+  const box = document.getElementById('add-progress');
+  const msgEl = document.getElementById('progress-msg');
+  const spinnerEl = box?.querySelector('.spinner');
+  const barEl = document.getElementById('progress-bar');
+  if (!box) return;
+  if (_progressTimer) { clearInterval(_progressTimer); _progressTimer = null; }
+  box.classList.remove('hidden');
+  box.classList.add('error');
+  if (msgEl) msgEl.textContent = `❌ ${msg}`;
+  if (spinnerEl) spinnerEl.classList.add('hidden');
+  if (barEl) barEl.style.width = '100%';
+}
+
 async function submitUrl() {
   const url = document.getElementById('url-input').value.trim();
   if (!url) return alert('URL을 입력해주세요.');
@@ -1333,24 +1350,27 @@ async function submitUrl() {
       headers: { 'Content-Type': 'application/json', ...(token ? { 'Authorization': `Bearer ${token}` } : {}) },
       body: JSON.stringify({ url }),
     });
-    setProgress(null);
     if (res.status === 409) {
+      setProgress(null);
       const { detail } = await res.json();
       showToast(`이미 등록된 공고입니다 (${detail.name}). 해당 페이지로 이동합니다.`, 'error');
       navigate('detail', detail.slug);
       return;
     }
-    if (res.status === 401) { localStorage.removeItem(TOKEN_KEY); navigate('login'); return; }
+    if (res.status === 401) { setProgress(null); localStorage.removeItem(TOKEN_KEY); navigate('login'); return; }
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
-      showToast(typeof err.detail === 'string' ? err.detail : '요청 실패', 'error');
+      const msg = typeof err.detail === 'string' ? err.detail : '요청 실패';
+      setProgressError(msg);
+      showToast(msg, 'error');
       return;
     }
     const record = await res.json();
+    setProgress(null);
     showToast(`${record.frontmatter.company_name} 분석 완료!`);
     navigate('detail', record.slug);
   } catch (e) {
-    setProgress(null);
+    setProgressError(e.message);
     showToast(e.message, 'error');
   }
 }
@@ -1370,7 +1390,7 @@ async function submitText() {
     showToast(`${record.frontmatter.company_name} ${text ? '분석 완료!' : '저장 완료!'}`);
     navigate('detail', record.slug);
   } catch (e) {
-    setProgress(null);
+    setProgressError(e.message);
     showToast(e.message, 'error');
   }
 }
