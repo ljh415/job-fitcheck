@@ -290,3 +290,4 @@ private 저장소를 지인 대상 셀프호스팅 공개로 전환하기 위한
 - ✅ MCP도 같은 구조화 저장 계약 적용 — `create_company`가 raw_text/company_data/judge_result를 재전송 없이 workflow_id 캐시로 참조. Codex 리뷰 4라운드(중간 4·낮음 4 전부 수정) 통과, 실사용량 절감폭은 측정 방법 한계로 신뢰 가능한 숫자를 못 냄(재전송 제거 자체는 코드 레벨로 검증). `main`에 v1.8.0으로 병합·배포 완료(2026-09-04). 상세: `docs/mcp-structured-contract/PLAN.md`·`HISTORY.md`(dev worktree, 로컬 전용)
 - ✅ 마크다운 단일 물결표(~) 취소선 오인 수정 (긴급 패치, 2026-09-03, v1.7.1)
 - ✅ 직무 적합도 분석 표 레이아웃 고정 (긴급 패치, 2026-09-03, v1.7.2)
+- 🔧 공고 추출이 필수·우대 요건을 기술 키워드로 쪼개 항목·판정 행이 과도해지는 문제 — 구조화(추출) 개선 → 평가 개선 순서. 브랜치에 커밋됨: 추출 모델 Sonnet 5, 추출 프롬프트 규칙 문구, 스크래퍼 경력 표기 수정(원티드 연차 보존·리멤버 경력 무관). prod 미반영. 상세: `docs/extract-line-items/PLAN.md`·`HISTORY.md`(로컬 전용), 브랜치 `feat/extract-line-items`

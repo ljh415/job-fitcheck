@@ -44,6 +44,9 @@ docs/fit-eval-consistency/
 docs/fit-eval-structural-redesign/
 docs/claude-strict-tool-use/
 docs/mcp-structured-contract/
+docs/extract-line-items/
+docs/fit-eval-scoring-policy/
+docs/mcp-session-usage-optimization/
 
 # 데이터 (개인 정보 포함)
 data/
