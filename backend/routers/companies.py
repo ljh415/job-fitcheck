@@ -595,17 +595,19 @@ async def _process_company(
     # 파이프라인 시작 시점에 provider/모델을 스냅샷 떠서 이후 실행 도중 설정이 바뀌어도 섞이지 않게 한다.
     snap = snapshot or capture_snapshot()
 
-    # 1. Lightweight: 공고 텍스트에서 구조화 데이터 추출
+    # 1. High: 공고 텍스트에서 구조화 데이터 추출. Light(Haiku)는 원문 줄을 키워드로 쪼개거나 빠뜨리고 같은 공고도
+    # 매번 항목 수가 달랐다 — 그래서 추출만 High를 쓴다.
+    extract_llm, extract_model = high_from_snapshot(snap)
     light, light_model = light_from_snapshot(snap)
-    logger.info("[1/4] 구조화 추출 시작 (model=%s, 텍스트 %d자)", light_model, len(raw_text))
+    logger.info("[1/4] 구조화 추출 시작 (model=%s, 텍스트 %d자)", extract_model, len(raw_text))
     user_extract = prompts.EXTRACT_COMPANY_USER_TEMPLATE.format(raw_text=safe_raw_text)
-    extracted = await light.extract_structured(
+    extracted = await extract_llm.extract_structured(
         system=prompts.EXTRACT_COMPANY_SYSTEM,
         user=user_extract,
         tool_name=prompts.EXTRACT_COMPANY_TOOL_NAME,
         tool_description=prompts.EXTRACT_COMPANY_TOOL_DESCRIPTION,
         tool_schema=prompts.EXTRACT_COMPANY_TOOL_SCHEMA,
-        model=light_model,
+        model=extract_model,
         operation="공고 추출",
         reasoning_effort=snap.reasoning_effort,
     )

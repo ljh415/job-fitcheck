@@ -47,6 +47,7 @@ def escape_tag_chars(text: str) -> str:
 EXTRACT_COMPANY_SYSTEM = f"""당신은 채용공고와 회사 정보를 분석하는 전문가입니다.
 주어진 텍스트에서 회사 및 채용 정보를 최대한 정확하게 추출하세요.
 텍스트에 명시되지 않은 정보는 반드시 null로 남기세요. 절대 추측하지 마세요.
+주요업무·필수 요건·우대 사항은 원문에 적힌 내용을 빠짐없이 옮기고, 원문에 없는 항목은 만들지 마세요.
 {TRUST_BOUNDARY_NOTICE}"""
 
 EXTRACT_COMPANY_USER_TEMPLATE = """다음 텍스트에서 회사 및 채용공고 정보를 추출해주세요.
@@ -97,17 +98,17 @@ EXTRACT_COMPANY_TOOL_SCHEMA = {
         "key_responsibilities": {
             "type": "array",
             "items": {"type": "string"},
-            "description": "주요 업무 목록"
+            "description": "주요 업무 목록. 원문의 업무 한 줄을 한 항목으로, 원문 문장 그대로 옮깁니다. 요약하거나 쪼개지 않습니다."
         },
         "required_skills": {
             "type": "array",
             "items": {"type": "string"},
-            "description": "필수 요건 목록"
+            "description": "필수 요건 목록. 원문 필수(자격) 요건의 한 줄을 목록의 한 항목으로, 원문 문장 그대로 옮깁니다. 요약하거나 기술 키워드로 쪼개지 말고, 줄 안의 '또는'·'등'·연차·수준 같은 조건을 그대로 둡니다. 하위 목록이 그 줄의 조건을 이루는 경우(예: '아래 중 하나 이상')에만 하위 목록을 그 줄과 함께 한 항목으로 두고, 제목 줄을 다른 항목 앞에 붙이지 않습니다. 필수 구역의 줄만 여기에 넣습니다. 경력 연수는 experience_required에 넣되, 유관 경력·분야 조건이 적힌 줄은 이 목록에도 항목으로 남깁니다."
         },
         "preferred_skills": {
             "type": "array",
             "items": {"type": "string"},
-            "description": "우대 요건 목록"
+            "description": "우대 요건 목록. 원문 우대 사항의 한 줄을 목록의 한 항목으로, 원문 문장 그대로 옮깁니다. 요약하거나 기술 키워드로 쪼개지 말고, 줄 안의 '또는'·'등'·연차·수준 같은 조건을 그대로 둡니다. 하위 목록이 그 줄의 조건을 이루는 경우(예: '아래 중 하나 이상')에만 하위 목록을 그 줄과 함께 한 항목으로 두고, 제목 줄을 다른 항목 앞에 붙이지 않습니다. 우대 구역의 줄만 여기에 넣습니다."
         },
         "tags": {
             "type": "array",
