@@ -31,8 +31,15 @@ def build_input_items(company_data: dict) -> list[dict]:
     목록으로 변환한다. id는 코드가 부여한다 — LLM은 판정 시 이 id만 그대로 돌려준다."""
     items = []
     for prefix, (key, _grade) in _ID_PREFIX_MAP.items():
-        for i, text in enumerate(company_data.get(key, [])):
-            items.append({"id": f"{prefix}:{i}", "source_item": text})
+        n = 0
+        for entry in company_data.get(key, []):
+            if isinstance(entry, dict):  # 주요 업무의 {title, details} 묶음 — 세부마다 판정 행 하나
+                for detail in entry.get("details") or []:
+                    items.append({"id": f"{prefix}:{n}", "source_item": detail, "group": entry.get("title", "")})
+                    n += 1
+            else:
+                items.append({"id": f"{prefix}:{n}", "source_item": entry})
+                n += 1
     return items
 
 
@@ -482,10 +489,16 @@ def render_requirement_table(items: list[dict], header: str, table_kind: str = "
     영역은 코드가 결정적으로 만든다."""
     col1, col2 = _TABLE_COLUMNS.get(table_kind, _TABLE_COLUMNS["default"])
     lines = [f"### {header}", "", f"| {col1} | {col2} | 근거 |", "|------|----------|------|"]
+    prev_group = None
     for it in items:
         symbol = _VERDICT_SYMBOL.get(it["verdict"], it["verdict"])
         evidence = it.get("evidence_summary") or it.get("reason") or ""
-        lines.append(f"| {_escape_cell(it['source_item'])} | {symbol} | {_escape_cell(evidence)} |")
+        group = it.get("group")
+        if group is not None and group != prev_group:
+            lines.append(f"| **{_escape_cell(group)}** | | |")
+        prev_group = group
+        label = f"└ {it['source_item']}" if group is not None else it["source_item"]
+        lines.append(f"| {_escape_cell(label)} | {symbol} | {_escape_cell(evidence)} |")
     return "\n".join(lines)
 
 
@@ -509,6 +522,10 @@ def normalize_and_render(judge_result: dict, company_data: dict) -> dict:
     normalized, items_incomplete = reconcile_judgments(
         input_items, judge_result.get("item_judgments", [])
     )
+    group_of = {it["id"]: it["group"] for it in input_items if "group" in it}
+    for n in normalized:
+        if n["id"] in group_of:
+            n["group"] = group_of[n["id"]]
     gaps, strengths = derive_gaps_strengths(normalized)
 
     decision_factors, factors_incomplete = validate_decision_factors(
@@ -997,4 +1014,12 @@ if __name__ == "__main__":
     assert nr_bad["evaluation_incomplete"] is True
     assert nr_bad["item_judgments"][0]["filled_by"] == "code_fallback"
 
+        # 묶음({title, details}) 업무: 세부마다 판정 행, 표에는 소제목 행 + 들여쓴 세부 행, 문자열은 기존 모양 그대로
+    g_data = {"required_skills": [], "preferred_skills": [], "key_responsibilities": [{"title": "T", "details": ["d1", "d2"]}, "flat"]}
+    g_in = build_input_items(g_data)
+    assert [x["id"] for x in g_in] == ["responsibility:0", "responsibility:1", "responsibility:2"]
+    assert g_in[0]["group"] == "T" and "group" not in g_in[2]
+    g_rows = [{"id": x["id"], "source_item": x["source_item"], "verdict": "met", "evidence_summary": "e", **({"group": x["group"]} if "group" in x else {})} for x in g_in]
+    g_tbl = render_requirement_table(g_rows, "직무 적합도 분석", table_kind="responsibility")
+    assert "| **T** | | |" in g_tbl and "| └ d1 |" in g_tbl and "| flat |" in g_tbl, g_tbl
     print("fit_normalization self-check 통과")
