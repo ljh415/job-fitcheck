@@ -291,3 +291,5 @@ private 저장소를 지인 대상 셀프호스팅 공개로 전환하기 위한
 - ✅ 마크다운 단일 물결표(~) 취소선 오인 수정 (긴급 패치, 2026-09-03, v1.7.1)
 - ✅ 직무 적합도 분석 표 레이아웃 고정 (긴급 패치, 2026-09-03, v1.7.2)
 - 🔧 공고 추출이 필수·우대 요건을 기술 키워드로 쪼개 항목·판정 행이 과도해지는 문제 — 구조화(추출) 개선 → 평가 개선 순서. 브랜치에 커밋됨: 추출 모델 Sonnet 5, 추출 프롬프트 규칙 문구, 스크래퍼 경력 표기 수정(원티드 연차 보존·리멤버 경력 무관). 알려진 한계: 하위 불릿이 딸린 상위 줄을 모델이 공고마다 빼거나 펼치거나 합침(해당 공고 약 13%, 평가 단계에서 문제 시 재검토). prod 미반영. 상세: `docs/extract-line-items/PLAN.md`·`HISTORY.md`(로컬 전용), 브랜치 `feat/extract-line-items`
+- ⬜ Claude Sonnet 5.5 전환 (별도 브랜치 `feat/sonnet-5-5-migration`, `feat/extract-line-items` 끝에서 분기) — 5.5가 강제 도구 호출(`tool_choice` tool/any)을 400으로 거부하고 thinking을 끌 수 없어(`disabled` 400) `extract_structured()`를 JSON outputs 등으로 바꾸고 추출·판정·프로필 추출·RAG를 재검증해야 함. 시험 계획 초안 작성, 결정 대기(대상 공고·반복·비용). Haiku 5.5(`claude-haiku-5-5`)는 Light 티어 전환 후보. 상세: `docs/sonnet-5-5-migration/PLAN.md`(로컬 전용)
+- ⬜ 적합도 평가 개선 (별도 브랜치 `feat/eval-improvement`, 5.5 전환 뒤 그 끝에서 분기 예정) — 같은 입력 반복 시 점수 폭 5점(가능하면 3점) 이내, 입력 밖 추정 차단, 점수를 판정 결과를 종합해 보고서 호출에서 산정, 판정 규칙 준수 개선(명시된 또는/및 등). 상세: `docs/extract-line-items/PLAN.md` §2단계(3번 브랜치 생성 시 `docs/eval-improvement/`로 이관)
