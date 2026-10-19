@@ -225,7 +225,7 @@ class AnthropicProvider(LLMProvider):
         model: str,
         operation: str = "",
         content: list[dict] | None = None,
-        max_tokens: int = 4096,
+        max_tokens: int = 8192,
         reasoning_effort: str | None = None,  # ponytail: OpenAI 전용, Anthropic은 미사용. ABC 시그니처 일치용
     ) -> str:
         msg_content: str | list = content if content is not None else user
@@ -309,7 +309,7 @@ class AnthropicProvider(LLMProvider):
                 with usage_tracker.timer() as t:
                     response = await self._client.messages.create(
                         model=model,
-                        max_tokens=4096,
+                        max_tokens=8192,
                         system=system,
                         messages=messages,  # type: ignore[arg-type]
                         tools=tool_defs,
@@ -379,7 +379,7 @@ class AnthropicProvider(LLMProvider):
         messages: list[dict],
         model: str,
         operation: str = "",
-        max_tokens: int = 4096,
+        max_tokens: int = 8192,
     ) -> AsyncIterator[str]:
         try:
             with usage_tracker.timer() as t:
