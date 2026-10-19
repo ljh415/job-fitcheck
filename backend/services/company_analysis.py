@@ -147,7 +147,7 @@ async def evaluate_fit_structured(
         user=normalized["report_user"],
         model=high_model,
         operation=f"{operation}(보고서)",
-        max_tokens=4096,
+        max_tokens=8192,  # 5.5는 thinking이 출력 한도를 쓴다(4096의 93%까지 사용) — 잘리면 한 번 더 요청해 비용이 늘어남
         reasoning_effort=snap.reasoning_effort,
     )
 
