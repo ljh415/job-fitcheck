@@ -1852,12 +1852,14 @@ function syncProviderModels() {
   document.getElementById('model-inputs-claude').style.display = provider === 'claude' ? '' : 'none';
   document.getElementById('model-inputs-openai').style.display = provider === 'openai' ? '' : 'none';
   document.getElementById('model-inputs-gemini').style.display = provider === 'gemini' ? '' : 'none';
+  // Claude는 서버가 API 목록 중 허용 모델만 돌려주므로, 입력 칸이 자유 입력으로 남지 않게 매번 목록을 받아 선택 목록으로 바꾼다
+  if (provider === 'claude') fetchModelList(true);
 }
 
 // 알려진 모델 입력 단가 ($/1M tokens) — 미등록 모델은 이름 패턴으로 추정
 const MODEL_INPUT_PRICE = {
-  // Claude
-  'claude-opus': 5, 'claude-sonnet': 3, 'claude-haiku': 1,
+  // Claude (선택 가능한 모델만: Sonnet 5/5.5 $2, Haiku 4.5 $1, Haiku 5.5 $0.1 — 구체적 패턴 먼저)
+  'claude-haiku-5-5': 0.1, 'claude-haiku': 1, 'claude-sonnet': 2,
   // GPT-5 (구체적 패턴 먼저)
   'gpt-5.5-pro': 30, 'gpt-5.5': 5,
   'gpt-5.4-pro': 30, 'gpt-5.4-mini': 0.75, 'gpt-5.4-nano': 0.2, 'gpt-5.4': 2.5,
@@ -1945,13 +1947,14 @@ function applyModelListToDropdowns(models, provider, currentHigh, currentLight) 
 
 function loadModelCache(provider) {
   try {
-    const raw = localStorage.getItem(`model-cache-${provider}`);
+    // v2: Claude 허용 목록 도입 전에 저장된 13개짜리 캐시를 버리기 위해 키를 바꿨다
+    const raw = localStorage.getItem(`model-cache-v2-${provider}`);
     return raw ? JSON.parse(raw) : null;
   } catch { return null; }
 }
 
 function saveModelCache(provider, models) {
-  localStorage.setItem(`model-cache-${provider}`, JSON.stringify({
+  localStorage.setItem(`model-cache-v2-${provider}`, JSON.stringify({
     models,
     updatedAt: new Date().toISOString(),
   }));
@@ -1970,10 +1973,10 @@ function applyModelCache(provider, currentHigh, currentLight) {
   return true;
 }
 
-async function fetchModelList() {
+async function fetchModelList(quiet = false) {
   const provider = document.getElementById('provider-select')?.value;
   if (!provider) return;
-  const btn = document.querySelector('[onclick="fetchModelList()"]');
+  const btn = quiet ? null : document.querySelector('[onclick="fetchModelList()"]');
   if (btn) { btn.disabled = true; btn.textContent = '불러오는 중...'; }
   try {
     const data = await api(`/models?provider=${provider}`);
@@ -1988,9 +1991,10 @@ async function fetchModelList() {
     const updatedEl = document.getElementById('model-list-updated');
     if (updatedEl) updatedEl.textContent = `마지막 업데이트: ${new Date().toLocaleDateString('ko-KR')} ${new Date().toLocaleTimeString('ko-KR')}`;
 
-    showToast(`${models.length}개 모델 로드 완료`, 'success');
+    if (!quiet) showToast(`${models.length}개 모델 로드 완료`, 'success');
   } catch (e) {
-    showToast('모델 목록 조회 실패: ' + e.message, 'error');
+    if (quiet) console.error('모델 목록 자동 조회 실패:', e);
+    else showToast('모델 목록 조회 실패: ' + e.message, 'error');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '모델 목록 불러오기'; }
   }
