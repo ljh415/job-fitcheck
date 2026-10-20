@@ -37,7 +37,7 @@ async def evaluate_fit(
     user_fit = prompts.EVALUATE_FIT_USER_TEMPLATE.format(
         candidate_profile=profile_text,
         company_json=json.dumps(company_data, ensure_ascii=False),
-        raw_text=raw_text[:4000],
+        raw_text=raw_text,
         custom_criteria=custom_criteria_section,
     )
     # Gemini는 function call 내에 장문 마크다운 생성 시 MALFORMED_FUNCTION_CALL이 발생함.
@@ -122,7 +122,7 @@ async def evaluate_fit_structured(
     judge_user = prompts.EVALUATE_FIT_JUDGE_USER_TEMPLATE.format(
         candidate_profile=profile_text,
         company_json=json.dumps(company_data, ensure_ascii=False),
-        raw_text=raw_text[:4000],
+        raw_text=raw_text,
         item_list=item_list_text or "(판정할 항목 없음)",
         tool_name=prompts.EVALUATE_FIT_JUDGE_TOOL_NAME,
         custom_criteria=custom_criteria_section,

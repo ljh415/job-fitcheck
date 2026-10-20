@@ -656,7 +656,7 @@ async def _process_company(
     logger.info("[3/4] 마크다운 본문 생성 시작")
     user_body = prompts.GENERATE_BODY_USER_TEMPLATE.format(
         company_json=json.dumps(extracted, ensure_ascii=False),
-        raw_text=safe_raw_text[:4000],
+        raw_text=safe_raw_text,
     )
     body = await light.complete(
         system=prompts.GENERATE_BODY_SYSTEM,
