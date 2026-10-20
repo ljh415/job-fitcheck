@@ -49,6 +49,7 @@ docs/fit-eval-scoring-policy/
 docs/mcp-session-usage-optimization/
 docs/sonnet-5-5-migration/
 docs/eval-improvement/
+docs/profile-generation-improvement/
 
 # 데이터 (개인 정보 포함)
 data/
