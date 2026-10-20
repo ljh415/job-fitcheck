@@ -75,7 +75,7 @@ class LLMProvider(ABC):
         max_iterations: int = 6,
     ) -> dict:
         """여러 도구를 노출하고 LLM이 스스로 어떤 도구를(몇 개든, 안 쓰든) 호출할지 판단하며
-        답하게 하는 ReAct 스타일 에이전트 루프. `extract_structured()`(특정 도구 강제 호출 1회)와
+        답하게 하는 ReAct 스타일 에이전트 루프. `extract_structured()`(스키마에 맞는 구조화 응답 1회)와
         달리, 도구 선택 자체를 LLM에 맡기고 도구 결과를 관찰한 뒤 다음 행동을 반복 판단한다.
 
         Claude/Gemini/OpenAI 셋 다 구현돼 있다. 기본 구현은 미지원 — 새 provider가 추가되면

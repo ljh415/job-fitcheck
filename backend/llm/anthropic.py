@@ -1,8 +1,10 @@
 """
 Anthropic Claude provider 구현.
 
-구조화 추출: tool_choice={"type": "tool"} 로 특정 툴 강제 호출
-  (강제 호출을 400으로 거부하는 모델은 JSON outputs 경로 — _JSON_OUTPUT_MODELS)
+구조화 추출(extract_structured): 모델별로 경로가 갈린다.
+  - 5.5 계열(_JSON_THINKING의 모델): JSON outputs(output_config.format) — 강제 도구 호출을 400으로 거부하므로
+  - 그 외(Sonnet 5, Haiku 4.5): tool_choice={"type": "tool"} 로 특정 툴 강제 호출
+  어느 경로에서도 temperature는 보내지 않는다. 쓸 수 있는 모델은 ALLOWED_CLAUDE_MODELS뿐이다.
 스트리밍: messages.stream() 컨텍스트 매니저 사용
 """
 import copy

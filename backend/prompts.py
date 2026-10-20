@@ -6,7 +6,7 @@ provider-agnostic 설계: Anthropic tool use와 OpenAI function calling에서
 llm/openai.py에서 처리하므로 이 파일은 내용(What)에만 집중한다.
 
 섹션 구성:
-  EXTRACT_COMPANY_*  — Lightweight 티어: 공고 텍스트 → 구조화 JSON
+  EXTRACT_COMPANY_*  — High 티어: 공고 텍스트 → 구조화 JSON
   GENERATE_BODY_*    — Lightweight 티어: 구조화 데이터 → 마크다운 본문 (섹션 1~3)
   EVALUATE_FIT_*     — High 티어: 후보자 프로필 + 공고 → 적합도 점수/리포트 (섹션 4)
   EXTRACT_PROFILE_*  — High 티어: 이력서 PDF → 후보자 프로필
@@ -42,7 +42,7 @@ def escape_tag_chars(text: str) -> str:
         return text
     return text.replace("<", "＜").replace(">", "＞")
 
-# ── 회사 정보 구조화 추출 (Lightweight 티어) ──────────────────────────────────
+# ── 회사 정보 구조화 추출 (High 티어) ──────────────────────────────────
 
 EXTRACT_COMPANY_SYSTEM = f"""당신은 채용공고와 회사 정보를 분석하는 전문가입니다.
 주어진 텍스트에서 회사 및 채용 정보를 최대한 정확하게 추출하세요.

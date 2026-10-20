@@ -86,7 +86,7 @@ DISCORD_WEBHOOK_URL=...  # 디스코드 Incoming Webhook URL
 | 본문 생성·요약 | claude-haiku-5-5 | gpt-5-mini | gemini-3.1-flash-lite |
 | 공고 구조화 추출·프로필 추출·적합도 평가·Q&A | claude-sonnet-5-5 | gpt-5 | gemini-3.5-flash |
 
-설정 화면에서 모델을 수동으로 변경할 수 있습니다.
+설정 화면에서 모델을 수동으로 변경할 수 있습니다. Claude는 검증을 마친 4개(claude-sonnet-5, claude-sonnet-5-5, claude-haiku-4-5, claude-haiku-5-5)만 선택할 수 있습니다.
 
 ### Gemini 무료 티어 (기본 provider)
 
@@ -101,7 +101,7 @@ DISCORD_WEBHOOK_URL=...  # 디스코드 Incoming Webhook URL
 
 ### 사용 비용 추정치
 
-공고 하나를 넣었을 때 Provider별로 대략 얼마가 나가는지를 정리한 표입니다. 공고 1건 분석은 Light 모델(본문 생성) + High 모델(구조화 추출·적합도 평가) 호출을 합친 값입니다. (아래 표는 구조화 추출을 Light로 하던 시기의 실측값이라, 2026-10-13 이후에는 건당 추출 비용이 약 $0.015(추정) 올라갑니다.)
+공고 하나를 넣었을 때 Provider별로 대략 얼마가 나가는지를 정리한 표입니다. 공고 1건 분석은 Light 모델(본문 생성) + High 모델(구조화 추출·적합도 평가) 호출을 합친 값입니다. (OpenAI·Gemini 행은 구조화 추출을 Light로 하던 시기의 실측값이라, 2026-10-13 이후에는 건당 추출 비용이 약 $0.015(추정) 올라갑니다. Claude 행은 2026-10-20 Sonnet 5.5 기준 소표본 실측이며, 프로필 생성 행만 5.5 기준 값이 없습니다.)
 
 > **주의**: 아래 금액은 각 Provider 콘솔에서 실제 청구 내역을 조회한 값이 아니라, 호출당 사용된 토큰 수 × 앱에 등록된 공개 단가표를 곱해 계산한 **추정치**입니다(`usage_tracker.py` 기준). 실제 청구액과 다를 수 있습니다 — 정확한 금액은 각 Provider의 결제 대시보드(OpenAI Usage, Anthropic Console, Google AI Studio 등)에서 직접 확인하세요.
 
@@ -109,7 +109,7 @@ DISCORD_WEBHOOK_URL=...  # 디스코드 Incoming Webhook URL
 
 | Provider | 모델 조합 (Light + High) | 건당 평균 비용 |
 |---|---|---|
-| Claude | haiku-4-5 + sonnet-4-6 | $0.1109 (63건) |
+| Claude | haiku-5-5 + sonnet-5-5 | $0.1491 (3건) |
 | OpenAI | gpt-5-mini + gpt-5 | $0.0623 (9건) |
 | Gemini | 3.1-flash-lite + 3.5-flash | $0.0584 (8건) |
 
@@ -117,7 +117,7 @@ DISCORD_WEBHOOK_URL=...  # 디스코드 Incoming Webhook URL
 
 | Provider | 모델 (High) | 건당 평균 비용 |
 |---|---|---|
-| Claude | sonnet-4-6 | $0.1027 (18건) |
+| Claude | sonnet-5-5 | $0.1123 (3건) |
 | OpenAI | gpt-5 | $0.0550 (10건) |
 | Gemini | 3.5-flash | $0.0595 (7건) |
 
@@ -125,7 +125,7 @@ DISCORD_WEBHOOK_URL=...  # 디스코드 Incoming Webhook URL
 
 | Provider | 모델 (High) | 건당 평균 비용 |
 |---|---|---|
-| Claude | sonnet-4-6 | $0.1386 (8건) |
+| Claude | sonnet-4-6 (5.5 기준 미측정) | $0.1386 (8건) |
 
 ## 변경 이력
 
