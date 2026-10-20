@@ -220,7 +220,7 @@ _LABEL_THRESHOLDS = (
 
 def label_from_score(fit_score: int) -> str:
     """점수→라벨 매핑은 이미 완전히 결정적이므로 LLM 응답을 신뢰하지 않고 코드가
-    직접 계산한다(EVALUATE_FIT_JUDGE_USER_TEMPLATE의 점수→라벨 기준표와 동일)."""
+    직접 계산한다(prompts.FIT_SCORE_GUIDANCE의 점수→라벨 기준표와 동일)."""
     for threshold, label in _LABEL_THRESHOLDS:
         if fit_score >= threshold:
             return label
@@ -502,6 +502,32 @@ def render_requirement_table(items: list[dict], header: str, table_kind: str = "
     return "\n".join(lines)
 
 
+_VERDICT_TEXT = {"met": "충족", "unmet": "미충족", "unclear": "불명확", "verify": "확인 필요"}
+_KIND_TEXT = {"required": "필수", "preferred": "우대", "responsibility": "주요업무"}
+
+
+def render_judgment_table_text(items: list[dict]) -> str:
+    """보고서 호출(점수 산정 + 산문)에 줄 판정 표 전체 — 코드가 정리한 정규화 배열
+    그대로(항목, 충족 여부, 심각도, 근거). 사용자에게 보이는 마크다운 표와 같은 내용이다."""
+    lines = []
+    for it in items:
+        kind = _KIND_TEXT.get(it["id"].split(":", 1)[0], "")
+        group = it.get("group")
+        name = f"{group} > {it['source_item']}" if group else it["source_item"]
+        parts = [f"- [{kind}] {name}: {_VERDICT_TEXT.get(it['verdict'], it['verdict'])}"]
+        if it["verdict"] != "met" and it.get("severity") not in (None, "", "없음"):
+            parts.append(f"(심각도 {it['severity']})")
+        detail = it.get("evidence_summary") or ""
+        if it.get("reason") and it["reason"] != detail:
+            detail = f"{detail} / {it['reason']}" if detail else it["reason"]
+        if it.get("evidence_source"):
+            detail = f"{detail} [출처: {it['evidence_source']}]"
+        if detail:
+            parts.append(f"— {detail}")
+        lines.append(" ".join(parts))
+    return "\n".join(lines) or "(판정 항목 없음)"
+
+
 def normalize_and_render(judge_result: dict, company_data: dict) -> dict:
     """1단계 판정 원본(judge_result)과 company_data를 받아, 이 파일의 정규화
     함수 전부를 정해진 순서로 실행한 뒤 결정론적 산출물을 한 번에 반환한다.
@@ -513,7 +539,8 @@ def normalize_and_render(judge_result: dict, company_data: dict) -> dict:
 
     반환값의 report_user는 EVALUATE_FIT_REPORT_USER_TEMPLATE을 이미 채운
     상태 — 호출자는 이 문자열을 그대로 2단계 보고서 LLM 호출(REST) 또는
-    외부 클라이언트에게 반환(MCP)하면 된다."""
+    외부 클라이언트에게 반환(MCP)하면 된다. 점수·라벨은 이 함수가 만들지 않는다
+    (보고서 호출이 정한다) — 반환값에 fit_score/fit_label 키가 없다."""
     if not isinstance(judge_result, dict):
         logger.warning("normalize_and_render: judge_result가 dict 아님 — raw=%r", judge_result)
         judge_result = {}
@@ -534,10 +561,10 @@ def normalize_and_render(judge_result: dict, company_data: dict) -> dict:
     decision_factors = enforce_deterministic_levels(decision_factors, company_data)
     gaps = gaps + derive_decision_factor_gaps(decision_factors)
 
-    fit_score, score_incomplete = safe_fit_score(judge_result.get("fit_score"))
-    incomplete = items_incomplete or factors_incomplete or score_incomplete
-    fit_label = label_from_score(fit_score if fit_score is not None else 0)
-    fit_score = fit_score if fit_score is not None else 0
+    # 점수·라벨은 여기서 정하지 않는다 — 표를 정리한 뒤 보고서 호출이 표 전체를 보고
+    # 점수를 정하고(prompts.EVALUATE_FIT_REPORT_TOOL_SCHEMA), 호출자가 safe_fit_score·
+    # label_from_score로 확정한다.
+    incomplete = items_incomplete or factors_incomplete
 
     tables = "\n\n".join(
         render_requirement_table(
@@ -553,16 +580,12 @@ def normalize_and_render(judge_result: dict, company_data: dict) -> dict:
     factors_summary = render_decision_factors_summary(decision_factors)
 
     report_user = prompts.EVALUATE_FIT_REPORT_USER_TEMPLATE.format(
-        fit_score=fit_score,
-        fit_label=fit_label,
-        strengths_text="\n".join(f"- {s}" for s in strengths) or "(없음)",
-        gaps_text="\n".join(f"- {g}" for g in gaps) or "(없음)",
+        judgment_table_text=render_judgment_table_text(normalized),
         decision_factors_text=json.dumps(decision_factors, ensure_ascii=False),
+        score_guidance=prompts.FIT_SCORE_GUIDANCE,
     )
 
     return {
-        "fit_score": fit_score,
-        "fit_label": fit_label,
         "gaps": gaps,
         "strengths": strengths,
         "evaluation_incomplete": incomplete,
@@ -976,7 +999,6 @@ if __name__ == "__main__":
         "jobplanet_score": 3.5,
     }
     nr_judge_result = {
-        "fit_score": 78,
         "item_judgments": [
             {"id": "required:0", "verdict": "met", "evidence_basis": "explicit",
              "evidence_summary": "3년 경력", "evidence_source": "이력서", "evidence_excerpt": "",
@@ -995,8 +1017,7 @@ if __name__ == "__main__":
         },
     }
     nr_result = normalize_and_render(nr_judge_result, nr_company_data)
-    assert nr_result["fit_score"] == 78
-    assert nr_result["fit_label"] == label_from_score(78)
+    assert "fit_score" not in nr_result and "fit_label" not in nr_result, "점수·라벨은 보고서 호출이 정한다"
     assert nr_result["evaluation_incomplete"] is False, nr_result
     assert len(nr_result["item_judgments"]) == 2
     assert "자격요건 충족 현황" in nr_result["tables"] and "우대사항 충족 현황" in nr_result["tables"]
@@ -1006,8 +1027,12 @@ if __name__ == "__main__":
     # report_user에 실제로 정규화된 fit_score·gaps 내용이 채워져 들어갔는지(REST가
     # 2단계 프롬프트에 넣던 것과 동일한 입력이어야 함)
     assert any("AWS" in g for g in nr_result["gaps"]), nr_result["gaps"]
-    assert str(nr_result["fit_score"]) in nr_result["report_user"]
-    assert "AWS" in nr_result["report_user"]
+    ru = nr_result["report_user"]
+    assert "- [필수] Python 3년 이상: 충족" in ru and "- [우대] AWS 경험: 미충족 (심각도 중)" in ru, ru
+    assert "AWS 경험 없음" in ru and "점수 산정 우선순위" in ru and "확인 필요" in ru, ru
+    assert "{judgment_table_text}" not in ru and "{score_guidance}" not in ru, "미치환 자리표시자"
+    unclear_row = {"id": "responsibility:0", "source_item": "업무", "verdict": "verify", "evidence_summary": "판정 누락", "severity": "중", "group": "묶음"}
+    assert render_judgment_table_text([unclear_row]).startswith("- [주요업무] 묶음 > 업무: 확인 필요 (심각도 중)")
 
     # 8-1. judge_result가 dict가 아니어도(malformed) 죽지 않고 전부 fallback+incomplete
     nr_bad = normalize_and_render(["이건 배열임"], nr_company_data)

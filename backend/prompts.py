@@ -619,10 +619,9 @@ _DECISION_FACTOR_SCHEMA_SALARY = {
 EVALUATE_FIT_JUDGE_TOOL_SCHEMA = {
     "type": "object",
     "properties": {
-        # fit_label은 여기 없다 — 점수→라벨 매핑은 이미 완전히 결정적이라 LLM에
-        # 물어봐야 할 이유가 없고, company_analysis.py가 fit_score만으로
-        # fit_normalization.label_from_score()를 통해 항상 코드로 계산한다.
-        "fit_score": {"type": "integer", "minimum": 0, "maximum": 100, "description": "적합도 점수 (0~100)"},
+        # 점수·라벨은 여기 없다 — 점수는 코드가 판정 표를 정리한 뒤 보고서 호출
+        # (EVALUATE_FIT_REPORT_TOOL_SCHEMA)이 표 전체를 보고 정하고, 라벨은 그 점수로
+        # fit_normalization.label_from_score()가 코드로 계산한다.
         "item_judgments": {
             "type": "array",
             "description": (
@@ -650,7 +649,7 @@ EVALUATE_FIT_JUDGE_TOOL_SCHEMA = {
             ),
         },
     },
-    "required": ["fit_score", "item_judgments", "decision_factors"],
+    "required": ["item_judgments", "decision_factors"],
 }
 
 EVALUATE_FIT_JUDGE_SYSTEM = f"""당신은 구직자의 이력서와 채용공고를 비교하여 항목별 적합도를 판정하는 전문 커리어 컨설턴트입니다.
@@ -701,11 +700,10 @@ EVALUATE_FIT_JUDGE_USER_TEMPLATE = """## 후보자 프로필
 ## 판정할 항목 목록 (id별로 정확히 하나씩 판정하세요 — 하나도 빠뜨리지 마세요)
 {item_list}
 
-위 정보를 바탕으로 각 항목을 판정하고, 종합 점수·decision_factors까지 채워서 {tool_name} 툴(함수)을 호출하세요. 라벨은 점수만으로 시스템이 자동 계산하니 별도로 판단하지 마세요.
+위 정보를 바탕으로 각 항목을 판정하고, decision_factors까지 채워서 {tool_name} 툴(함수)을 호출하세요. 종합 점수와 라벨은 판정이 끝난 뒤 다른 단계에서 정하니 판단하지 마세요.
+{custom_criteria}"""
 
----
-
-## 점수 산정 우선순위
+FIT_SCORE_GUIDANCE = """## 점수 산정 우선순위
 
 아래 우선순위 순서로 종합 점수(0~100점)를 산정하세요. 세부 판단은 맥락에 맞게 자율적으로 결정하세요.
 
@@ -727,13 +725,29 @@ EVALUATE_FIT_JUDGE_USER_TEMPLATE = """## 후보자 프로필
 | 55~69점 | 조건부추천 |
 | 40~54점 | 보류 |
 | 39점 이하 | 비추천 |
-{custom_criteria}"""
 
-EVALUATE_FIT_REPORT_SYSTEM = f"""당신은 이미 확정된 적합도 판정 결과를 보고서 산문으로 정리하는 작성자입니다. 자격요건·우대사항·주요업무 표는 이미 별도로 만들어져 있으니 작성하지 마세요.
+항목 판정이 "확인 필요"인 항목은 미충족으로 간주해 점수에 반영하세요."""
+
+EVALUATE_FIT_REPORT_TOOL_NAME = "submit_fit_report"
+EVALUATE_FIT_REPORT_TOOL_DESCRIPTION = (
+    "확정된 판정 표를 근거로 적합도 점수를 정하고, 그 점수에 맞는 보고서 산문을 제출합니다."
+)
+EVALUATE_FIT_REPORT_TOOL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        # 점수를 산문보다 먼저 두어, 판정 표를 보고 점수를 먼저 정한 뒤 그 점수에 맞춰 글을 쓰게 한다.
+        "fit_score": {"type": "integer", "minimum": 0, "maximum": 100, "description": "입력의 판정 표 전체를 근거로 정한 적합도 점수 (0~100)"},
+        "report": {"type": "string", "description": "종합 의견·핵심 근거·지원 전략 마크다운 산문(표는 제외). 위에서 정한 점수와 어긋나지 않게 작성."},
+    },
+    "required": ["fit_score", "report"],
+}
+
+EVALUATE_FIT_REPORT_SYSTEM = f"""당신은 이미 확정된 항목별 판정 결과를 근거로 적합도 점수를 정하고, 그 점수에 맞는 보고서 산문을 작성하는 평가자입니다. 자격요건·우대사항·주요업무 표는 이미 별도로 만들어져 있으니 작성하지 마세요.
 
 [역할 경계 — 필수 준수]
-- 입력으로 받은 판정 결과(점수·라벨·강점·갭·비기술 요인)는 이미 확정된 사실입니다. 절대 바꾸지 마세요.
-- 점수·라벨·항목별 충족 여부·심각도를 추가하거나 수정하지 마세요.
+- 입력으로 받은 항목별 판정(충족 여부·심각도·근거)과 비기술 요인은 이미 확정된 사실입니다. 절대 바꾸지 마세요.
+- 점수는 입력의 판정 표 전체를 근거로 정하세요. 표에 없는 내용으로 점수를 올리거나 내리지 말고, 판정과 점수가 서로 어긋나지 않게 하세요(미충족·확인 필요가 많거나 심각도가 높은데 점수가 높은 경우 등). 라벨은 점수로 시스템이 계산합니다.
+- 항목별 충족 여부·심각도를 추가하거나 수정하지 마세요.
 - 제공되지 않은 경험·수치·회사 정보를 새로 만들지 마세요.
 - 근거가 부족한 항목은 추측하지 말고 입력에 있는 그대로 표현하세요(예: "확인 필요"인 항목을 확실한 강점처럼 쓰지 마세요).
 - 서로 다른 프로젝트·회사에서 쌓은 별개 경험을 하나로 묶어 표현하지 마세요.
@@ -744,22 +758,23 @@ EVALUATE_FIT_REPORT_SYSTEM = f"""당신은 이미 확정된 적합도 판정 결
 
 EVALUATE_FIT_REPORT_USER_TEMPLATE = """## 확정된 판정 결과
 
-- 점수: {fit_score} / 라벨: {fit_label}
-
-### 강점
-{strengths_text}
-
-### 갭
-{gaps_text}
+### 항목별 판정 표
+{judgment_table_text}
 
 ### 비기술 요인
 {decision_factors_text}
+
+---
+
+{score_guidance}
+
+---
 
 위 결과만 근거로 아래 형식의 산문을 작성하세요 (표는 절대 작성하지 마세요, 이미 코드가 별도로 만듭니다).
 
 ## 5. 종합 의견
 
-(3줄 이내. 점수·라벨 판단의 핵심을 간결하게 서술. 아래 핵심 근거에서 ==/!!로 강조한 것과 같은 핵심 요소를 여기서도 동일하게 ==/!!로 강조하세요 — 종합 의견과 핵심 근거의 강조 표시는 서로 일치해야 합니다. 볼드는 그 외 수치 등 추가 강조에 활용하세요.)
+(3줄 이내. 점수 판단의 핵심을 간결하게 서술. 아래 핵심 근거에서 ==/!!로 강조한 것과 같은 핵심 요소를 여기서도 동일하게 ==/!!로 강조하세요 — 종합 의견과 핵심 근거의 강조 표시는 서로 일치해야 합니다. 볼드는 그 외 수치 등 추가 강조에 활용하세요.)
 
 ### 핵심 근거
 

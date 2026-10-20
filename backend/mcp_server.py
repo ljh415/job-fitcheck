@@ -380,7 +380,7 @@ async def prepare_fit_report(workflow_id: str, judge_result: dict, company_data:
     보낼 필요가 없어진다(workflow_id만 전달). id가 없거나 만료됐으면 ToolError로
     거부하니 prepare_company_import부터 다시 시작할 것.
 
-    judge_result: evaluate_fit_judge 스키마로 호출한 결과 JSON 그대로(fit_score/
+    judge_result: evaluate_fit_judge 스키마로 호출한 결과 JSON 그대로(
     item_judgments/decision_factors). company_data: extract_company 결과. 둘 다
     court-of-record 취급 — 형식이 깨지거나 항목이 빠져도 예외 없이 안전한 기본값+
     evaluation_incomplete로 보정된다(재요청 불필요).
@@ -388,7 +388,7 @@ async def prepare_fit_report(workflow_id: str, judge_result: dict, company_data:
     반환값의 report.user는 EVALUATE_FIT_REPORT_USER_TEMPLATE을 이미 채운 상태 —
     그대로 산문(종합 의견)을 완성해서(도구 호출 아닌 일반 텍스트 응답) create_company의
     report_prose에 전달하면 된다. 반환값의 item_judgments/decision_factors/gaps/
-    strengths/fit_score는 이 도구가 확정한 canonical 값이니, 그와 다른 내용을 보고서에
+    strengths는 이 도구가 확정한 canonical 값이니, 그와 다른 내용을 보고서에
     쓰면 안 된다. 표·비기술 요인 요약 줄은 create_company가 저장 시점에 직접 렌더링하므로
     여기서는 반환하지 않는다(중복 방지)."""
     # complete()는 대용량 데이터를 비우므로(has_profile 포함), 완료된 workflow를
@@ -418,8 +418,8 @@ async def prepare_fit_report(workflow_id: str, judge_result: dict, company_data:
         raise ToolError(str(e))
     normalized = fit_normalization.normalize_and_render(judge_result, company_data)
     return {
-        "fit_score": normalized["fit_score"],
-        "fit_label": normalized["fit_label"],
+        # 점수·라벨은 REST 기준으로 보고서 호출이 정하도록 옮겨졌다 — MCP는 후속 작업(후순위)이라
+        # 지금은 여기서 반환하지 않고, create_company도 judge_result 저장을 거부한다.
         "gaps": normalized["gaps"],
         "strengths": normalized["strengths"],
         "evaluation_incomplete": normalized["evaluation_incomplete"],
@@ -542,6 +542,12 @@ async def create_company(
             # 클라이언트가 prepare_fit_report를 실제로 거쳤는지 서버는 신뢰할 수 없다 —
             # 저장 직전 같은 함수로 다시 정규화한다(멱등, PLAN.md §6.2/§5.3).
             normalized = fit_normalization.normalize_and_render(judge_result, effective_company_data)
+            if "fit_score" not in normalized:
+                # REST는 점수를 보고서 호출이 정하도록 바뀌었고 MCP는 아직 맞추지 않았다(후속, 후순위).
+                raise ToolError(
+                    "judge_result 저장은 아직 지원하지 않습니다 — 적합도 점수 산정 위치가 REST 기준으로 "
+                    "보고서 단계로 옮겨졌고 MCP는 후속 작업입니다. company_data만으로 create_company를 호출하세요."
+                )
             if normalized["evaluation_incomplete"]:
                 fallback_items = [
                     it["id"] for it in normalized["item_judgments"] if it.get("filled_by") == "code_fallback"

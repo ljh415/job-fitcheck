@@ -102,7 +102,7 @@ async def evaluate_fit_structured(
     뿐 런타임 호출자가 없다(2026-09-02, 실호출부 연결 커밋 반영).
 
     1단계(판정 전용) 호출 → 코드가 완결성 검증·jobplanet/location 등급 강제·표
-    렌더링·gaps/strengths 파생 → 2단계(보고서 산문 전용) 호출, LLM 호출 2회.
+    렌더링·gaps/strengths 파생 → 2단계(판정 표 전체를 보고 점수를 정하고 보고서 산문까지 쓰는) 호출, LLM 호출 2회.
 
     반환값은 `evaluate_fit()`과 필드 이름이 다르다(`decision_factors`에 중첩된
     값에서 `salary_check`/`stability_check`/`location_check`를
@@ -142,14 +142,30 @@ async def evaluate_fit_structured(
     # 계약을 그대로 지킨다(2026-09-02 7차 리뷰 반영, 2026-09-03 공유 함수로 이관).
     normalized = fit_normalization.normalize_and_render(judge_result, company_data)
 
-    report_prose = await high.complete(
-        system=prompts.EVALUATE_FIT_REPORT_SYSTEM,
-        user=normalized["report_user"],
-        model=high_model,
-        operation=f"{operation}(보고서)",
-        max_tokens=8192,  # 5.5는 thinking이 출력 한도를 쓴다(4096의 93%까지 사용) — 잘리면 한 번 더 요청해 비용이 늘어남
-        reasoning_effort=snap.reasoning_effort,
-    )
+    # 보고서 호출이 정리된 판정 표 전체를 보고 점수를 정하고(점수 → 산문 순서) 산문까지
+    # 쓴다. 점수나 산문을 못 읽으면 1번만 다시 요청하고, 그래도 안 되면 점수 0 + 불완전.
+    fit_score, report_prose = None, ""
+    for _ in range(2):
+        report_result = await high.extract_structured(
+            system=prompts.EVALUATE_FIT_REPORT_SYSTEM,
+            user=normalized["report_user"],
+            tool_name=prompts.EVALUATE_FIT_REPORT_TOOL_NAME,
+            tool_description=prompts.EVALUATE_FIT_REPORT_TOOL_DESCRIPTION,
+            tool_schema=prompts.EVALUATE_FIT_REPORT_TOOL_SCHEMA,
+            model=high_model,
+            operation=f"{operation}(보고서)",
+            max_tokens=8192,  # 5.5는 thinking이 출력 한도를 쓴다(4096의 93%까지 사용) — 잘리면 한 번 더 요청해 비용이 늘어남
+            reasoning_effort=snap.reasoning_effort,
+        )
+        if not isinstance(report_result, dict):
+            report_result = {}
+        fit_score, _ = fit_normalization.safe_fit_score(report_result.get("fit_score"))
+        report_prose = report_result.get("report") if isinstance(report_result.get("report"), str) else ""
+        if fit_score is not None and report_prose.strip():
+            break
+    score_incomplete = fit_score is None or not report_prose.strip()
+    fit_score = fit_score if fit_score is not None else 0
+    fit_label = fit_normalization.label_from_score(fit_score)
 
     # 비기술 요인 6개를 코드가 고정된 한 줄로 항상 노출 — LLM 종합 의견은 gap 위주라
     # level="없음"(문제없음)인 판정은 산문에서 거의 빠지는데, 그게 "판정 안 함"과
@@ -157,11 +173,11 @@ async def evaluate_fit_structured(
     # 토큰도 안 늘어남 — decision_factors는 이미 report_user에 통째로 들어가 있음).
     fit_report = f"{normalized['tables']}\n\n{report_prose.strip()}\n\n{normalized['factors_summary']}"
     fit_result = {
-        "fit_score": normalized["fit_score"],
-        "fit_label": normalized["fit_label"],
+        "fit_score": fit_score,
+        "fit_label": fit_label,
         "gaps": normalized["gaps"],
         "strengths": normalized["strengths"],
-        "evaluation_incomplete": normalized["evaluation_incomplete"],
+        "evaluation_incomplete": normalized["evaluation_incomplete"] or score_incomplete,
         "item_judgments": normalized["item_judgments"],
         "decision_factors": normalized["decision_factors"],
         # 구 salary_check/stability_check/location_check 필드 하위 호환(CSV 내보내기·
@@ -243,8 +259,7 @@ if __name__ == "__main__":
             "jobplanet_score": 2.4,
         }
         fake_high_structured = SimpleNamespace(
-            extract_structured=AsyncMock(return_value={
-                "fit_score": 65,
+            extract_structured=AsyncMock(side_effect=[{
                 "item_judgments": [
                     {"id": "required:0", "verdict": "met", "evidence_basis": "explicit",
                      "evidence_summary": "프로젝트 X에서 Python 사용", "evidence_source": "X",
@@ -259,8 +274,7 @@ if __name__ == "__main__":
                     "salary": {"status": "미확인", "level": "없음", "note": ""},
                     "custom_criteria": {"status": "해당없음", "level": "없음", "note": ""},
                 },
-            }),
-            complete=AsyncMock(return_value="종합의견 텍스트"),
+            }, {"fit_score": 65, "report": "종합의견 텍스트"}]),
         )
         with patch.object(_this, "high_from_snapshot", return_value=(fake_high_structured, "model")), \
              patch.object(storage, "read_eval_criteria", return_value=""):
@@ -272,16 +286,18 @@ if __name__ == "__main__":
         assert fit_result["decision_factors"]["jobplanet"]["level"] == "상", fit_result["decision_factors"]
         assert any(g.startswith("(상)") and "잡플래닛" in g for g in fit_result["gaps"]), fit_result["gaps"]
         assert "종합의견 텍스트" in fit_report, fit_report
-        assert fake_high_structured.extract_structured.call_args.kwargs["operation"] == "적합도 평가"
-        assert fake_high_structured.complete.call_args.kwargs["operation"] == "적합도 평가(보고서)"
+        assert fake_high_structured.extract_structured.call_args_list[0].kwargs["operation"] == "적합도 평가"
+        assert fake_high_structured.extract_structured.call_args.kwargs["operation"] == "적합도 평가(보고서)"
+        assert fit_result["fit_score"] == 65 and fit_result["fit_label"] == "조건부추천", fit_result
+        report_call = fake_high_structured.extract_structured.call_args_list[1].kwargs
+        assert "- [필수] Python 경험: 충족" in report_call["user"], report_call["user"]
 
         # 5. judge_result(1단계 응답) 자체가 dict가 아니면(provider가 tool 인자를 배열
         # 등으로 잘못 반환) 예외 없이 fallback+incomplete=true로 넘어가야 함(2026-09-02
         # 7차 리뷰 반영 — 전에는 바로 다음 줄 judge_result.get()에서 AttributeError로
         # 평가 전체가 죽었음).
         fake_high_bad_toplevel = SimpleNamespace(
-            extract_structured=AsyncMock(return_value=["이건 배열임 — dict가 아님"]),
-            complete=AsyncMock(return_value="종합의견"),
+            extract_structured=AsyncMock(side_effect=[["이건 배열임 — dict가 아님"], {"fit_score": 50, "report": "종합의견"}]),
         )
         with patch.object(_this, "high_from_snapshot", return_value=(fake_high_bad_toplevel, "model")), \
              patch.object(storage, "read_eval_criteria", return_value=""):
@@ -290,6 +306,26 @@ if __name__ == "__main__":
             )
         assert fit_result_bad["evaluation_incomplete"] is True, fit_result_bad
         assert fit_result_bad["item_judgments"][0]["filled_by"] == "code_fallback", fit_result_bad["item_judgments"]
+
+        # 6. 보고서 호출이 점수를 못 돌려주면(문자열 점수) 1번 다시 요청, 그래도 안 되면 점수 0 + 불완전
+        no_items = {"required_skills": [], "preferred_skills": [], "key_responsibilities": []}
+        factors = {k: {"status": "충족", "level": "없음", "note": ""} for k in
+                   ("career_years", "location", "stability", "jobplanet", "salary", "custom_criteria")}
+        factors["salary"]["status"] = "미확인"
+        judge_ok = {"item_judgments": [], "decision_factors": factors}
+        cases = (
+            ([judge_ok, {"fit_score": "70", "report": "글"}, {"fit_score": 70, "report": "다시 쓴 글"}], 70, False, 3),
+            ([judge_ok, {"report": "점수 없음"}, {"report": "점수 없음"}], 0, True, 3),
+            ([judge_ok, {"fit_score": 81, "report": "  "}, {"fit_score": 81, "report": "글"}], 81, False, 3),
+            ([judge_ok, {"fit_score": 81, "report": "글"}], 81, False, 2),
+        )
+        for responses, want_score, want_incomplete, want_calls in cases:
+            fake = SimpleNamespace(extract_structured=AsyncMock(side_effect=responses))
+            with patch.object(_this, "high_from_snapshot", return_value=(fake, "model")), \
+                 patch.object(storage, "read_eval_criteria", return_value=""):
+                r, _ = await evaluate_fit_structured(_snap("claude"), "프로필", no_items, "원문", operation="t")
+            assert r["fit_score"] == want_score and r["evaluation_incomplete"] is want_incomplete, r
+            assert fake.extract_structured.await_count == want_calls, fake.extract_structured.await_count
 
     asyncio.run(_check())
     print("company_analysis self-check 통과")

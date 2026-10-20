@@ -48,6 +48,7 @@ docs/extract-line-items/
 docs/fit-eval-scoring-policy/
 docs/mcp-session-usage-optimization/
 docs/sonnet-5-5-migration/
+docs/eval-improvement/
 
 # 데이터 (개인 정보 포함)
 data/
