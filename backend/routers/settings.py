@@ -21,6 +21,7 @@ from config import (
     settings,
 )
 from export import build_export_zip
+from llm.anthropic import ALLOWED_CLAUDE_MODELS
 from models import SettingsResponse, SettingsUpdateRequest
 
 logger = logging.getLogger(__name__)
@@ -45,7 +46,10 @@ async def health():
 @router.get("/api/settings", response_model=SettingsResponse)
 async def get_settings():
     def _m(key: str, default: str) -> str:
-        return get_model_override(key) or default
+        value = get_model_override(key) or default
+        if key.startswith("claude_") and value not in ALLOWED_CLAUDE_MODELS:
+            return default
+        return value
     return SettingsResponse(
         provider=get_active_provider(),
         claude_high_model=_m("claude_high_model", settings.claude_high_model),
@@ -67,6 +71,13 @@ async def get_settings():
 
 @router.put("/api/settings")
 async def update_settings(req: SettingsUpdateRequest):
+    for key in ("claude_high_model", "claude_light_model"):
+        val = getattr(req, key)
+        if val and val not in ALLOWED_CLAUDE_MODELS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"지원하지 않는 Claude 모델입니다: {val} (사용 가능: {', '.join(sorted(ALLOWED_CLAUDE_MODELS))})",
+            )
     if req.provider:
         try:
             prev = get_active_provider()
@@ -120,7 +131,7 @@ async def list_models(provider: str = "claude"):
                 )
                 res.raise_for_status()
                 data = res.json().get("data", [])
-                model_ids = sorted([m["id"] for m in data], reverse=True)
+                model_ids = sorted([m["id"] for m in data if m["id"] in ALLOWED_CLAUDE_MODELS], reverse=True)
         elif provider == "openai":
             from openai import AsyncOpenAI
             client = AsyncOpenAI(api_key=settings.openai_api_key)

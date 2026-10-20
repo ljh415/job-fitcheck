@@ -20,17 +20,21 @@ from .base import LLMAPIError, LLMProvider
 
 logger = logging.getLogger(__name__)
 
-# adaptive thinking이 기본 켜진 모델(Sonnet 5, Opus 4.7+)은 temperature 등 sampling
-# 파라미터를 비-기본값으로 주면 400 Bad Request를 반환한다(temperature=0도 예외 없이
-# 거부됨) — Anthropic 공식 마이그레이션 가이드 확인. 이 모델들은 temperature를 아예
-# 안 보낸다(OpenAI provider의 _NO_TEMPERATURE_MODELS와 같은 패턴).
-_NO_TEMPERATURE_MODELS = frozenset({"claude-sonnet-5", "claude-opus-4-7", "claude-opus-4-8"})
+# 5.5 계열은 tool_choice 강제 호출(type tool/any)을 400으로 거부한다 — 구조화 응답은
+# JSON outputs(output_config.format)로 받는다. 값은 요청에 넣을 thinking 설정이다.
+# Sonnet 5.5는 thinking을 끌 수 없어(disabled 400) 최저값 between_tools(도구가 없으면
+# 0토큰)를 쓰고, Haiku 5.5는 between_tools가 400이라 disabled(effort high 이하에서 허용)를 쓴다 —
+# 필드를 생략하면 adaptive thinking으로 출력이 2~3배 늘고 판정이 max_tokens에 걸려 재시도한다.
+# None이면 thinking 필드를 생략한다. 시험 결과는 docs/sonnet-5-5-migration/PLAN.md.
+_JSON_THINKING: dict[str, dict | None] = {
+    "claude-sonnet-5-5": {"type": "between_tools"},
+    "claude-haiku-5-5": {"type": "disabled"},
+}
+_JSON_OUTPUT_MODELS = frozenset(_JSON_THINKING)
 
-# Sonnet 5.5는 tool_choice 강제 호출(type tool/any)을 400으로 거부하고 thinking을 끌 수도
-# 없다 — 구조화 응답은 JSON outputs(output_config.format)로 받고 thinking은 between_tools
-# (도구가 없으면 thinking 0토큰)로 둔다. 5.5로 판정·추출을 시험한 결과는
-# docs/sonnet-5-5-migration/PLAN.md §4. 이 JSON 경로는 temperature를 보내지 않는다.
-_JSON_OUTPUT_MODELS = frozenset({"claude-sonnet-5-5"})
+# 설정 화면에서 고를 수 있는 Claude 모델 = 시험을 마친 모델. 새 모델은 시험 후 여기에 추가한다.
+# JSON 경로 모델이 아니면 옛 도구 호출 경로로 가며, 이 경로는 temperature를 보내지 않는다.
+ALLOWED_CLAUDE_MODELS = _JSON_OUTPUT_MODELS | {"claude-sonnet-5", "claude-haiku-4-5-20251001"}
 
 
 def _to_json_outputs_schema(schema: dict) -> dict:
@@ -121,13 +125,11 @@ class AnthropicProvider(LLMProvider):
             description=tool_description,
             input_schema=tool_schema,  # type: ignore[arg-type]
         )
-        temperature_kwarg = {} if model in _NO_TEMPERATURE_MODELS else {"temperature": 0.5}
         try:
             with usage_tracker.timer() as t:
                 response = await self._client.messages.create(
                     model=model,
                     max_tokens=max_tokens,
-                    **temperature_kwarg,
                     system=system,
                     messages=[{"role": "user", "content": user}],
                     tools=[tool_def],
@@ -172,6 +174,9 @@ class AnthropicProvider(LLMProvider):
     ) -> dict:
         schema = _to_json_outputs_schema(tool_schema)
         user = _replace_tool_call_phrase(user, tool_name)
+        extra_body: dict[str, Any] = {"output_config": {"effort": "high", "format": {"type": "json_schema", "schema": schema}}}
+        if _JSON_THINKING[model] is not None:
+            extra_body["thinking"] = _JSON_THINKING[model]
         current_max_tokens = max_tokens
         # 응답이 잘리면(max_tokens) 잘린 JSON은 파싱이 안 되므로 complete()처럼 한 번 늘려 재시도한다
         for attempt in range(2):
@@ -182,10 +187,7 @@ class AnthropicProvider(LLMProvider):
                         max_tokens=current_max_tokens,
                         system=system,
                         messages=[{"role": "user", "content": user}],
-                        extra_body={
-                            "thinking": {"type": "between_tools"},
-                            "output_config": {"effort": "high", "format": {"type": "json_schema", "schema": schema}},
-                        },
+                        extra_body=extra_body,
                     )
             except anthropic.AuthenticationError:
                 raise LLMAPIError("LLM API 인증 실패 — 설정에서 Anthropic API 키를 확인해주세요.", 401)
@@ -433,22 +435,18 @@ if __name__ == "__main__":
 
     print("OK: 크레딧 소진 400 -> 402 전용 메시지, 그 외는 기존 503 메시지 유지")
 
-    # temperature 생략 모델 — Sonnet 5/Opus 4.7+는 temperature를 아예 안 보내야 함
-    for model in ("claude-sonnet-5", "claude-opus-4-7", "claude-opus-4-8"):
-        assert (
-            {} if model in _NO_TEMPERATURE_MODELS else {"temperature": 0.5}
-        ) == {}, model
-    for model in ("claude-sonnet-4-6", "claude-haiku-4-5", "claude-opus-4-6"):
-        assert (
-            {} if model in _NO_TEMPERATURE_MODELS else {"temperature": 0.5}
-        ) == {"temperature": 0.5}, model
-    print("OK: Sonnet 5/Opus 4.7+는 temperature 생략, 그 외 모델은 기존대로 0.5 유지")
+    # 허용 모델·경로 분기 — Sonnet/Haiku 4개만, Opus·Fable·구형은 허용 밖
+    assert ALLOWED_CLAUDE_MODELS == {
+        "claude-sonnet-5", "claude-sonnet-5-5", "claude-haiku-4-5-20251001", "claude-haiku-5-5",
+    }, ALLOWED_CLAUDE_MODELS
+    for model in ("claude-opus-5-5", "claude-fable-5-1", "claude-opus-4-8", "claude-sonnet-4-6"):
+        assert model not in ALLOWED_CLAUDE_MODELS, model
+    assert _JSON_OUTPUT_MODELS == {"claude-sonnet-5-5", "claude-haiku-5-5"}
+    assert _JSON_THINKING["claude-sonnet-5-5"] == {"type": "between_tools"}
+    print("OK: 허용 모델 4개, JSON 경로는 5.5 두 모델")
 
-    # JSON outputs 경로(5.5) — 모델 분기·스키마 변환·문구 치환
+    # JSON outputs 경로(5.5) — 스키마 변환·문구 치환
     import prompts
-
-    assert "claude-sonnet-5-5" in _JSON_OUTPUT_MODELS
-    assert "claude-sonnet-5" not in _JSON_OUTPUT_MODELS and "claude-sonnet-4-6" not in _JSON_OUTPUT_MODELS
 
     toy = {
         "type": "object",

@@ -10,6 +10,7 @@ High 티어: PDF 프로필 추출, 적합도 평가, Q&A
 from typing import NamedTuple
 
 from config import get_active_provider, get_model_override, get_reasoning_effort, settings
+from .anthropic import ALLOWED_CLAUDE_MODELS
 from .base import LLMProvider
 from . import get_provider
 
@@ -46,7 +47,8 @@ def _model(tier: str, provider: str) -> str:
     """런타임 오버라이드가 있으면 그것을, 없으면 설정 기본값을 반환."""
     key = f"{provider}_{tier}_model"
     override = get_model_override(key)
-    if override:
+    # 허용 밖 Claude 모델이 저장돼 있으면(예: 허용 목록 도입 전 설정) 무시하고 기본값을 쓴다
+    if override and (provider != "claude" or override in ALLOWED_CLAUDE_MODELS):
         return override
     if provider == "claude":
         return settings.claude_high_model if tier == "high" else settings.claude_light_model
