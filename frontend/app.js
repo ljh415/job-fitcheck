@@ -1495,7 +1495,7 @@ async function initSettings() {
       } else {
         const fm = profileRecord.frontmatter || {};
         const lines = [];
-        if (fm.name) lines.push(`# ${fm.name}${fm.experience_years ? `  ·  경력 ${fm.experience_years}년` : ''}`);
+        if (fm.name) lines.push(`# ${fm.name}${fm.experience_years ? `  ·  경력 ${typeof fm.experience_years === 'number' ? `${fm.experience_years}년` : fm.experience_years}` : ''}`);
         if (fm.summary) lines.push(`\n${fm.summary}`);
         if (fm.education) lines.push(`\n## 학력\n${fm.education}`);
         if ((fm.experience_roles||[]).length) lines.push(`\n## 직무 역할\n${fm.experience_roles.map(r=>`- ${r}`).join('\n')}`);
