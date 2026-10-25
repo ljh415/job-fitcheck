@@ -216,7 +216,7 @@ def read_profile_text() -> str | None:
     if not record:
         return None
     fm_text = "\n".join(
-        f"{k}: {v}" for k, v in record.frontmatter.model_dump(exclude_none=True).items()
+        f"{k}: {v}" for k, v in record.frontmatter.model_dump(exclude_none=True).items() if v not in ("", [])
     )
     return f"---\n{fm_text}\n---\n\n{record.body}"
 
