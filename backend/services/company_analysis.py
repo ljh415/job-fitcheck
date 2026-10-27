@@ -168,7 +168,7 @@ async def evaluate_fit_structured(
     fit_label = fit_normalization.label_from_score(fit_score)
 
     # 비기술 요인 6개를 코드가 고정된 한 줄로 항상 노출 — LLM 종합 의견은 gap 위주라
-    # level="없음"(문제없음)인 판정은 산문에서 거의 빠지는데, 그게 "판정 안 함"과
+    # 문제없는 판정은 산문에서 거의 빠지는데, 그게 "판정 안 함"과
     # 구분이 안 됐다(2026-09-02, LLM Judge 비교 실험 발견). LLM 재호출 없음(입력
     # 토큰도 안 늘어남 — decision_factors는 이미 report_user에 통째로 들어가 있음).
     fit_report = f"{normalized['tables']}\n\n{report_prose.strip()}\n\n{normalized['factors_summary']}"
@@ -250,7 +250,7 @@ if __name__ == "__main__":
         # 4. evaluate_fit_structured() — 실제 활성 경로(_process_company/refit_company가
         # 호출하는 함수)를 검증. 위 1~3번은 전부 호출자 없는 evaluate_fit()만 exercise
         # 했었음(2026-09-02 브랜치 전체 리뷰 지적). 1단계 판정 mock에 jobplanet 낮은
-        # 점수인데 LLM이 level="없음"으로 놓친 상황을 넣어 enforce_deterministic_levels()
+        # 점수인데 LLM이 status를 "양호"로 놓친 상황을 넣어 점수 기반 gap 파생
         # 연결까지 같이 확인한다.
         company_data_structured = {
             "required_skills": ["Python 경험"],
@@ -263,16 +263,16 @@ if __name__ == "__main__":
                 "item_judgments": [
                     {"id": "required:0", "verdict": "met", "evidence_basis": "explicit",
                      "evidence_summary": "프로젝트 X에서 Python 사용", "evidence_source": "X",
-                     "evidence_excerpt": "", "reason": "", "severity": "없음"},
+                     "evidence_excerpt": "", "reason": ""},
                 ],
                 "decision_factors": {
-                    "career_years": {"status": "충족", "level": "없음", "note": ""},
-                    "location": {"status": "충족", "level": "없음", "note": ""},
-                    "stability": {"status": "충족", "level": "없음", "note": ""},
-                    # LLM이 임계값 지시를 놓친 상황(2.4점인데 level="없음") — 코드가 강제해야 함
-                    "jobplanet": {"status": "낮음", "level": "없음", "note": "2.4점"},
-                    "salary": {"status": "미확인", "level": "없음", "note": ""},
-                    "custom_criteria": {"status": "해당없음", "level": "없음", "note": ""},
+                    "career_years": {"status": "충족", "note": ""},
+                    "location": {"status": "충족", "note": ""},
+                    "stability": {"status": "충족", "note": ""},
+                    # LLM이 임계값 지시를 놓친 상황(2.4점인데 status="양호") — 코드가 점수로 gap을 만들어야 함
+                    "jobplanet": {"status": "양호", "note": "2.4점"},
+                    "salary": {"status": "미확인", "note": ""},
+                    "custom_criteria": {"status": "해당없음", "note": ""},
                 },
             }, {"fit_score": 65, "report": "종합의견 텍스트"}]),
         )
@@ -283,8 +283,7 @@ if __name__ == "__main__":
             )
         assert fit_result["item_judgments"][0]["id"] == "required:0", fit_result["item_judgments"]
         assert fit_result["evaluation_incomplete"] is False, fit_result
-        assert fit_result["decision_factors"]["jobplanet"]["level"] == "상", fit_result["decision_factors"]
-        assert any(g.startswith("(상)") and "잡플래닛" in g for g in fit_result["gaps"]), fit_result["gaps"]
+        assert any(g.startswith("(미달)") and "잡플래닛" in g for g in fit_result["gaps"]), fit_result["gaps"]
         assert "종합의견 텍스트" in fit_report, fit_report
         assert fake_high_structured.extract_structured.call_args_list[0].kwargs["operation"] == "적합도 평가"
         assert fake_high_structured.extract_structured.call_args.kwargs["operation"] == "적합도 평가(보고서)"
@@ -309,7 +308,7 @@ if __name__ == "__main__":
 
         # 6. 보고서 호출이 점수를 못 돌려주면(문자열 점수) 1번 다시 요청, 그래도 안 되면 점수 0 + 불완전
         no_items = {"required_skills": [], "preferred_skills": [], "key_responsibilities": []}
-        factors = {k: {"status": "충족", "level": "없음", "note": ""} for k in
+        factors = {k: {"status": "충족", "note": ""} for k in
                    ("career_years", "location", "stability", "jobplanet", "salary", "custom_criteria")}
         factors["salary"]["status"] = "미확인"
         judge_ok = {"item_judgments": [], "decision_factors": factors}
