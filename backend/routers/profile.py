@@ -1,6 +1,7 @@
 """후보자 프로필: PDF 업로드 → LLM 추출 → candidate_profile.md 생성/조회/수정."""
 import json
 import logging
+import re
 from datetime import date
 from pathlib import Path
 
@@ -33,6 +34,17 @@ router = APIRouter()
 # 정상 사용에서는 절대 걸리지 않을 만큼 넉넉하되 실수·이상 입력만 걸러내는 안전판.
 _MAX_UPLOAD_FILES = 10  # 이력서+포트폴리오 여러 개 정도는 통과
 _MAX_PDF_BYTES = 30 * 1024 * 1024  # 이미지가 많은 포트폴리오 PDF도 통과하는 수준
+
+
+def _split_profile_output(text: str) -> tuple[dict, str]:
+    """2단계 출력에서 <header> JSON(요약표)과 <profile> 본문을 분리한다.
+    태그가 없으면(출력 잘림 포함) ValueError."""
+    h = re.search(r"<header>(.*?)</header>", text, re.S)
+    p = re.search(r"<profile>(.*?)</profile>", text, re.S)
+    if not (h and p):
+        raise ValueError("<header>/<profile> 태그를 찾지 못했습니다")
+    header = json.loads(re.sub(r"^```(?:json)?|```$", "", h.group(1).strip(), flags=re.M).strip())
+    return header, p.group(1).strip()
 
 
 def _snapshot_profile(note: str | None = None) -> None:
@@ -182,34 +194,31 @@ async def upload_profile(files: list[UploadFile] = File(...), extra_note: str = 
     provider, model = high_from_snapshot(snap)
     extra_section = f"<candidate_note>\n{extra_note}\n</candidate_note>\n\n" if extra_note.strip() else ""
 
-    # 1단계: tool use로 구조화 필드 추출 (name, skills, summary 등)
-    logger.info("프로필 구조화 추출 시작 (model=%s)", model)
-    user_extract = prompts.EXTRACT_PROFILE_USER_TEMPLATE.format(pdf_text=pdf_text, extra_section=extra_section)
+    # 1단계: 원문에서 사실 목록 추출 (일반 텍스트 출력)
+    logger.info("프로필 사실 목록 추출 시작 (model=%s)", model)
     try:
-        result = await provider.extract_structured(
-            system=prompts.EXTRACT_PROFILE_SYSTEM,
-            user=user_extract,
-            tool_name=prompts.EXTRACT_PROFILE_TOOL_NAME,
-            tool_description=prompts.EXTRACT_PROFILE_TOOL_DESCRIPTION,
-            tool_schema=prompts.EXTRACT_PROFILE_TOOL_SCHEMA,
+        facts = await provider.complete(
+            system=prompts.PROFILE_FACTS_SYSTEM + "\n" + prompts.TRUST_BOUNDARY_NOTICE,
+            user=prompts.PROFILE_FACTS_USER_TEMPLATE.format(pdf_text=pdf_text, extra_section=extra_section),
             model=model,
-            operation="프로필 추출",
+            operation="프로필 사실 목록 추출",
+            max_tokens=32768,
             reasoning_effort=snap.reasoning_effort,
         )
     except LLMAPIError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e))
-    logger.info("프로필 구조화 추출 완료: name=%s, tech_skills=%s", result.get("name"), result.get("tech_skills"))
+    logger.info("프로필 사실 목록 추출 완료: %d자", len(facts))
 
-    # 2단계: complete()로 프로필 본문 생성 — tool use는 장문 산문 생성에 부적합
+    # 2단계: 원문과 사실 목록을 대조해 요약표(<header>)와 본문(<profile>)을 함께 생성
     logger.info("프로필 본문 생성 시작")
-    user_body = prompts.GENERATE_PROFILE_BODY_USER_TEMPLATE.format(
+    user_body = prompts.PROFILE_BODY_USER_TEMPLATE.format(
         pdf_text=pdf_text,
-        extracted_json=json.dumps(result, ensure_ascii=False, indent=2),
+        fact_list=facts,
         extra_note=extra_note.strip() if extra_note.strip() else "(없음)",
     )
     try:
-        body = await provider.complete(
-            system=prompts.GENERATE_PROFILE_BODY_SYSTEM,
+        raw = await provider.complete(
+            system=prompts.GENERATE_PROFILE_BODY_SYSTEM + prompts.PROFILE_BODY_CHECK_RULES + prompts.PROFILE_BODY_OUTPUT_FORMAT,
             user=user_body,
             model=model,
             operation="프로필 본문 생성",
@@ -218,10 +227,16 @@ async def upload_profile(files: list[UploadFile] = File(...), extra_note: str = 
         )
     except LLMAPIError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e))
+    try:
+        header, body = _split_profile_output(raw)
+        fm = CandidateProfile(**header, source_files=filenames)
+    except (ValueError, TypeError) as e:
+        # 출력이 잘렸거나 형식이 다르면 저장하지 않는다(기존 프로필 보존)
+        logger.error("프로필 응답 형식 오류: %s", e)
+        raise HTTPException(status_code=502, detail=f"프로필 응답 형식이 올바르지 않아 저장하지 않았습니다. 다시 시도해주세요. ({e})")
     logger.info("프로필 본문 생성 완료: %d자", len(body))
     body += storage.wrap_score_excluded(score_excluded)
 
-    fm = CandidateProfile(**result, source_files=filenames)
     record = storage.write_profile(fm, body)
     logger.info("프로필 저장 완료: %s", settings.candidate_profile_path)
     try:

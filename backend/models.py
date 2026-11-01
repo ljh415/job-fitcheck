@@ -114,7 +114,7 @@ class CandidateProfile(BaseModel):
     tech_skills: list[str] = Field(default_factory=list)
     domains: list[str] = Field(default_factory=list)
     soft_skills: list[str] = Field(default_factory=list)
-    experience_years: int | None = None
+    experience_years: int | str | None = None  # 신규는 "2년 3개월" 문자열, 기존 저장 프로필은 정수
     experience_roles: list[str] = Field(default_factory=list)
     education: str | None = None
 
