@@ -28,7 +28,7 @@ class CompanyFrontmatter(BaseModel):
     updated_at: str = ""
     llm_provider: str = ""          # 분석에 사용된 provider 기록 (재현성)
 
-    # 회사 정보 — Lightweight 티어 LLM이 공고 텍스트에서 추출
+    # 회사 정보 — 구조화 추출(High 티어)이 공고 텍스트에서 추출
     location: str | None = None
     employee_count: str | None = None
     employee_count_meets_threshold: bool | None = None  # 50명 이상 여부
@@ -45,7 +45,7 @@ class CompanyFrontmatter(BaseModel):
     salary_max: int | None = None   # 공고 명시 최대 연봉 (만원)
     salary_note: str | None = None  # "협의", "경력별 차등" 등
 
-    # 채용 공고 정보 — Lightweight 티어 추출
+    # 채용 공고 정보 — 구조화 추출(High 티어)
     experience_required: str | None = None
     employment_type: str | None = None
     tech_stack: list[str] = Field(default_factory=list)

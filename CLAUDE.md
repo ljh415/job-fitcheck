@@ -63,8 +63,9 @@ docker compose restart api     # ❌ 이미지가 캐시되어 변경사항 미�
 - **RAG(선택 기능)는 이 원칙의 예외가 아니라 opt-in 계층**: 핵심 데이터(회사 정보)는 여전히 마크다운 그대로 두고, `RAG_POSTGRES_HOST` 설정 시에만 PostgreSQL+pgvector가 추가로 붙어 자연어 채팅 검색을 제공한다. 미설정 배포는 Postgres 관련 코드가 아예 안 쓰인다(`routers/rag.py`가 `/status` 외 전부 503 가드). 사용자 가이드는 `RAG_GUIDE.md`, 코드 구조는 `backend/rag/README.md`, 개발 이력은 `docs/rag-integration/`(git 미추적) 참고.
 - **MCP 서버**: Codex·Claude 같은 외부 AI 클라이언트가 채팅으로 회사·프로필·RAG 기능을 도구로 쓸 수 있게 한다. RAG와 달리 opt-in 토글이 없고, 서버가 뜨면 `/api/mcp`가 항상 켜져 있다(인증은 기존 JWT 재사용, 별도 권한 체계 없음). 사용자 가이드는 `MCP_GUIDE.md`, 코드는 `backend/mcp_server.py`, 설계 배경은 `docs/planning/mcp_plan_notes.md`(git 미추적) 참고.
 - **프로필 히스토리(항상 켜짐)는 SQLite 사용**: 핵심 데이터(회사 정보·프로필)는 여전히 마크다운 파일 그대로 두고, 프로필 스냅샷·회사별 적합도 평가 이력만 `data/app.db`(SQLite, 단일 파일)에 별도 기록한다. RAG의 Postgres와 달리 opt-in이 아니라 항상 켜져 있지만, 별도 서버 프로세스가 아닌 로컬 파일 하나라 "DB 없음"(별도 DB 서버 미의존) 원칙과 어긋나지 않는다. DB 장애 시(`init_db()` 실패) 이력 조회 API는 503을 반환하되 회사 CRUD 등 핵심 기능은 영향 없음(`backend/services/app_db.py`의 `is_healthy()`). `backend/services/app_db.py` 참고.
-- **LLM 티어**: Lightweight = 본문 생성·요약, High = 공고 구조화 추출·프로필 추출·적합도 평가·Q&A. 설정 화면에서 모델 수동 변경 가능. (공고 추출은 2026-10-13부터 High — Haiku가 원문 줄을 쪼개거나 빠뜨리고 같은 공고도 매번 항목 수가 달라서, `docs/extract-line-items` 참고)
-  - Claude 기본: Light=haiku-4-5, High=sonnet-4-6
+- **LLM 티어**: Lightweight = 본문 생성·요약, High = 공고 구조화 추출·프로필 추출·적합도 평가·Q&A. 설정 화면에서 모델 변경 가능(Claude는 허용 목록 4개만, 아래). (공고 추출은 2026-10-13부터 High — Haiku가 원문 줄을 쪼개거나 빠뜨리고 같은 공고도 매번 항목 수가 달라서, `docs/extract-line-items` 참고)
+  - Claude 기본: Light=haiku-5-5, High=sonnet-5-5. 선택 가능한 Claude 모델은 `backend/llm/anthropic.py`의 `ALLOWED_CLAUDE_MODELS` 4개(sonnet-5, sonnet-5-5, haiku-4-5, haiku-5-5)뿐이고, 설정 화면 목록·`PUT /api/settings`·저장값을 서버가 검증한다(새 모델은 시험 후 추가). 5.5 계열은 강제 도구 호출(`tool_choice`)을 거부해서 `extract_structured()`가 JSON outputs 경로를 쓰며 모델별 thinking 설정은 `_JSON_THINKING`(Sonnet 5.5 `between_tools`, Haiku 5.5 `disabled`). Sonnet 5·Haiku 4.5는 기존 강제 호출 경로를 쓴다(상세 `docs/sonnet-5-5-migration`). Claude는 temperature를 보내지 않는다.
+  - 실행 모델은 `data/runtime_settings.json`(설정 화면)이 우선이라 코드 기본값만으로는 바뀌지 않는다(허용 밖 저장값은 기본값으로 대체). 본문 생성·적합도 평가 입력의 원문은 길이 제한 없이 전체를 넣는다(2026-10-20부터, 이전에는 앞 4000자).
   - OpenAI 기본: Light=gpt-5-mini, High=gpt-5 (reasoning_effort=medium)
   - Gemini 기본: Light=gemini-3.1-flash-lite, High=gemini-3.5-flash
   - `reasoning_effort`는 gpt-5/gpt-5.x 계열에만 자동 적용. PUT `/api/settings`로 변경 가능.

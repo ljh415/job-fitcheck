@@ -40,12 +40,11 @@ current_request_id: ContextVar[str | None] = ContextVar("current_request_id", de
 
 # 모델별 단가 (USD / 1M tokens)
 PRICING: dict[str, dict[str, float]] = {
-    # Anthropic Claude
-    "claude-opus-4-7":              {"input": 5.00,  "output": 25.00},
-    "claude-opus-4-6":              {"input": 5.00,  "output": 25.00},
+    # Anthropic Claude — llm/anthropic.py의 ALLOWED_CLAUDE_MODELS와 같은 4개만 둔다
+    # (과거 사용 기록의 cost_usd는 기록 당시 값이 저장돼 있어 단가표에서 빼도 바뀌지 않는다)
+    "claude-sonnet-5-5":            {"input": 2.00,  "output": 10.00},
     "claude-sonnet-5":              {"input": 2.00,  "output": 10.00},
-    "claude-sonnet-4-6":            {"input": 3.00,  "output": 15.00},
-    "claude-haiku-4-5":             {"input": 1.00,  "output":  5.00},
+    "claude-haiku-5-5":             {"input": 0.10,  "output":  0.50},  # 프롬프트 100k 토큰 이하 단가(초과 시 $0.50/$2.50)
     "claude-haiku-4-5-20251001":    {"input": 1.00,  "output":  5.00},
     # OpenAI GPT-4 계열
     "gpt-4o":                       {"input": 2.50,  "output": 10.00},

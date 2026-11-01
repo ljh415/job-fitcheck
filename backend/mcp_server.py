@@ -339,7 +339,7 @@ async def prepare_company_import(url: str | None = None, raw_text: str | None = 
             "user_template": prompts.GENERATE_BODY_USER_TEMPLATE,
             "note": "user_template엔 {company_json}·{raw_text} 자리가 아직 안 채워져 있음 — "
             "company_json은 extract_company 결과를 JSON 문자열로, raw_text는 "
-            "raw_text_escaped 앞 4000자를 넣는 게 기존 파이프라인 관례.",
+            "raw_text_escaped 전체를 넣는다(REST 파이프라인도 길이 제한 없이 전체를 넣음).",
         },
         "evaluate_fit_judge": {
             "available": has_profile,
@@ -354,8 +354,8 @@ async def prepare_company_import(url: str | None = None, raw_text: str | None = 
             "{candidate_profile}·{company_json}·{raw_text}·{item_list}·{tool_name}·"
             "{custom_criteria} 자리가 아직 안 채워져 있음 — candidate_profile·custom_criteria는 "
             "위 값을 그대로, company_json은 extract_company 결과, raw_text는 "
-            "raw_text_escaped 앞 4000자, tool_name은 'evaluate_fit_judge'를 넣는 게 기존 "
-            "파이프라인 관례. item_list는 extract_company 결과의 required_skills/"
+            "raw_text_escaped 전체(REST 파이프라인과 동일, 길이 제한 없음), tool_name은 "
+            "'evaluate_fit_judge'를 넣는다. item_list는 extract_company 결과의 required_skills/"
             "preferred_skills/key_responsibilities 각 배열을 0부터 순서대로 "
             "'required:0', 'preferred:0', 'responsibility:0' 형식 id로 붙여 "
             "'- required:0: <항목 원문>' 한 줄씩 나열한 것(서버가 나중에 판정 결과를 "

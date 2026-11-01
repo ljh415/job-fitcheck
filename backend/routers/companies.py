@@ -2,7 +2,7 @@
 그리고 회사 추가 파이프라인(URL/텍스트/이미지 → 구조화 추출 → 잡플래닛 → 본문 → 적합도 평가 → 저장).
 
 회사 추가 흐름(_process_company)은 다음 순서로 진행된다:
-  1. Lightweight — 공고 텍스트 구조화 추출
+  1. High — 공고 텍스트 구조화 추출
   2. 잡플래닛 평점 수집 (네이버 검색 스크래핑, 실패 시 무시)
   3. Lightweight — 마크다운 본문 생성
   4. High — 후보자 프로필 대비 적합도 평가 (프로필이 없으면 생략)
@@ -656,7 +656,7 @@ async def _process_company(
     logger.info("[3/4] 마크다운 본문 생성 시작")
     user_body = prompts.GENERATE_BODY_USER_TEMPLATE.format(
         company_json=json.dumps(extracted, ensure_ascii=False),
-        raw_text=safe_raw_text[:4000],
+        raw_text=safe_raw_text,
     )
     body = await light.complete(
         system=prompts.GENERATE_BODY_SYSTEM,

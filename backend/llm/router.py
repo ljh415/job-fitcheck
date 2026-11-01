@@ -1,15 +1,19 @@
 """
 작업 유형별 provider + 모델 티어 선택.
 
-Lightweight 티어: 구조화 추출, 마크다운 본문 생성
+Lightweight 티어: 마크다운 본문 생성
     — 입력/출력 포맷이 고정적이므로 저렴한 모델로 충분
 
-High 티어: PDF 프로필 추출, 적합도 평가, Q&A
-    — 후보자 맥락 통합 추론이 필요하므로 고성능 모델 사용
+High 티어: 공고 구조화 추출, PDF 프로필 추출, 적합도 평가, Q&A
+    — 원문 항목 보존과 후보자 맥락 통합 추론이 필요하므로 고성능 모델 사용
+    (공고 구조화 추출은 2026-10-13부터 High — docs/extract-line-items)
+
+Claude는 llm/anthropic.py의 ALLOWED_CLAUDE_MODELS에 있는 모델만 쓴다(설정 화면 목록·저장값 검증).
 """
 from typing import NamedTuple
 
 from config import get_active_provider, get_model_override, get_reasoning_effort, settings
+from .anthropic import ALLOWED_CLAUDE_MODELS
 from .base import LLMProvider
 from . import get_provider
 
@@ -46,7 +50,8 @@ def _model(tier: str, provider: str) -> str:
     """런타임 오버라이드가 있으면 그것을, 없으면 설정 기본값을 반환."""
     key = f"{provider}_{tier}_model"
     override = get_model_override(key)
-    if override:
+    # 허용 밖 Claude 모델이 저장돼 있으면(예: 허용 목록 도입 전 설정) 무시하고 기본값을 쓴다
+    if override and (provider != "claude" or override in ALLOWED_CLAUDE_MODELS):
         return override
     if provider == "claude":
         return settings.claude_high_model if tier == "high" else settings.claude_light_model
@@ -56,12 +61,12 @@ def _model(tier: str, provider: str) -> str:
 
 
 def light_provider() -> tuple[LLMProvider, str]:
-    """Lightweight 티어 (구조화 추출, 본문 생성)."""
+    """Lightweight 티어 (본문 생성)."""
     provider_name = get_active_provider()
     return get_provider(provider_name), _model("light", provider_name)
 
 
 def high_provider() -> tuple[LLMProvider, str]:
-    """High 티어 (PDF 추출, 적합도 평가, Q&A)."""
+    """High 티어 (공고 구조화 추출, PDF 프로필 추출, 적합도 평가, Q&A)."""
     provider_name = get_active_provider()
     return get_provider(provider_name), _model("high", provider_name)

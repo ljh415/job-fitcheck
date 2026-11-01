@@ -37,7 +37,7 @@ async def evaluate_fit(
     user_fit = prompts.EVALUATE_FIT_USER_TEMPLATE.format(
         candidate_profile=profile_text,
         company_json=json.dumps(company_data, ensure_ascii=False),
-        raw_text=raw_text[:4000],
+        raw_text=raw_text,
         custom_criteria=custom_criteria_section,
     )
     # Gemini는 function call 내에 장문 마크다운 생성 시 MALFORMED_FUNCTION_CALL이 발생함.
@@ -122,7 +122,7 @@ async def evaluate_fit_structured(
     judge_user = prompts.EVALUATE_FIT_JUDGE_USER_TEMPLATE.format(
         candidate_profile=profile_text,
         company_json=json.dumps(company_data, ensure_ascii=False),
-        raw_text=raw_text[:4000],
+        raw_text=raw_text,
         item_list=item_list_text or "(판정할 항목 없음)",
         tool_name=prompts.EVALUATE_FIT_JUDGE_TOOL_NAME,
         custom_criteria=custom_criteria_section,
@@ -147,7 +147,7 @@ async def evaluate_fit_structured(
         user=normalized["report_user"],
         model=high_model,
         operation=f"{operation}(보고서)",
-        max_tokens=4096,
+        max_tokens=8192,  # 5.5는 thinking이 출력 한도를 쓴다(4096의 93%까지 사용) — 잘리면 한 번 더 요청해 비용이 늘어남
         reasoning_effort=snap.reasoning_effort,
     )
 
