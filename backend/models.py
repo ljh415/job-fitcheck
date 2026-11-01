@@ -11,6 +11,12 @@ from pydantic import BaseModel, Field, field_validator
 
 # ── 회사 frontmatter ──────────────────────────────────────────────────────────
 
+class ResponsibilityGroup(BaseModel):
+    """주요 업무 중 소제목(또는 상위 불릿) 하나와 그 아래 세부 업무들."""
+    title: str
+    details: list[str] = Field(default_factory=list)
+
+
 class CompanyFrontmatter(BaseModel):
     # 기본 메타
     company_name: str = ""
@@ -43,7 +49,7 @@ class CompanyFrontmatter(BaseModel):
     experience_required: str | None = None
     employment_type: str | None = None
     tech_stack: list[str] = Field(default_factory=list)
-    key_responsibilities: list[str] = Field(default_factory=list)
+    key_responsibilities: list[str | ResponsibilityGroup] = Field(default_factory=list)
     required_skills: list[str] = Field(default_factory=list)
     preferred_skills: list[str] = Field(default_factory=list)
     benefits: list[str] = Field(default_factory=list)

@@ -225,17 +225,21 @@ def _parse_wanted(html: str) -> tuple[str | None, int | None]:
         # 경력 범위 문자열 조합
         career_str = ""
         if career:
-            if career.get("is_newbie"):
+            a = career.get("annual_from")
+            b = career.get("annual_to")
+            # annual_to 100은 상한 없음(사이트의 "경력 N년 이상"). 경력자 표시가 있어도 연차 숫자를 버리지 않는다.
+            if b is not None and b >= 100:
+                b = None
+            if career.get("is_newbie") and career.get("is_expert"):
+                career_str = f"신입-경력 {b}년" if b else "신입-경력"
+            elif career.get("is_newbie"):
                 career_str = "신입"
+            elif a and b:
+                career_str = f"{a}~{b}년"
+            elif a:
+                career_str = f"{a}년 이상"
             elif career.get("is_expert"):
                 career_str = "경력"
-            else:
-                a = career.get("annual_from")
-                b = career.get("annual_to")
-                if a and b:
-                    career_str = f"{a}~{b}년"
-                elif a:
-                    career_str = f"{a}년 이상"
 
         employment_map = {"regular": "정규직", "contract": "계약직", "intern": "인턴"}
         employment = employment_map.get(job.get("employment_type", ""), job.get("employment_type", ""))
@@ -302,6 +306,8 @@ def _parse_remember(html: str) -> str | None:
             career_str = f"{min_exp}~{max_exp}년"
         elif min_exp:
             career_str = f"{min_exp}년 이상"
+        elif min_exp is None and max_exp is None:
+            career_str = "경력 무관"  # 사이트가 두 값이 비면 "경력 무관"으로 표시한다
         else:
             career_str = ""
 
