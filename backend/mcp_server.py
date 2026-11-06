@@ -287,7 +287,7 @@ async def prepare_company_import(url: str | None = None, raw_text: str | None = 
                 "name": duplicate.frontmatter.display_name or duplicate.frontmatter.company_name,
             }
         try:
-            text = await scraper.fetch_url_text(url)
+            text, _ = await scraper.fetch_url(url)
         except ValueError as e:
             raise ToolError(str(e))
         except httpx.TimeoutException:

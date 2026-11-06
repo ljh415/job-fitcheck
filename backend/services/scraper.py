@@ -11,11 +11,14 @@ ValueError를 raise해 프론트에서 텍스트 붙여넣기를 유도한다.
 import asyncio
 import ipaddress
 import json
+import logging
 import re
 from urllib.parse import urljoin, urlparse
 
 import httpx
 from bs4 import BeautifulSoup
+
+logger = logging.getLogger(__name__)
 
 _HEADERS = {
     "User-Agent": (
@@ -34,6 +37,18 @@ _MAX_REDIRECTS = 5
 # 채용공고 페이지는 보통 수백 KB~2MB 수준. 그 대비 넉넉하게 잡아 비정상적으로
 # 큰 응답(잘못된 URL, 대용량 파일 등)만 걸러내는 안전판.
 _MAX_RESPONSE_BYTES = 10 * 1024 * 1024
+
+
+def _log_url(url: str) -> str:
+    """로그에는 주소의 ? 앞부분만 남긴다 — 뒤의 추적용 코드가 길고 원인 파악에 필요 없다."""
+    return url.split("?")[0]
+
+
+def _error_summary(e: httpx.HTTPError) -> str:
+    """오류 응답은 번호만(기본 문구에는 접속에 쓴 IP와 안내문이 길게 붙는다), 나머지는 종류와 내용."""
+    if isinstance(e, httpx.HTTPStatusError):
+        return f"HTTP {e.response.status_code}"
+    return f"{type(e).__name__}: {e}"
 
 
 class SSRFBlockedError(ValueError):
@@ -74,9 +89,17 @@ def _pin_to_ip(url: str, ip: str) -> str:
 
 
 def is_wanted_host(url: str) -> bool:
-    """호스트명이 정확히 wanted.co.kr 도메인인지 검사 (부분 문자열 검사 대체)."""
+    """호스트명이 정확히 wanted.co.kr 도메인(또는 원티드 단축 링크 wntd.co)인지 검사 (부분 문자열 검사 대체)."""
     host = (urlparse(url).hostname or "").lower()
-    return host == "wanted.co.kr" or host.endswith(".wanted.co.kr")
+    return host in ("wanted.co.kr", "wntd.co") or host.endswith(".wanted.co.kr")
+
+
+def _listing_label(corp_class: str | None, ticker: str | None) -> str | None:
+    """상장 여부를 확실히 알 수 있을 때만 값을 돌려준다 — 상장 구분이 코스피·코스닥이거나
+    종목 코드가 있을 때. 둘 다 없으면 모르는 것이라 None이다(법인 유형은 상장 여부와 무관)."""
+    if corp_class in ("코스피", "코스닥"):
+        return corp_class
+    return "상장" if ticker else None
 
 
 async def _safe_get(client: httpx.AsyncClient, url: str, **kwargs) -> httpx.Response:
@@ -136,8 +159,15 @@ def _clean_rich_text(value: str) -> str:
     return BeautifulSoup(value, "lxml").get_text(separator="\n", strip=True)
 
 
-async def fetch_url_text(url: str) -> str:
-    """URL에서 채용공고 텍스트를 추출한다.
+async def fetch_url(url: str) -> tuple[str, dict | None]:
+    """URL에서 채용공고 텍스트와 회사 정보를 추출한다.
+
+    반환은 (원문 글자, 회사 정보). 회사 정보는 기업 페이지 수집에 성공한 원티드·리멤버
+    공고만 있고 나머지는 None이다. 회사 정보 키: source, source_company_id,
+    source_url(기업 페이지 주소), company_payload(기업 페이지 원본),
+    posting_company_payload(리멤버 공고 페이지의 회사 부분, 원티드는 None),
+    employee_count·revenue_won·revenue_as_of·listing_status(원티드·리멤버),
+    funding_stage·funding_total(리멤버만)은 원본에서 뽑은 평가용 값, 모르면 None.
 
     Raises:
         ValueError: JS 렌더링이 필요해 스크래핑이 불가능한 사이트
@@ -158,11 +188,23 @@ async def fetch_url_text(url: str) -> str:
         if is_wanted_host(url):
             text, company_id = _parse_wanted(html)
             if text:
+                company = None
                 if company_id:
                     extra = await _fetch_wanted_company(client, company_id)
                     if extra:
-                        text = text + "\n\n" + extra
-                return text[:_MAX_TEXT_CHARS]
+                        text = text + "\n\n" + extra[0]
+                        company = {
+                            "source": "wanted",
+                            "source_company_id": str(company_id),
+                            "source_url": f"https://www.wanted.co.kr/company/{company_id}",
+                            "company_payload": extra[1],
+                            "posting_company_payload": None,
+                            **_wanted_eval_columns(extra[1]),
+                        }
+                else:
+                    logger.warning("원티드 공고에서 회사 번호를 찾지 못해 기업 페이지를 건너뜀 (url=%s)", _log_url(url))
+                return text[:_MAX_TEXT_CHARS], company
+            logger.info("원티드 공고 본문을 읽지 못해 거부 (url=%s)", _log_url(url))
             raise ValueError(
                 "이 URL에서 채용공고 정보를 찾을 수 없습니다. 회사 페이지가 아니라 "
                 "개별 채용공고 페이지(wanted.co.kr/wd/...) URL인지 확인해주세요."
@@ -173,7 +215,25 @@ async def fetch_url_text(url: str) -> str:
         if "rememberapp.co.kr" in url:
             text = _parse_remember(html)
             if text:
-                return text[:_MAX_TEXT_CHARS]
+                company = None
+                company_id = _remember_company_id(html)
+                if company_id:
+                    extra = await _fetch_remember_company(client, company_id)
+                    if extra:
+                        text = text + "\n\n" + extra[0]
+                        posting_company = _remember_posting_company(html)
+                        company = {
+                            "source": "remember",
+                            "source_company_id": str(company_id),
+                            "source_url": f"https://career.rememberapp.co.kr/job/company/{company_id}",
+                            "company_payload": extra[1],
+                            "posting_company_payload": posting_company,
+                            **_remember_eval_columns(extra[1], posting_company),
+                        }
+                else:
+                    logger.warning("리멤버 공고에서 회사 번호를 찾지 못해 기업 페이지를 건너뜀 (url=%s)", _log_url(url))
+                return text[:_MAX_TEXT_CHARS], company
+            logger.info("리멤버 공고 본문을 읽지 못해 거부 (url=%s)", _log_url(url))
             raise ValueError(
                 "이 URL에서 채용공고 정보를 찾을 수 없습니다. 개별 채용공고 페이지 URL인지 확인해주세요."
             )
@@ -183,12 +243,13 @@ async def fetch_url_text(url: str) -> str:
 
     # 추출된 본문이 300자 미만이면 JS 렌더링 사이트로 판단
     if len(text) < 300:
+        logger.info("본문이 %d자뿐이라 JS 렌더링 사이트로 판단해 거부 (url=%s)", len(text), _log_url(url))
         raise ValueError(
             "이 URL은 JavaScript 렌더링이 필요해 자동 스크래핑이 어렵습니다. "
             "'텍스트 붙여넣기' 탭에서 공고 내용을 복사해 입력해주세요."
         )
 
-    return text[:_MAX_TEXT_CHARS]
+    return text[:_MAX_TEXT_CHARS], None
 
 
 def _parse_wanted(html: str) -> tuple[str | None, int | None]:
@@ -260,8 +321,29 @@ def _parse_wanted(html: str) -> tuple[str | None, int | None]:
         ]
         text = "\n".join(p for p in parts if p.split(": ", 1)[-1].strip())
         return text or None, company_id
-    except (json.JSONDecodeError, KeyError):
+    except (json.JSONDecodeError, KeyError) as e:
+        logger.warning("원티드 공고 데이터 해석 실패 — 사이트 구조가 바뀌었을 수 있음: %s: %s", type(e).__name__, e)
         return None, None
+
+
+def _remember_chip_facts(chips: list) -> tuple[str, str, str]:
+    """리멤버 공고 페이지의 회사 요약 태그(chips)에서 (임직원 규모 구간, 투자 단계, 누적 투자금)을 읽는다.
+
+    `startup_info`에 투자 단계("시리즈 C")와 임직원 규모 구간("51-300명")이 같은 이름으로
+    섞여 오므로 값의 모양으로 구분한다 — 숫자+"명"이면 규모, 시리즈·Pre IPO 등이면 투자 단계.
+    어느 쪽도 아닌 값은 모르는 것으로 두고 쓰지 않는다. 없으면 빈 문자열.
+    """
+    size = stage = funding = ""
+    for chip in chips:
+        value = (chip.get("value") or "").strip()
+        if chip.get("category") == "startup_info":
+            if re.search(r"\d\s*명", value):
+                size = size or value
+            elif re.search(r"시리즈|series|pre[\s-]*ipo|시드|seed|엔젤", value, re.IGNORECASE):
+                stage = stage or value
+        elif chip.get("category") == "investment":
+            funding = funding or value.removeprefix("누적 투자").strip()
+    return size, stage, funding
 
 
 def _parse_remember(html: str) -> str | None:
@@ -321,11 +403,7 @@ def _parse_remember(html: str) -> str | None:
         else:
             salary_str = ""
 
-        # 임직원 수 (chips에서 startup_info 카테고리)
-        chips = posting.get("chips") or []
-        employee_count = next(
-            (c.get("value", "") for c in chips if c.get("category") == "startup_info"), ""
-        )
+        employee_range, funding_stage, funding_total = _remember_chip_facts(posting.get("chips") or [])
 
         parts = [
             f"회사명: {org.get('name', '')}",
@@ -339,7 +417,9 @@ def _parse_remember(html: str) -> str | None:
             f"근무지: {location}",
             f"경력: {career_str}",
             f"연봉: {salary_str}",
-            f"임직원 수: {employee_count}",
+            f"임직원 규모: {employee_range}",
+            f"투자 단계: {funding_stage}",
+            f"누적 투자금: {funding_total}",
             f"웹사이트: {org.get('url', '')}",
         ]
         text = "\n".join(
@@ -348,14 +428,90 @@ def _parse_remember(html: str) -> str | None:
             or (":\n" in p and p.split(":\n", 1)[1].strip())
         )
         return text or None
-    except (json.JSONDecodeError, KeyError, IndexError):
+    except (json.JSONDecodeError, KeyError, IndexError) as e:
+        logger.warning("리멤버 공고 데이터 해석 실패 — 사이트 구조가 바뀌었을 수 있음: %s: %s", type(e).__name__, e)
         return None
 
 
-async def _fetch_wanted_company(client: httpx.AsyncClient, company_id: int) -> str | None:
+def _remember_company_id(html: str) -> int | None:
+    """리멤버 공고 페이지의 __NEXT_DATA__에서 기업 ID를 읽는다."""
+    match = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.DOTALL)
+    if not match:
+        return None
+    try:
+        queries = json.loads(match.group(1))["props"]["pageProps"]["dehydratedState"]["queries"]
+        return int(queries[0]["state"]["data"]["data"]["company"]["id"])
+    except (KeyError, IndexError, TypeError, ValueError):
+        return None
+
+
+def _remember_posting_company(html: str) -> dict | None:
+    """리멤버 공고 페이지에서 회사 관련 세 항목(chips·company·organization)만 원본 그대로
+    꺼낸다. 공고 본문은 .raw.txt에 있어 보관하지 않는다. 못 찾으면 None."""
+    match = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.DOTALL)
+    if not match:
+        return None
+    try:
+        queries = json.loads(match.group(1))["props"]["pageProps"]["dehydratedState"]["queries"]
+        posting = queries[0]["state"]["data"]["data"]
+    except (json.JSONDecodeError, KeyError, IndexError, TypeError) as e:
+        logger.warning("리멤버 공고의 회사 부분을 읽지 못함: %s: %s", type(e).__name__, e)
+        return None
+    return {k: posting.get(k) for k in ("chips", "company", "organization")}
+
+
+async def _fetch_remember_company(client: httpx.AsyncClient, company_id: int) -> tuple[str, dict] | None:
+    """리멤버 기업 페이지에서 설립일·임직원 수·평균 연봉·본사 위치를 추출한다.
+
+    공고 페이지에는 임직원 수 구간(chips)만 있고 정확한 수치는 기업 페이지에만 있다.
+    리멤버에 값이 없는 회사(null)는 해당 줄을 빼고, 실패해도 공고 분석 전체를
+    막지 않도록 None을 반환한다. 반환은 (원문에 붙일 글자, 기업 페이지 원본 dict).
+    """
+    try:
+        resp = await _safe_get(client, f"https://career.rememberapp.co.kr/job/company/{company_id}")
+        resp.raise_for_status()
+        m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', resp.text, re.DOTALL)
+        if not m:
+            logger.warning("리멤버 기업 페이지에 데이터가 없음 (company_id=%s)", company_id)
+            return None
+        queries = json.loads(m.group(1))["props"]["pageProps"]["dehydratedState"]["queries"]
+        info = {}
+        for q in queries:
+            data = q.get("state", {}).get("data") or {}
+            data = data.get("data", data)
+            if isinstance(data, dict) and "employeeStatistics" in data:
+                info = data
+                break
+
+        parts = ["[리멤버 기업 정보]"]
+        if info.get("establishmentDate"):
+            parts.append(f"설립일: {info['establishmentDate']}")
+        # 월별 통계는 최신 월부터 오고 최신 월은 null일 수 있어 값이 있는 첫 달을 쓴다
+        latest = next((s for s in info.get("employeeStatistics") or [] if s.get("total")), None)
+        if latest:
+            parts.append(f"임직원 수: {latest['total']:,}명 ({latest['month']} 기준)")
+        avg_salary = (info.get("salaryStatistics") or {}).get("average")
+        if avg_salary:
+            parts.append(f"평균 연봉: {int(avg_salary) // 10_000:,}만원")
+        if info.get("address"):
+            parts.append(f"본사 위치: {info['address']}")
+        if len(parts) == 1:
+            logger.warning("리멤버 기업 페이지에서 뽑을 값이 없음 (company_id=%s)", company_id)
+            return None
+        return "\n".join(parts), info
+    except httpx.HTTPError as e:
+        logger.warning("리멤버 기업 페이지 수집 실패 (company_id=%s): %s", company_id, _error_summary(e))
+        return None
+    except Exception:
+        logger.exception("리멤버 기업 페이지 수집 중 예상 못 한 오류 (company_id=%s)", company_id)
+        return None
+
+
+async def _fetch_wanted_company(client: httpx.AsyncClient, company_id: int) -> tuple[str, dict] | None:
     """Wanted 기업 페이지에서 회사 규모·재무 정보를 추출.
 
-    dehydrateState 안의 companyInfo / companySummary 쿼리를 파싱한다.
+    dehydrateState 안의 companyInfo / companySummary 쿼리를 파싱한다. 반환은
+    (원문에 붙일 글자, 쿼리 전체를 {queryKey: data}로 보존한 원본 dict).
     실패해도 공고 분석 전체를 막지 않도록 None을 반환한다.
     """
     try:
@@ -367,6 +523,7 @@ async def _fetch_wanted_company(client: httpx.AsyncClient, company_id: int) -> s
         resp.raise_for_status()
         m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', resp.text, re.DOTALL)
         if not m:
+            logger.warning("원티드 기업 페이지에 데이터가 없음 (company_id=%s)", company_id)
             return None
 
         queries = (
@@ -377,15 +534,18 @@ async def _fetch_wanted_company(client: httpx.AsyncClient, company_id: int) -> s
             .get("queries", [])
         )
         info, summary = {}, {}
+        payload = {}
         for q in queries:
             key = q.get("queryKey", [None])[0]
             qdata = q.get("state", {}).get("data") or {}
+            payload[key] = qdata
             if key == "companyInfo":
                 info = qdata
             elif key == "companySummary":
                 summary = qdata
 
         if not info and not summary:
+            logger.warning("원티드 기업 페이지에 회사 데이터가 없음 (company_id=%s)", company_id)
             return None
 
         detail = summary.get("detail") or {}
@@ -418,10 +578,9 @@ async def _fetch_wanted_company(client: httpx.AsyncClient, company_id: int) -> s
             parts.append(f"연매출: {sales_str} (출처: {sales_data.get('source', '')})")
         if salary_str:
             parts.append(f"평균 연봉: {salary_str}")
-        if corp_class:
-            parts.append(f"상장 구분: {corp_class}" + (f" ({ticker})" if ticker else ""))
-        elif corp_class is None and detail.get("corpType"):
-            parts.append("상장 구분: 비상장")
+        listing = _listing_label(corp_class, ticker)
+        if listing:
+            parts.append(f"상장 구분: {listing}" + (f" ({ticker})" if ticker else ""))
         if info.get("status") == "RUNNING":
             parts.append("사업자 상태: 영업 중")
         if info.get("location"):
@@ -432,9 +591,49 @@ async def _fetch_wanted_company(client: httpx.AsyncClient, company_id: int) -> s
         if main_tags:
             parts.append(f"원티드 태그: {', '.join(main_tags)}")
 
-        return "\n".join(parts) if len(parts) > 1 else None
-    except Exception:
+        if len(parts) == 1:
+            logger.warning("원티드 기업 페이지에서 뽑을 값이 없음 (company_id=%s)", company_id)
+            return None
+        return "\n".join(parts), payload
+    except httpx.HTTPError as e:
+        logger.warning("원티드 기업 페이지 수집 실패 (company_id=%s): %s", company_id, _error_summary(e))
         return None
+    except Exception:
+        logger.exception("원티드 기업 페이지 수집 중 예상 못 한 오류 (company_id=%s)", company_id)
+        return None
+
+
+def _wanted_eval_columns(payload: dict) -> dict:
+    """원티드 기업 페이지 원본(payload)에서 평가용 컬럼 값을 뽑는다. 모르면 None."""
+    summary = payload.get("companySummary") or {}
+    detail = summary.get("detail") or {}
+    employee = summary.get("employee") or {}
+    sales = summary.get("sales") or {}
+    nps = employee.get("total")
+    emp = nps or detail.get("eiEmployeeCount")
+    revenue = sales.get("total") or detail.get("totalSales")
+    return {
+        "employee_count": f"{emp:,}명 ({'국민연금' if nps else '고용보험'} 기준)" if emp else None,
+        "revenue_won": int(revenue) if revenue else None,
+        "revenue_as_of": sales.get("updatedAt") if revenue else None,
+        "listing_status": _listing_label(detail.get("corpClass"), detail.get("tickerSymbol")),
+    }
+
+
+def _remember_eval_columns(payload: dict, posting: dict | None) -> dict:
+    """리멤버 기업 페이지 원본(payload)과 공고 페이지의 회사 부분(posting)에서 평가용 컬럼
+    값을 뽑는다. 임직원 수는 기업 페이지의 정확한 수치를 쓰고, 그게 비었을 때만 공고
+    페이지 태그의 규모 구간("301-1,000명")을 원본 그대로 쓴다. 매출·상장 여부는 원본에 없다."""
+    size, stage, funding = _remember_chip_facts((posting or {}).get("chips") or [])
+    latest = next((s for s in payload.get("employeeStatistics") or [] if s.get("total")), None)
+    return {
+        "employee_count": f"{latest['total']:,}명 ({latest['month']} 기준)" if latest else size or None,
+        "revenue_won": None,
+        "revenue_as_of": None,
+        "listing_status": None,
+        "funding_stage": stage or None,
+        "funding_total": funding or None,
+    }
 
 
 async def fetch_wanted_facts(source_url: str) -> dict | None:
@@ -457,12 +656,14 @@ async def fetch_wanted_facts(source_url: str) -> dict | None:
                 resp.raise_for_status()
                 _, company_id = _parse_wanted(resp.text)
                 if not company_id:
+                    logger.warning("원티드 공고에서 회사 번호를 찾지 못함 (url=%s)", _log_url(source_url))
                     return None
 
             resp = await _safe_get(client, f"https://www.wanted.co.kr/company/{company_id}")
             resp.raise_for_status()
             m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', resp.text, re.DOTALL)
             if not m:
+                logger.warning("원티드 기업 페이지에 데이터가 없음 (company_id=%s)", company_id)
                 return None
 
             queries = (
@@ -495,14 +696,17 @@ async def fetch_wanted_facts(source_url: str) -> dict | None:
             main_tags = [t["title"] for t in info.get("mainTags", [])]
 
             # stability 추론: 상장 여부 기준으로만 결정 (나머지는 LLM에 맡김)
-            if corp_class in ("코스피", "코스닥"):
+            listing = _listing_label(corp_class, ticker)
+            if listing:
                 stability = "강"
             else:
                 stability = None  # 변경하지 않음
 
             investment_stage = None
-            if corp_class in ("코스피", "코스닥"):
-                investment_stage = f"{corp_class} 상장" + (f" ({ticker})" if ticker else "")
+            if listing:
+                investment_stage = (f"{listing} 상장" if listing != "상장" else "상장") + (
+                    f" ({ticker})" if ticker else ""
+                )
 
             return {
                 "employee_count": f"{emp_count:,}명" if emp_count else None,
@@ -518,7 +722,11 @@ async def fetch_wanted_facts(source_url: str) -> dict | None:
                 "ticker": ticker,
                 "main_tags": main_tags,
             }
+        except httpx.HTTPError as e:
+            logger.warning("원티드 동기화용 기업 정보 수집 실패 (url=%s): %s", _log_url(source_url), _error_summary(e))
+            return None
         except Exception:
+            logger.exception("원티드 동기화용 기업 정보 수집 중 예상 못 한 오류 (url=%s)", _log_url(source_url))
             return None
 
 

@@ -4,6 +4,7 @@
 RAG를 안 쓰는 사용자도 써야 하는 핵심 기능이라 선택 기능의 DB에 의존하지 않는다.
 세부 설계는 docs/profile-history/PLAN.md 참고.
 """
+import json
 import logging
 import sqlite3
 from collections import Counter
@@ -122,6 +123,27 @@ def init_db() -> None:
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_rag_messages_chat
                 ON rag_messages(chat_id, id)
+            """)
+            # 회사별 회사 정보(기업 페이지 원본 + 평가용 컬럼). (source, source_company_id)가 유일 —
+            # 같은 회사를 다시 수집하면 그 줄을 제자리에서 덮어쓴다(이력 없음, id 유지).
+            # 공고와의 연결은 posting_raw_versions.company_info_id가 맡는다.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS company_info (
+                    id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+                    source                   TEXT NOT NULL,
+                    source_company_id        TEXT NOT NULL,
+                    source_url               TEXT NOT NULL,
+                    collected_at             TEXT NOT NULL,
+                    company_payload          TEXT,
+                    posting_company_payload  TEXT,
+                    employee_count           TEXT,
+                    revenue_won              INTEGER,
+                    revenue_as_of            TEXT,
+                    listing_status           TEXT,
+                    funding_stage            TEXT,
+                    funding_total            TEXT,
+                    UNIQUE (source, source_company_id)
+                )
             """)
             conn.commit()
         _backfill_profile_version()
@@ -339,6 +361,54 @@ def delete_fit_history_for_slug(company_slug: str) -> int:
         cur = conn.execute("DELETE FROM fit_history WHERE company_slug = ?", (company_slug,))
         conn.commit()
         return cur.rowcount
+
+
+def upsert_company_info(
+    source: str,
+    source_company_id: str,
+    source_url: str,
+    company_payload: dict | None,
+    posting_company_payload: dict | None,
+    employee_count: str | None = None,
+    revenue_won: int | None = None,
+    revenue_as_of: str | None = None,
+    listing_status: str | None = None,
+    funding_stage: str | None = None,
+    funding_total: str | None = None,
+) -> int:
+    """회사(source, source_company_id)의 회사 정보 줄을 최신 값으로 덮어쓴다 — 이력은 쌓지
+    않는다. 이미 있으면 그 줄을 제자리에서 고쳐 id가 유지된다(원문 버전 줄이 이 id를 가리킨다).
+    평가용 컬럼은 받은 값만 채우고 나머지는 비운다. 반환값은 그 줄의 id."""
+    def dumps(value: dict | None) -> str | None:
+        return None if value is None else json.dumps(value, ensure_ascii=False)
+
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT INTO company_info (source, source_company_id, source_url, collected_at, "
+            "company_payload, posting_company_payload, employee_count, revenue_won, "
+            "revenue_as_of, listing_status, funding_stage, funding_total) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT (source, source_company_id) DO UPDATE SET "
+            "source_url = excluded.source_url, collected_at = excluded.collected_at, "
+            "company_payload = excluded.company_payload, "
+            "posting_company_payload = excluded.posting_company_payload, "
+            "employee_count = excluded.employee_count, revenue_won = excluded.revenue_won, "
+            "revenue_as_of = excluded.revenue_as_of, listing_status = excluded.listing_status, "
+            "funding_stage = excluded.funding_stage, funding_total = excluded.funding_total",
+            (
+                source, source_company_id, source_url,
+                datetime.now().isoformat(timespec="seconds"),
+                dumps(company_payload), dumps(posting_company_payload),
+                employee_count, revenue_won, revenue_as_of, listing_status,
+                funding_stage, funding_total,
+            ),
+        )
+        row_id = conn.execute(
+            "SELECT id FROM company_info WHERE source = ? AND source_company_id = ?",
+            (source, source_company_id),
+        ).fetchone()["id"]
+        conn.commit()
+        return row_id
 
 
 def migrate_qa_slug_history(device_id: str, company_slug: str, pairs: list[tuple[str, str]]) -> int:

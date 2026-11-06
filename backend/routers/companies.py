@@ -39,6 +39,7 @@ from services.app_db import (
     is_healthy,
     latest_profile_version_id,
     list_fit_history,
+    upsert_company_info,
 )
 from services.jobplanet import fetch_jobplanet_score
 from llm.base import LLMAPIError
@@ -484,6 +485,7 @@ async def sync_wanted(slug: str, req: SyncWantedRequest = SyncWantedRequest()):
 
     facts = await scraper.fetch_wanted_facts(url)
     if not facts:
+        logger.warning("원티드 동기화 실패 (slug=%s) — 사유는 바로 앞 스크래퍼 로그 참고", slug)
         raise HTTPException(status_code=502, detail="원티드에서 기업 정보를 가져오지 못했습니다.")
 
     fm = existing.frontmatter
@@ -581,6 +583,7 @@ async def _process_company(
     preserve_fm: CompanyFrontmatter | None = None,
     preserved_log_entries: list[dict] | None = None,
     snapshot: LLMSnapshot | None = None,
+    company_info: dict | None = None,
 ) -> CompanyRecord:
     """텍스트 → 추출 → 잡플래닛 조회 → 본문 생성 → 적합도 평가 → 저장.
 
@@ -716,6 +719,12 @@ async def _process_company(
     storage.write_raw_text(slug, raw_text)
     record = storage.write_company(slug, fm, body)
     snapshot_fit_history(slug, fm.fit_score, fm.fit_label, profile_version_id_at_eval)
+    if company_info:
+        # 기업 페이지 원본 보관 — 실패해도 등록은 계속한다(핵심 기능이 아니다).
+        try:
+            upsert_company_info(**company_info)
+        except Exception as e:
+            logger.warning("회사 정보 저장 실패 (slug=%s): %s", slug, e)
 
     materials = build_fit_notification_materials(fm)
     await send_notification(materials)
@@ -742,18 +751,28 @@ async def add_from_url(req: FromUrlRequest):
             },
         )
     try:
-        raw_text = await scraper.fetch_url_text(req.url)
+        raw_text, company = await scraper.fetch_url(req.url)
+    except scraper.SSRFBlockedError as e:
+        # 서버가 내부망·자기 자신으로 접속하게 만들려는 주소 — 평범한 거부와 달리 눈에 띄게 남긴다
+        logger.warning("내부 주소 접근 차단 (url=%s): %s", req.url.split("?")[0], e)
+        raise HTTPException(status_code=422, detail=str(e))
     except ValueError as e:
         # JS 렌더링 필요 — 텍스트 붙여넣기 유도
+        logger.info("공고 URL 읽기 거부 (url=%s): %s", req.url.split("?")[0], e)
         raise HTTPException(status_code=422, detail=str(e))
     except httpx.TimeoutException:
+        logger.warning("공고 URL 응답 시간 초과 (url=%s)", req.url.split("?")[0])
         raise HTTPException(status_code=504, detail="사이트 응답 시간이 초과됐습니다 (20초). 사이트가 느리거나 접근이 차단됐을 수 있습니다.")
     except httpx.HTTPStatusError as e:
+        logger.warning("공고 URL 오류 응답 %s (url=%s)", e.response.status_code, req.url.split("?")[0])
         raise HTTPException(status_code=502, detail=f"사이트가 {e.response.status_code} 오류를 반환했습니다. URL을 확인해주세요.")
     except Exception:
+        logger.exception("공고 URL 접근 중 예상 못 한 오류 (url=%s)", req.url.split("?")[0])
         raise HTTPException(status_code=502, detail="URL 접근 실패: 네트워크 연결 오류. URL을 다시 확인해주세요.")
     try:
-        return await asyncio.wait_for(_process_company(raw_text, "url", req.url), timeout=300)
+        return await asyncio.wait_for(
+            _process_company(raw_text, "url", req.url, company_info=company), timeout=300,
+        )
     except asyncio.TimeoutError:
         raise HTTPException(status_code=504, detail="분석 시간이 초과되었습니다 (300초). 잠시 후 다시 시도해주세요.")
     except LLMAPIError as e:
