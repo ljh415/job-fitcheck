@@ -45,6 +45,12 @@ def _rows():
         return [dict(r) for r in conn.execute("SELECT * FROM company_info ORDER BY id")]
 
 
+def _versions(slug):
+    with get_connection() as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT * FROM posting_raw_versions WHERE slug = ? ORDER BY id", (slug,))]
+
+
 async def main():
     from llm.router import LLMSnapshot
     from routers import companies
@@ -134,13 +140,18 @@ async def main():
     assert len(_rows()) == rows_before
     print("5. 저장 실패: 등록은 성공(공고 파일 있음), 행 없음")
 
-    # 6. 공고 삭제 → 공고 파일은 사라지고 회사 정보 줄은 그대로(회사 단위라 다른 공고가 쓸 수 있다.
-    #    안 쓰는 줄의 정리는 원문 버전 표가 생긴 뒤 추가한다)
-    rows_before = len(_rows())
+    # 6. 공고 삭제 → 공고 파일과 그 공고의 원문 버전 행이 삭제되고, 아무도 안 가리키는 회사 정보 행도
+    #    삭제된다. 다른 회사(리멤버)의 행은 그대로
+    before = _rows()
+    wanted_company = before[0]
+    assert wanted_company["source"] == "wanted" and _versions(wanted_slug), (wanted_company, _versions(wanted_slug))
     assert await companies.delete_company(wanted_slug) == {"status": "deleted"}
     assert storage.read_company(wanted_slug) is None
-    assert len(_rows()) == rows_before
-    print("6. 삭제: 공고 파일은 사라지고 회사 정보 줄은 그대로")
+    assert _versions(wanted_slug) == []
+    after = _rows()
+    assert wanted_company["id"] not in [r["id"] for r in after] and len(after) == len(before) - 1, after
+    assert any(r["source"] == "remember" for r in after)
+    print("6. 삭제: 공고 파일·원문 버전 행·아무도 안 쓰는 회사 정보 행이 삭제되고 다른 회사 행은 그대로")
 
     # 7. 기업 페이지 수집만 실패 → 등록은 성공, 행 없음, 서버 로그에 회사 번호와 사유가 남음
     import logging
@@ -212,6 +223,71 @@ async def main():
     finally:
         logging.getLogger("routers.companies").removeHandler(router_handler)
     print("8. 내부 주소 접근: 두 주소 모두 422로 거부, 경고 로그 2건")
+
+    # 9. 원문 버전: 등록하면 행 1개, 같은 원문이면 그대로, 바뀌면 새 행(기존 행 유지), 회사 정보가 없거나
+    #    저장에 실패하면 company_info_id는 NULL, 원문 버전 저장이 실패해도 등록은 성공
+    import hashlib
+
+    def sha(text):
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+    info_a = {"source": "wanted", "source_company_id": "9001", "source_url": "https://x/company/9001",
+              "company_payload": {"v": 1}, "posting_company_payload": None}
+    _fake_name["value"] = "시험버전A"
+    rec = await companies._process_company("원문 1판", "url", WANTED_URL, company_info=info_a)
+    slug_a = rec.slug
+    company_9001 = next(r for r in _rows() if r["source_company_id"] == "9001")
+    v1 = _versions(slug_a)
+    assert len(v1) == 1 and v1[0]["content_hash"] == sha("원문 1판") and v1[0]["raw_text"] == "원문 1판", v1
+    assert v1[0]["company_info_id"] == company_9001["id"], v1
+
+    await companies._process_company("원문 1판", "url", WANTED_URL, existing_slug=slug_a, company_info=info_a)
+    assert [v["id"] for v in _versions(slug_a)] == [v1[0]["id"]]  # 같은 원문 → 행 추가 없음
+
+    await companies._process_company("원문 2판", "url", WANTED_URL, existing_slug=slug_a, company_info=info_a)
+    v2 = _versions(slug_a)
+    assert len(v2) == 2 and v2[0]["id"] == v1[0]["id"] and v2[1]["content_hash"] == sha("원문 2판"), v2
+    assert v2[1]["company_info_id"] == company_9001["id"], v2  # 회사 정보 행은 제자리 갱신이라 id 유지
+
+    _fake_name["value"] = "시험버전텍스트"
+    rec = await companies._process_company("텍스트 원문", "text_paste", None)
+    vt = _versions(rec.slug)
+    assert len(vt) == 1 and vt[0]["company_info_id"] is None, vt
+
+    companies.upsert_company_info = boom
+    try:
+        _fake_name["value"] = "시험버전저장실패"
+        rec = await companies._process_company("저장 실패 원문", "url", WANTED_URL, company_info=info_a)
+    finally:
+        companies.upsert_company_info = original
+    vf = _versions(rec.slug)
+    assert storage.read_company(rec.slug) is not None
+    assert len(vf) == 1 and vf[0]["company_info_id"] is None, vf
+
+    original_record = companies.record_raw_version
+    companies.record_raw_version = boom
+    try:
+        _fake_name["value"] = "시험버전기록실패"
+        rec = await companies._process_company("기록 실패 원문", "url", WANTED_URL, company_info=info_a)
+    finally:
+        companies.record_raw_version = original_record
+    assert storage.read_company(rec.slug) is not None and _versions(rec.slug) == []
+    print("9. 원문 버전: 등록 시 행 1개(해시·회사 정보 연결 일치), 같은 원문은 행 추가 없음, 바뀌면 새 행, 회사 정보 없음·저장 실패는 NULL, 원문 버전 저장이 실패해도 등록 성공")
+
+    # 10. 같은 회사의 공고 2건 → 회사 정보 행을 공유, 하나를 지우면 행 유지, 마지막 공고를 지우면 함께 삭제
+    _fake_name["value"] = "시험버전B"
+    rec_b = await companies._process_company("원문 B", "url", WANTED_URL, company_info=info_a)
+    slug_b = rec_b.slug
+    shared = {_versions(s)[-1]["company_info_id"] for s in (slug_a, slug_b)}
+    assert len(shared) == 1 and None not in shared, shared
+    company_id = shared.pop()
+    await companies.delete_company(slug_a)
+    assert _versions(slug_a) == [] and _versions(slug_b)
+    assert any(r["id"] == company_id for r in _rows())
+    await companies.delete_company(slug_b)
+    assert _versions(slug_b) == []
+    assert not any(r["id"] == company_id for r in _rows())
+    print("10. 같은 회사의 공고 2건: 회사 정보 행을 공유하고, 하나를 지워도 행이 남고 마지막 공고를 지우면 함께 삭제")
 
 
 with tempfile.TemporaryDirectory() as tmp:

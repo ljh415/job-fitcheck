@@ -4,6 +4,7 @@
 RAG를 안 쓰는 사용자도 써야 하는 핵심 기능이라 선택 기능의 DB에 의존하지 않는다.
 세부 설계는 docs/profile-history/PLAN.md 참고.
 """
+import hashlib
 import json
 import logging
 import sqlite3
@@ -431,6 +432,50 @@ def upsert_company_info(
         ).fetchone()["id"]
         conn.commit()
         return row_id
+
+
+def record_raw_version(slug: str, raw_text: str, company_info_id: int | None = None) -> int:
+    """공고(slug)의 원문을 버전으로 남긴다. 원문의 SHA-256이 그 공고의 가장 최근 버전과 같으면
+    행을 추가하지 않고 그 행의 id를 반환하고, 다르면 새 행을 추가해 그 id를 반환한다.
+    company_info_id는 어느 회사 정보 행인지만 가리킨다(회사 정보를 안 받은 공고는 None)."""
+    content_hash = hashlib.sha256(raw_text.encode("utf-8")).hexdigest()
+    with get_connection() as conn:
+        latest = conn.execute(
+            "SELECT id, content_hash FROM posting_raw_versions WHERE slug = ? ORDER BY id DESC LIMIT 1",
+            (slug,),
+        ).fetchone()
+        if latest and latest["content_hash"] == content_hash:
+            return latest["id"]
+        cur = conn.execute(
+            "INSERT INTO posting_raw_versions (slug, collected_at, content_hash, raw_text, company_info_id) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (slug, datetime.now().isoformat(timespec="seconds"), content_hash, raw_text, company_info_id),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+
+def delete_raw_versions_for_slug(slug: str) -> tuple[int, int]:
+    """공고 삭제 시 그 공고의 원문 버전 행을 지우고, 그 행들이 가리키던 회사 정보 행 중 다른
+    원문 버전 행이 더 이상 가리키지 않는 것만 지운다(회사 정보는 같은 회사의 다른 공고가 쓸 수
+    있다). 한 트랜잭션으로 처리하고 (지운 원문 버전 행 수, 지운 회사 정보 행 수)를 반환한다."""
+    with get_connection() as conn:
+        company_ids = [
+            r["company_info_id"] for r in conn.execute(
+                "SELECT DISTINCT company_info_id FROM posting_raw_versions "
+                "WHERE slug = ? AND company_info_id IS NOT NULL", (slug,),
+            )
+        ]
+        versions = conn.execute("DELETE FROM posting_raw_versions WHERE slug = ?", (slug,)).rowcount
+        companies = 0
+        for company_id in company_ids:
+            companies += conn.execute(
+                "DELETE FROM company_info WHERE id = ? AND NOT EXISTS "
+                "(SELECT 1 FROM posting_raw_versions WHERE company_info_id = ?)",
+                (company_id, company_id),
+            ).rowcount
+        conn.commit()
+        return versions, companies
 
 
 def migrate_qa_slug_history(device_id: str, company_slug: str, pairs: list[tuple[str, str]]) -> int:

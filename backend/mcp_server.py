@@ -589,6 +589,11 @@ async def create_company(
         slug = storage.make_slug(fm.company_name, fm.job_title or "")
         storage.write_raw_text(slug, raw_text)
         record = storage.write_company(slug, fm, final_body)
+        try:
+            # 회사 정보 행은 만들지 않는 경로라 company_info_id는 비운다.
+            companies.record_raw_version(slug, raw_text)
+        except Exception:
+            logger.exception("create_company: 공고 원문 버전 저장 실패(저장은 계속, slug=%s)", slug)
         companies.snapshot_fit_history(slug, fm.fit_score, fm.fit_label, profile_version_id)
         result = record.model_dump()
         result["next_step"] = (

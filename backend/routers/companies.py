@@ -34,11 +34,13 @@ from services.app_db import (
     create_fit_history_entry,
     delete_fit_history_for_slug,
     delete_qa_history_for_slug,
+    delete_raw_versions_for_slug,
     get_fit_history_entry,
     get_profile_version,
     is_healthy,
     latest_profile_version_id,
     list_fit_history,
+    record_raw_version,
     upsert_company_info,
 )
 from services.jobplanet import fetch_jobplanet_score
@@ -461,6 +463,11 @@ async def delete_company(slug: str):
         delete_qa_history_for_slug(slug)
     except Exception as e:
         logger.warning("삭제된 회사의 QnA 대화 기록 정리 실패 (slug=%s): %s", slug, e)
+    try:
+        # 원문 버전 행과, 그 행들만 가리키던 회사 정보 행(같은 회사의 다른 공고가 쓰면 남김).
+        delete_raw_versions_for_slug(slug)
+    except Exception as e:
+        logger.warning("삭제된 공고의 원문 버전 정리 실패 (slug=%s): %s", slug, e)
     # RAG(opt-in) 자동 재색인 — 삭제된 공고의 고아 임베딩을 prune_deleted_postings()가 정리하도록.
     trigger_reindex_background()
     return {"status": "deleted"}
@@ -718,13 +725,20 @@ async def _process_company(
     slug = existing_slug or storage.make_slug(fm.company_name, fm.job_title or "")
     storage.write_raw_text(slug, raw_text)
     record = storage.write_company(slug, fm, body)
-    snapshot_fit_history(slug, fm.fit_score, fm.fit_label, profile_version_id_at_eval)
+    # 회사 정보 → 원문 버전 → 평가 이력 순서: 원문 버전 행이 회사 정보 행의 id를 가리키고,
+    # 평가 이력이 원문 버전 행을 가리켜야 해서 앞쪽이 먼저 저장돼야 한다.
+    company_info_id = None
     if company_info:
         # 기업 페이지 원본 보관 — 실패해도 등록은 계속한다(핵심 기능이 아니다).
         try:
-            upsert_company_info(**company_info)
+            company_info_id = upsert_company_info(**company_info)
         except Exception as e:
             logger.warning("회사 정보 저장 실패 (slug=%s): %s", slug, e)
+    try:
+        record_raw_version(slug, raw_text, company_info_id)
+    except Exception as e:
+        logger.warning("공고 원문 버전 저장 실패 (slug=%s): %s", slug, e)
+    snapshot_fit_history(slug, fm.fit_score, fm.fit_label, profile_version_id_at_eval)
 
     materials = build_fit_notification_materials(fm)
     await send_notification(materials)
