@@ -79,6 +79,11 @@ def init_db() -> None:
                 CREATE INDEX IF NOT EXISTS idx_fit_history_slug
                 ON fit_history(company_slug, created_at)
             """)
+            # 평가에 쓴 공고 원문 버전(posting_raw_versions.id) — 이미 만들어진 DB에도 대응.
+            # 이 칸이 생기기 전의 평가는 소급할 수 없어 NULL로 남는다.
+            cols = {r["name"] for r in conn.execute("PRAGMA table_info(fit_history)").fetchall()}
+            if "raw_version_id" not in cols:
+                conn.execute("ALTER TABLE fit_history ADD COLUMN raw_version_id INTEGER")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS qa_messages (
                     id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -144,6 +149,23 @@ def init_db() -> None:
                     funding_total            TEXT,
                     UNIQUE (source, source_company_id)
                 )
+            """)
+            # 공고 원문 버전 — 평가 이력이 "어느 원문으로 평가했나"를 가리키는 곳. 공고(slug)별로
+            # 원문의 해시가 최신 버전과 다를 때만 줄을 추가한다(누적). company_info_id는 어느 회사
+            # 줄인지만 가리키며(그 줄은 덮어써짐), 회사 정보를 안 받은 공고는 NULL.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS posting_raw_versions (
+                    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                    slug             TEXT NOT NULL,
+                    collected_at     TEXT NOT NULL,
+                    content_hash     TEXT NOT NULL,
+                    raw_text         TEXT NOT NULL,
+                    company_info_id  INTEGER
+                )
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_posting_raw_versions_slug
+                ON posting_raw_versions(slug, id)
             """)
             conn.commit()
         _backfill_profile_version()
