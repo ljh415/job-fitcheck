@@ -625,7 +625,8 @@ async def _process_company(
         extracted["display_name"] = extracted.get("company_name") or ""
 
     # 2. 잡플래닛 평점 조회 (refill 시 기존 점수 있으면 재사용, 없으면 스크래핑)
-    company_name_for_jp = extracted.get("display_name") or extracted.get("company_name", "")
+    # 저장 회사명으로 검색한다 — 표시 이름은 영문 브랜드(SWING)일 수 있어 잡플래닛 등록명(더스윙)과 안 맞는다
+    company_name_for_jp = extracted.get("company_name") or extracted.get("display_name", "")
     if company_name_for_jp:
         existing_jp_score = None
         existing_jp_review = None
@@ -648,7 +649,7 @@ async def _process_company(
             if jp.score is not None:
                 extracted["jobplanet_score"] = jp.score
                 extracted["jobplanet_review_count"] = jp.review_count
-                logger.info("[2/4] 잡플래닛 결과: %.1f점 (%d건)", jp.score, jp.review_count or 0)
+                logger.info("[2/4] 잡플래닛 결과: %.1f점 (%d건, %s)", jp.score, jp.review_count or 0, jp.source)
             else:
                 logger.info("[2/4] 잡플래닛 결과: %s", jp.source)
 
