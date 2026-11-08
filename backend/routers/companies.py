@@ -39,6 +39,7 @@ from services.app_db import (
     get_profile_version,
     is_healthy,
     latest_profile_version_id,
+    latest_raw_version,
     list_fit_history,
     record_raw_version,
     upsert_company_info,
@@ -119,19 +120,21 @@ def resolve_profile_version_id_for_eval() -> int | None:
         return None
 
 
-def snapshot_fit_history(slug: str, fit_score, fit_label, profile_version_id: int | None) -> None:
+def snapshot_fit_history(
+    slug: str, fit_score, fit_label, profile_version_id: int | None, raw_version_id: int | None = None,
+) -> None:
     """방금 저장된 회사 평가 결과를 이력(SQLite)에 추가한다 — 덮어쓰기 아니라 누적.
     mcp_server.py의 create_company도 재사용한다.
     profile_version_id는 평가에 실제로 사용한 프로필을 읽은 시점에 고정해서 전달받는다
     (평가 완료 시점에 다시 조회하면, 평가 대기 중 프로필이 바뀐 경우 엉뚱한 버전과
-    연결될 수 있다).
+    연결될 수 있다). raw_version_id는 평가에 쓴 공고 원문의 버전(posting_raw_versions.id).
     실제 평가가 있었을 때만(fit_score가 있을 때만) 기록하고, 실패해도 회사 저장 자체에는
     영향 주지 않는다."""
     if fit_score is None:
         return
     try:
         content = (settings.companies_dir / f"{slug}.md").read_text(encoding="utf-8")
-        create_fit_history_entry(slug, profile_version_id, fit_score, fit_label, content)
+        create_fit_history_entry(slug, profile_version_id, fit_score, fit_label, content, raw_version_id)
     except Exception as e:
         logger.warning("평가 이력 저장 실패: %s", e)
 
@@ -734,11 +737,12 @@ async def _process_company(
             company_info_id = upsert_company_info(**company_info)
         except Exception as e:
             logger.warning("회사 정보 저장 실패 (slug=%s): %s", slug, e)
+    raw_version_id = None
     try:
-        record_raw_version(slug, raw_text, company_info_id)
+        raw_version_id = record_raw_version(slug, raw_text, company_info_id)
     except Exception as e:
         logger.warning("공고 원문 버전 저장 실패 (slug=%s): %s", slug, e)
-    snapshot_fit_history(slug, fm.fit_score, fm.fit_label, profile_version_id_at_eval)
+    snapshot_fit_history(slug, fm.fit_score, fm.fit_label, profile_version_id_at_eval, raw_version_id)
 
     materials = build_fit_notification_materials(fm)
     await send_notification(materials)
@@ -969,7 +973,16 @@ async def refit_company(slug: str):
     profile_text = storage.strip_scoring_excluded(storage.read_profile_text() or "")
     # 이 프로필을 실제로 읽은 시점의 스냅샷 id를 고정 (이유는 resolve_profile_version_id_for_eval 참고)
     profile_version_id_at_eval = resolve_profile_version_id_for_eval()
-    raw_text = prompts.escape_tag_chars(storage.read_raw_text(slug) or record.body)
+    raw_source = storage.read_raw_text(slug) or record.body
+    raw_text = prompts.escape_tag_chars(raw_source)
+    # 이 원문을 읽은 시점에 원문 버전도 고정한다(프로필 버전과 같은 이유). 원문이 그 공고의 최신
+    # 버전과 같으면 행이 늘지 않고, 다르거나 버전 행이 아직 없던 공고면 새 행이 생긴다.
+    raw_version_id = None
+    try:
+        latest = latest_raw_version(slug)
+        raw_version_id = record_raw_version(slug, raw_source, latest["company_info_id"] if latest else None)
+    except Exception as e:
+        logger.warning("공고 원문 버전 저장 실패 (slug=%s): %s", slug, e)
     # 이전 평가 결과(strengths/gaps/fit_score 등)는 LLM 입력에서 제외 — 자기참조 편향 방지.
     # item_judgments/decision_factors/evaluation_incomplete도 같은 이유로 제외한다 —
     # 적합도 평가 구조 개편(docs/fit-eval-structural-redesign/PLAN.md)의 1단계 중간
@@ -1002,6 +1015,6 @@ async def refit_company(slug: str):
     body = append_status_log(body, "적합도 재평가 완료")
 
     record = storage.write_company(slug, fm, body)
-    snapshot_fit_history(slug, fm.fit_score, fm.fit_label, profile_version_id_at_eval)
+    snapshot_fit_history(slug, fm.fit_score, fm.fit_label, profile_version_id_at_eval, raw_version_id)
     trigger_reindex_background()  # RAG가 복제하는 fit_score/strengths/gaps 갱신, RAG 꺼져 있으면 no-op
     return record

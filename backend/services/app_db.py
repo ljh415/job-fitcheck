@@ -329,12 +329,14 @@ def create_fit_history_entry(
     fit_score: int | None,
     fit_label: str | None,
     content: str,
+    raw_version_id: int | None = None,
 ) -> int:
-    """평가 결과를 이력에 추가한다(덮어쓰기 아님) — 최초 평가도 포함해서 매번 호출."""
+    """평가 결과를 이력에 추가한다(덮어쓰기 아님) — 최초 평가도 포함해서 매번 호출.
+    raw_version_id는 평가에 쓴 공고 원문의 버전(posting_raw_versions.id), 모르면 None."""
     with get_connection() as conn:
         cur = conn.execute(
             "INSERT INTO fit_history (company_slug, created_at, profile_version_id, "
-            "fit_score, fit_label, content) VALUES (?, ?, ?, ?, ?, ?)",
+            "fit_score, fit_label, content, raw_version_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
                 company_slug,
                 datetime.now().isoformat(timespec="seconds"),
@@ -342,6 +344,7 @@ def create_fit_history_entry(
                 fit_score,
                 fit_label,
                 content,
+                raw_version_id,
             ),
         )
         conn.commit()
@@ -453,6 +456,17 @@ def record_raw_version(slug: str, raw_text: str, company_info_id: int | None = N
         )
         conn.commit()
         return cur.lastrowid
+
+
+def latest_raw_version(slug: str) -> dict | None:
+    """공고(slug)의 가장 최근 원문 버전 행(id, content_hash, company_info_id). 없으면 None."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT id, content_hash, company_info_id FROM posting_raw_versions "
+            "WHERE slug = ? ORDER BY id DESC LIMIT 1",
+            (slug,),
+        ).fetchone()
+        return dict(row) if row else None
 
 
 def delete_raw_versions_for_slug(slug: str) -> tuple[int, int]:

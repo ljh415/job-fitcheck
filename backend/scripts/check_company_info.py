@@ -289,6 +289,61 @@ async def main():
     assert not any(r["id"] == company_id for r in _rows())
     print("10. 같은 회사의 공고 2건: 회사 정보 행을 공유하고, 하나를 지워도 행이 남고 마지막 공고를 지우면 함께 삭제")
 
+    # 11. 평가 이력이 평가에 쓴 원문 버전을 가리킨다(평가 호출은 가짜)
+    async def fake_eval(snap, profile_text, company_data, raw_text, operation=""):
+        return {"fit_score": 77, "fit_label": "추천"}, "시험 리포트"
+
+    def fit_rows(slug):
+        with get_connection() as conn:
+            return [dict(r) for r in conn.execute(
+                "SELECT id, raw_version_id FROM fit_history WHERE company_slug = ? ORDER BY id", (slug,))]
+
+    orig_eval = companies.company_analysis.evaluate_fit_structured
+    orig_exists, orig_read = storage.profile_exists, storage.read_profile_text
+    companies.company_analysis.evaluate_fit_structured = fake_eval
+    storage.profile_exists = lambda: True
+    storage.read_profile_text = lambda: "시험 프로필"
+    try:
+        _fake_name["value"] = "시험평가"
+        rec = await companies._process_company("평가 원문 1판", "url", WANTED_URL, company_info=info_a)
+        slug_e = rec.slug
+        ver = _versions(slug_e)
+        fits = fit_rows(slug_e)
+        assert len(ver) == 1 and len(fits) == 1 and fits[0]["raw_version_id"] == ver[0]["id"], (ver, fits)
+
+        await companies.refit_company(slug_e)  # 같은 원문 재평가
+        fits = fit_rows(slug_e)
+        assert len(_versions(slug_e)) == 1 and len(fits) == 2, fits
+        assert fits[1]["raw_version_id"] == ver[0]["id"], fits
+
+        storage.write_raw_text(slug_e, "평가 원문 2판")  # 원문이 바뀐 뒤 재평가
+        await companies.refit_company(slug_e)
+        ver = _versions(slug_e)
+        fits = fit_rows(slug_e)
+        assert len(ver) == 2 and len(fits) == 3, (ver, fits)
+        assert fits[2]["raw_version_id"] == ver[1]["id"] and fits[0]["raw_version_id"] == ver[0]["id"], fits
+        assert ver[1]["company_info_id"] == ver[0]["company_info_id"] and ver[0]["company_info_id"] is not None, ver
+
+        with get_connection() as conn:  # 원문 버전 행이 없던 공고(이 기능 전에 등록된 공고)
+            conn.execute("DELETE FROM posting_raw_versions WHERE slug = ?", (slug_e,))
+            conn.commit()
+        await companies.refit_company(slug_e)
+        ver = _versions(slug_e)
+        fits = fit_rows(slug_e)
+        assert len(ver) == 1 and ver[0]["company_info_id"] is None, ver
+        assert fits[3]["raw_version_id"] == ver[0]["id"], fits
+
+        companies.record_raw_version = boom  # 원문 버전 기록이 실패해도 평가 이력은 남고 원문 버전 id만 비움
+        try:
+            await companies.refit_company(slug_e)
+        finally:
+            companies.record_raw_version = original_record
+        fits = fit_rows(slug_e)
+        assert len(fits) == 5 and fits[4]["raw_version_id"] is None, fits
+    finally:
+        companies.company_analysis.evaluate_fit_structured = orig_eval
+        storage.profile_exists, storage.read_profile_text = orig_exists, orig_read
+    print("11. 평가 이력의 원문 버전: 신규 평가·같은 원문 재평가·원문이 바뀐 뒤 재평가·버전 행이 없던 공고가 각각 맞는 버전을 가리키고, 기록 실패 시 NULL")
 
 with tempfile.TemporaryDirectory() as tmp:
     settings.data_dir = pathlib.Path(tmp)
