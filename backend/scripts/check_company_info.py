@@ -345,6 +345,76 @@ async def main():
         storage.profile_exists, storage.read_profile_text = orig_exists, orig_read
     print("11. 평가 이력의 원문 버전: 신규 평가·같은 원문 재평가·원문이 바뀐 뒤 재평가·버전 행이 없던 공고가 각각 맞는 버전을 가리키고, 기록 실패 시 NULL")
 
+    # 12. 재분석(refill): URL로 등록한 공고는 사이트에서 다시 받아 원문 버전·회사 정보를 갱신하고,
+    #     받기 실패 시 기존 값 보존, URL 등록이 아닌 공고는 사이트를 부르지 않음 (스크래핑은 가짜)
+    import httpx
+    from fastapi import HTTPException
+    from services import scraper
+
+    def fake_company(**over):
+        base = {"source": "wanted", "source_company_id": "9100", "source_url": "https://x/company/9100",
+                "company_payload": {"v": 1}, "posting_company_payload": None,
+                "employee_count": "112명 (국민연금 기준)", "revenue_won": 1000, "revenue_as_of": "2024-12-31",
+                "listing_status": None, "funding_stage": None, "funding_total": None}
+        base.update(over)
+        return base
+
+    state = {"result": None, "error": None, "calls": 0}
+
+    async def fake_fetch_url(url):
+        state["calls"] += 1
+        if state["error"]:
+            raise state["error"]
+        return state["result"]
+
+    orig_fetch = scraper.fetch_url
+    scraper.fetch_url = fake_fetch_url
+    try:
+        # a) 등록 → 원문 버전 1개
+        _fake_name["value"] = "시험재분석"
+        state["result"] = ("옛 원문 + 기업 정보 블록", fake_company())
+        rec = await companies.add_from_url(companies.FromUrlRequest(url=WANTED_URL + "?r=1"))
+        slug_r = rec.slug
+        assert len(_versions(slug_r)) == 1
+        company_before = next(r for r in _rows() if r["source_company_id"] == "9100")
+
+        # b) 사이트의 공고가 바뀐 뒤 재분석 → 원문 파일 교체, 새 원문 버전 행, 회사 정보 행은 id 유지하고 덮어씀
+        state["result"] = ("새 원문 + 기업 정보 블록", fake_company(company_payload={"v": 2}))
+        await companies.refill_company(slug_r)
+        ver = _versions(slug_r)
+        company_after = next(r for r in _rows() if r["source_company_id"] == "9100")
+        assert storage.read_raw_text(slug_r) == "새 원문 + 기업 정보 블록", storage.read_raw_text(slug_r)
+        assert len(ver) == 2 and ver[1]["raw_text"] == "새 원문 + 기업 정보 블록", ver
+        assert ver[1]["company_info_id"] == company_after["id"] == company_before["id"], (ver, company_before, company_after)
+        assert json.loads(company_after["company_payload"]) == {"v": 2}, company_after
+
+        # c) 내용이 같은 재분석 → 원문 버전 행 추가 없음
+        await companies.refill_company(slug_r)
+        assert len(_versions(slug_r)) == 2
+
+        # d) 받기 실패 / e) 기업 페이지만 실패(이전에 회사 정보가 있던 공고) → 502, 아무것도 안 바뀜
+        for error, result in ((httpx.ConnectError("연결 흉내"), None), (None, ("기업 블록 없는 원문", None))):
+            state["error"], state["result"] = error, result
+            try:
+                await companies.refill_company(slug_r)
+                raise AssertionError("실패해야 하는 재분석이 성공함")
+            except HTTPException as e:
+                assert e.status_code == 502, e.status_code
+            assert storage.read_raw_text(slug_r) == "새 원문 + 기업 정보 블록" and len(_versions(slug_r)) == 2
+        state["error"] = None
+
+        # f) 텍스트 등록 공고 → 사이트를 부르지 않고 저장된 원문으로 재분석
+        _fake_name["value"] = "시험재분석텍스트"
+        rec = await companies._process_company("텍스트 원문", "text_paste", None)
+        calls_before = state["calls"]
+        await companies.refill_company(rec.slug)
+        assert state["calls"] == calls_before and storage.read_raw_text(rec.slug) == "텍스트 원문"
+    finally:
+        scraper.fetch_url = orig_fetch
+    print("12. 재분석: URL 등록 공고는 사이트에서 다시 받아 새 원문 버전·회사 정보(id 유지) 갱신, 같은 내용은 행 추가 없음, 받기 실패·기업 페이지 실패는 502로 기존 값 보존, 텍스트 등록 공고는 사이트를 부르지 않음")
+
+
+
 with tempfile.TemporaryDirectory() as tmp:
     settings.data_dir = pathlib.Path(tmp)
     app_db.DB_PATH = settings.data_dir / "app.db"

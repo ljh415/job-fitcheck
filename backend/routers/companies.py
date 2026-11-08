@@ -1,4 +1,4 @@
-"""회사 CRUD, 목록/타임라인/비교/CSV export, 원티드 동기화, 주간 요약,
+"""회사 CRUD, 목록/타임라인/비교/CSV export, 주간 요약,
 그리고 회사 추가 파이프라인(URL/텍스트/이미지 → 구조화 추출 → 잡플래닛 → 본문 → 적합도 평가 → 저장).
 
 회사 추가 흐름(_process_company)은 다음 순서로 진행된다:
@@ -476,55 +476,6 @@ async def delete_company(slug: str):
     return {"status": "deleted"}
 
 
-class SyncWantedRequest(BaseModel):
-    source_url: str | None = None
-
-
-@router.post("/api/companies/{slug}/sync-wanted")
-async def sync_wanted(slug: str, req: SyncWantedRequest = SyncWantedRequest()):
-    """Wanted 기업 페이지에서 구조화된 회사 정보를 가져와 frontmatter를 업데이트한다.
-    source_url을 body에 넘기면 그 URL을 사용하고, 없으면 기존 frontmatter의 source_url을 사용한다.
-    """
-    existing = storage.read_company(slug)
-    if not existing:
-        raise HTTPException(status_code=404, detail="회사를 찾을 수 없습니다.")
-
-    url = req.source_url or existing.frontmatter.source_url
-    if not url or not scraper.is_wanted_host(url):
-        raise HTTPException(status_code=400, detail="원티드 URL이 없습니다. 편집 폼에서 source_url을 먼저 입력해주세요.")
-
-    facts = await scraper.fetch_wanted_facts(url)
-    if not facts:
-        logger.warning("원티드 동기화 실패 (slug=%s) — 사유는 바로 앞 스크래퍼 로그 참고", slug)
-        raise HTTPException(status_code=502, detail="원티드에서 기업 정보를 가져오지 못했습니다.")
-
-    fm = existing.frontmatter
-    if req.source_url:
-        fm.source_url = req.source_url
-        fm.source_type = "url"
-
-    if facts["employee_count"]:
-        fm.employee_count = facts["employee_count"]
-    if facts["employee_count_meets_threshold"] is not None:
-        fm.employee_count_meets_threshold = facts["employee_count_meets_threshold"]
-    if facts["website"]:
-        fm.website = facts["website"]
-    if facts["location"] and not fm.location:
-        fm.location = facts["location"]
-    if facts["investment_stage"]:
-        fm.investment_stage = facts["investment_stage"]
-    if facts["stability"]:
-        fm.stability = facts["stability"]
-    if facts["revenue_status"]:
-        fm.revenue_status = facts["revenue_status"]
-
-    record = storage.write_company(slug, fm, existing.body)
-    updated_keys = [k for k, v in facts.items() if v is not None]
-    logger.info("원티드 동기화: %s → 업데이트 필드: %s", slug, updated_keys)
-    trigger_reindex_background()  # RAG가 복제하는 stability/employee_count 등 갱신, RAG 꺼져 있으면 no-op
-    return {"status": "ok", "updated": {k: v for k, v in facts.items() if v is not None}}
-
-
 # ── 본문 섹션 유틸 ───────────────────────────────────────────────────────────
 
 def _replace_fit_section(body: str, new_section: str) -> str:
@@ -752,6 +703,30 @@ async def _process_company(
     return record
 
 
+async def _fetch_posting(url: str) -> tuple[str, dict | None]:
+    """공고 URL을 사이트에서 받아 (원문, 회사 정보)를 돌려준다. 실패하면 HTTPException."""
+    log_url = url.split("?")[0]
+    try:
+        return await scraper.fetch_url(url)
+    except scraper.SSRFBlockedError as e:
+        # 서버가 내부망·자기 자신으로 접속하게 만들려는 주소 — 평범한 거부와 달리 눈에 띄게 남긴다
+        logger.warning("내부 주소 접근 차단 (url=%s): %s", log_url, e)
+        raise HTTPException(status_code=422, detail=str(e))
+    except ValueError as e:
+        # JS 렌더링 필요 — 텍스트 붙여넣기 유도
+        logger.info("공고 URL 읽기 거부 (url=%s): %s", log_url, e)
+        raise HTTPException(status_code=422, detail=str(e))
+    except httpx.TimeoutException:
+        logger.warning("공고 URL 응답 시간 초과 (url=%s)", log_url)
+        raise HTTPException(status_code=504, detail="사이트 응답 시간이 초과됐습니다 (20초). 사이트가 느리거나 접근이 차단됐을 수 있습니다.")
+    except httpx.HTTPStatusError as e:
+        logger.warning("공고 URL 오류 응답 %s (url=%s)", e.response.status_code, log_url)
+        raise HTTPException(status_code=502, detail=f"사이트가 {e.response.status_code} 오류를 반환했습니다. URL을 확인해주세요.")
+    except Exception:
+        logger.exception("공고 URL 접근 중 예상 못 한 오류 (url=%s)", log_url)
+        raise HTTPException(status_code=502, detail="URL 접근 실패: 네트워크 연결 오류. URL을 다시 확인해주세요.")
+
+
 @router.post("/api/companies/from-url")
 @_track_in_progress
 async def add_from_url(req: FromUrlRequest):
@@ -768,25 +743,7 @@ async def add_from_url(req: FromUrlRequest):
                 "name": duplicate.frontmatter.display_name or duplicate.frontmatter.company_name,
             },
         )
-    try:
-        raw_text, company = await scraper.fetch_url(req.url)
-    except scraper.SSRFBlockedError as e:
-        # 서버가 내부망·자기 자신으로 접속하게 만들려는 주소 — 평범한 거부와 달리 눈에 띄게 남긴다
-        logger.warning("내부 주소 접근 차단 (url=%s): %s", req.url.split("?")[0], e)
-        raise HTTPException(status_code=422, detail=str(e))
-    except ValueError as e:
-        # JS 렌더링 필요 — 텍스트 붙여넣기 유도
-        logger.info("공고 URL 읽기 거부 (url=%s): %s", req.url.split("?")[0], e)
-        raise HTTPException(status_code=422, detail=str(e))
-    except httpx.TimeoutException:
-        logger.warning("공고 URL 응답 시간 초과 (url=%s)", req.url.split("?")[0])
-        raise HTTPException(status_code=504, detail="사이트 응답 시간이 초과됐습니다 (20초). 사이트가 느리거나 접근이 차단됐을 수 있습니다.")
-    except httpx.HTTPStatusError as e:
-        logger.warning("공고 URL 오류 응답 %s (url=%s)", e.response.status_code, req.url.split("?")[0])
-        raise HTTPException(status_code=502, detail=f"사이트가 {e.response.status_code} 오류를 반환했습니다. URL을 확인해주세요.")
-    except Exception:
-        logger.exception("공고 URL 접근 중 예상 못 한 오류 (url=%s)", req.url.split("?")[0])
-        raise HTTPException(status_code=502, detail="URL 접근 실패: 네트워크 연결 오류. URL을 다시 확인해주세요.")
+    raw_text, company = await _fetch_posting(req.url)
     try:
         return await asyncio.wait_for(
             _process_company(raw_text, "url", req.url, company_info=company), timeout=300,
@@ -920,18 +877,29 @@ async def add_manual(req: ManualCompanyRequest):
 @router.post("/api/companies/{slug}/refill")
 @_track_in_progress
 async def refill_company(slug: str):
-    """저장된 원문으로 회사 정보를 전체 재분석한다 (구조화 추출 → 잡플래닛 → 본문 → 적합도).
-    원문이 없는 기존 항목은 마크다운 본문으로 폴백한다."""
+    """공고를 전체 재분석한다 (구조화 추출 → 잡플래닛 → 본문 → 적합도).
+    URL로 등록한 공고는 사이트에서 공고 글과 회사 정보를 다시 받아 쓰고(받기에 실패하면 아무것도
+    바꾸지 않는다), 그 밖의 항목은 저장된 원문(없으면 마크다운 본문)을 쓴다."""
     record = storage.read_company(slug)
     if not record:
         raise HTTPException(status_code=404, detail="회사를 찾을 수 없습니다.")
     raw_text = storage.read_raw_text(slug) or record.body
     source_url = record.frontmatter.source_url
+    company = None
+    if record.frontmatter.source_type == "url" and source_url:
+        raw_text, company = await _fetch_posting(source_url)
+        prior = latest_raw_version(slug)
+        if company is None and prior and prior["company_info_id"] is not None:
+            # 회사 정보를 받았던 공고인데 이번엔 기업 페이지를 못 받았다 — 기업 정보 블록이 빠진
+            # 원문으로 덮어쓰면 오히려 정보가 줄어든다.
+            logger.warning("기업 페이지를 받지 못해 재분석을 건너뜀 (slug=%s)", slug)
+            raise HTTPException(status_code=502, detail="기업 페이지를 가져오지 못해 재분석하지 않았습니다. 기존 값은 그대로입니다.")
     preserved_log_entries = _parse_status_log(record.body, slug=slug)
     try:
         return await _process_company(
             raw_text, record.frontmatter.source_type, source_url, existing_slug=slug,
             preserve_fm=record.frontmatter, preserved_log_entries=preserved_log_entries,
+            company_info=company,
         )
     except LLMAPIError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e))
