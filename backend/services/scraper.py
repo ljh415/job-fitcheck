@@ -613,6 +613,7 @@ def _wanted_eval_columns(payload: dict) -> dict:
     emp = nps or detail.get("eiEmployeeCount")
     revenue = sales.get("total") or detail.get("totalSales")
     return {
+        "company_name": (payload.get("companyInfo") or {}).get("name") or None,
         "employee_count": f"{emp:,}명 ({'국민연금' if nps else '고용보험'} 기준)" if emp else None,
         "revenue_won": int(revenue) if revenue else None,
         "revenue_as_of": sales.get("updatedAt") if revenue else None,
@@ -627,6 +628,7 @@ def _remember_eval_columns(payload: dict, posting: dict | None) -> dict:
     size, stage, funding = _remember_chip_facts((posting or {}).get("chips") or [])
     latest = next((s for s in payload.get("employeeStatistics") or [] if s.get("total")), None)
     return {
+        "company_name": payload.get("name") or None,
         "employee_count": f"{latest['total']:,}명 ({latest['month']} 기준)" if latest else size or None,
         "revenue_won": None,
         "revenue_as_of": None,

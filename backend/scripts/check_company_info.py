@@ -78,6 +78,8 @@ async def main():
     assert row["employee_count"] == f"{summary['employee']['total']:,}명 (국민연금 기준)", row
     assert row["revenue_won"] == summary["sales"]["total"], row
     assert row["revenue_as_of"] == summary["sales"]["updatedAt"], row
+    wanted_name = json.loads(row["company_payload"])["companyInfo"]["name"]
+    assert wanted_name and row["company_name"] == wanted_name, row
     assert all(row[c] is None for c in ("funding_stage", "funding_total")), row
     assert row["collected_at"]
     print("1. 원티드 등록: 행 1개, 기업 payload 4항목, 공고 payload 없음, 임직원·매출·기준일이 원본과 일치")
@@ -95,6 +97,8 @@ async def main():
     assert set(json.loads(row["posting_company_payload"])) == {"chips", "company", "organization"}
     latest = next(s for s in json.loads(row["company_payload"])["employeeStatistics"] if s.get("total"))
     assert row["employee_count"] == f"{latest['total']:,}명 ({latest['month']} 기준)", row
+    remember_name = json.loads(row["company_payload"])["name"]
+    assert remember_name and row["company_name"] == remember_name, row
     chips = {c["value"] for c in json.loads(row["posting_company_payload"])["chips"]}
     assert row["funding_stage"] in chips and f"누적 투자 {row['funding_total']}" in chips, row
     assert all(row[c] is None for c in ("revenue_won", "revenue_as_of", "listing_status")), row
@@ -415,11 +419,36 @@ async def main():
 
 
 
+def check_company_name_migration():
+    """회사 이름 칸이 없던 옛 company_info 표도 init_db()가 칸을 추가한다."""
+    import sqlite3
+    with tempfile.TemporaryDirectory() as old_tmp:
+        old_db = pathlib.Path(old_tmp) / "app.db"
+        conn = sqlite3.connect(old_db)
+        conn.execute("CREATE TABLE company_info (id INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT NOT NULL, "
+                     "source_company_id TEXT NOT NULL, source_url TEXT NOT NULL, collected_at TEXT NOT NULL, "
+                     "UNIQUE (source, source_company_id))")
+        conn.execute("INSERT INTO company_info VALUES (1, 'wanted', '1', 'u', 't')")
+        conn.commit(); conn.close()
+        saved = app_db.DB_PATH
+        app_db.DB_PATH = old_db
+        try:
+            init_db()
+            with get_connection() as c:
+                cols = [r["name"] for r in c.execute("PRAGMA table_info(company_info)")]
+                assert "company_name" in cols, cols
+                assert c.execute("SELECT company_name FROM company_info WHERE id = 1").fetchone()["company_name"] is None
+        finally:
+            app_db.DB_PATH = saved
+    print("13. 옛 표 이전: 회사 이름 칸이 없던 company_info 표에 init_db()가 칸을 추가하고 기존 행은 NULL로 유지")
+
+
 with tempfile.TemporaryDirectory() as tmp:
     settings.data_dir = pathlib.Path(tmp)
     app_db.DB_PATH = settings.data_dir / "app.db"
     settings.companies_dir.mkdir(parents=True, exist_ok=True)
     init_db()
     asyncio.run(main())
+    check_company_name_migration()
 
 print("company_info 연결 self-check 통과")

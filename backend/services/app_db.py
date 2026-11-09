@@ -138,6 +138,7 @@ def init_db() -> None:
                     id                       INTEGER PRIMARY KEY AUTOINCREMENT,
                     source                   TEXT NOT NULL,
                     source_company_id        TEXT NOT NULL,
+                    company_name             TEXT,
                     source_url               TEXT NOT NULL,
                     collected_at             TEXT NOT NULL,
                     company_payload          TEXT,
@@ -151,6 +152,10 @@ def init_db() -> None:
                     UNIQUE (source, source_company_id)
                 )
             """)
+            # 회사 이름 칸 — 이미 만들어진 표에도 대응(기업 페이지 값, 수집 전 줄은 NULL)
+            ci_cols = {r["name"] for r in conn.execute("PRAGMA table_info(company_info)").fetchall()}
+            if "company_name" not in ci_cols:
+                conn.execute("ALTER TABLE company_info ADD COLUMN company_name TEXT")
             # 공고 원문 버전 — 평가 이력이 "어느 원문으로 평가했나"를 가리키는 곳. 공고(slug)별로
             # 원문의 해시가 최신 버전과 다를 때만 줄을 추가한다(누적). company_info_id는 어느 회사
             # 줄인지만 가리키며(그 줄은 덮어써짐), 회사 정보를 안 받은 공고는 NULL.
@@ -395,6 +400,7 @@ def upsert_company_info(
     source_url: str,
     company_payload: dict | None,
     posting_company_payload: dict | None,
+    company_name: str | None = None,
     employee_count: str | None = None,
     revenue_won: int | None = None,
     revenue_as_of: str | None = None,
@@ -410,11 +416,12 @@ def upsert_company_info(
 
     with get_connection() as conn:
         conn.execute(
-            "INSERT INTO company_info (source, source_company_id, source_url, collected_at, "
+            "INSERT INTO company_info (source, source_company_id, company_name, source_url, collected_at, "
             "company_payload, posting_company_payload, employee_count, revenue_won, "
             "revenue_as_of, listing_status, funding_stage, funding_total) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT (source, source_company_id) DO UPDATE SET "
+            "company_name = excluded.company_name, "
             "source_url = excluded.source_url, collected_at = excluded.collected_at, "
             "company_payload = excluded.company_payload, "
             "posting_company_payload = excluded.posting_company_payload, "
@@ -422,7 +429,7 @@ def upsert_company_info(
             "revenue_as_of = excluded.revenue_as_of, listing_status = excluded.listing_status, "
             "funding_stage = excluded.funding_stage, funding_total = excluded.funding_total",
             (
-                source, source_company_id, source_url,
+                source, source_company_id, company_name, source_url,
                 datetime.now().isoformat(timespec="seconds"),
                 dumps(company_payload), dumps(posting_company_payload),
                 employee_count, revenue_won, revenue_as_of, listing_status,
