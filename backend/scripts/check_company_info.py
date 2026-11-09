@@ -436,11 +436,43 @@ def check_company_name_migration():
             init_db()
             with get_connection() as c:
                 cols = [r["name"] for r in c.execute("PRAGMA table_info(company_info)")]
-                assert "company_name" in cols, cols
-                assert c.execute("SELECT company_name FROM company_info WHERE id = 1").fetchone()["company_name"] is None
+                assert "company_name" in cols and "display_name" in cols, cols
+                row = c.execute("SELECT company_name, display_name FROM company_info WHERE id = 1").fetchone()
+                assert row["company_name"] is None and row["display_name"] is None, dict(row)
         finally:
             app_db.DB_PATH = saved
-    print("13. 옛 표 이전: 회사 이름 칸이 없던 company_info 표에 init_db()가 칸을 추가하고 기존 행은 NULL로 유지")
+    print("13. 옛 표 이전: 회사 이름·별칭 칸이 없던 company_info 표에 init_db()가 칸을 추가하고 기존 행은 NULL로 유지")
+
+
+def check_company_aliases():
+    """회사 별칭(display_name): 같은 이름은 중복해서 붙이지 않고, 다른 이름은 덧붙이고, 대표 이름은 뺀다."""
+    import unicodedata
+    merge = app_db.merge_company_aliases
+    assert merge(None, ["베이글코드"], "베이글코드(Bagelcode)") == "베이글코드"
+    assert merge("베이글코드", ["베이글코드", "Bagelcode", "  Bagelcode "], "베이글코드(Bagelcode)") == "베이글코드|Bagelcode"
+    assert merge(None, ["베이글코드(Bagelcode)", None, ""], "베이글코드(Bagelcode)") is None  # 대표 이름·빈 이름은 안 붙음
+    assert merge("가|나", None, "다") == "가|나" and merge("가|나", [], "다") == "가|나"  # 새 이름이 없으면 유지
+    assert merge("가|나", [], "나") == "가"  # 목록에 있던 대표 이름은 빠짐
+    assert merge(None, ["A|B"], "x") == "A/B"  # 이름 속 구분자
+    assert merge("베이글코드", [unicodedata.normalize("NFD", "베이글코드")], "x") == "베이글코드"  # 자모 조합 방식이 달라도 같은 이름
+
+    base = dict(source="wanted", source_company_id="alias-1", source_url="u", company_payload=None,
+                posting_company_payload=None, company_name="베이글코드(Bagelcode)")
+
+    def stored():
+        with get_connection() as c:
+            return c.execute("SELECT display_name FROM company_info WHERE source = 'wanted' "
+                             "AND source_company_id = 'alias-1'").fetchone()["display_name"]
+
+    row_id = app_db.upsert_company_info(**base, aliases=["베이글코드", "베이글코드(Bagelcode)"])
+    assert stored() == "베이글코드"
+    assert app_db.upsert_company_info(**base, aliases=["베이글코드", "Bagelcode"]) == row_id  # id 유지
+    assert stored() == "베이글코드|Bagelcode"
+    app_db.upsert_company_info(**base)  # aliases를 안 넘기면 기존 목록을 그대로 둔다
+    assert stored() == "베이글코드|Bagelcode"
+    app_db.upsert_company_info(**base, aliases=["Bagelcode", "베이글"])
+    assert stored() == "베이글코드|Bagelcode|베이글"
+    print("14. 별칭: 같은 이름은 중복해서 붙지 않고 다른 이름은 덧붙으며, 대표 이름·빈 이름은 빠지고, aliases를 안 넘기면 기존 목록이 유지되고 id도 유지")
 
 
 with tempfile.TemporaryDirectory() as tmp:
@@ -450,5 +482,6 @@ with tempfile.TemporaryDirectory() as tmp:
     init_db()
     asyncio.run(main())
     check_company_name_migration()
+    check_company_aliases()
 
 print("company_info 연결 self-check 통과")

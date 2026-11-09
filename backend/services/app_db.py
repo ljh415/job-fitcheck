@@ -8,6 +8,7 @@ import hashlib
 import json
 import logging
 import sqlite3
+import unicodedata
 from collections import Counter
 from contextlib import contextmanager
 from datetime import datetime
@@ -139,6 +140,7 @@ def init_db() -> None:
                     source                   TEXT NOT NULL,
                     source_company_id        TEXT NOT NULL,
                     company_name             TEXT,
+                    display_name             TEXT,
                     source_url               TEXT NOT NULL,
                     collected_at             TEXT NOT NULL,
                     company_payload          TEXT,
@@ -152,10 +154,12 @@ def init_db() -> None:
                     UNIQUE (source, source_company_id)
                 )
             """)
-            # 회사 이름 칸 — 이미 만들어진 표에도 대응(기업 페이지 값, 수집 전 줄은 NULL)
+            # 회사 이름 칸(기업 페이지 값)과 별칭 칸(공고에서 나온 다른 이름을 구분자로 이은 글자) —
+            # 이미 만들어진 표에도 대응(기존 줄은 NULL)
             ci_cols = {r["name"] for r in conn.execute("PRAGMA table_info(company_info)").fetchall()}
-            if "company_name" not in ci_cols:
-                conn.execute("ALTER TABLE company_info ADD COLUMN company_name TEXT")
+            for col in ("company_name", "display_name"):
+                if col not in ci_cols:
+                    conn.execute(f"ALTER TABLE company_info ADD COLUMN {col} TEXT")
             # 공고 원문 버전 — 평가 이력이 "어느 원문으로 평가했나"를 가리키는 곳. 공고(slug)별로
             # 원문의 해시가 최신 버전과 다를 때만 줄을 추가한다(누적). company_info_id는 어느 회사
             # 줄인지만 가리키며(그 줄은 덮어써짐), 회사 정보를 안 받은 공고는 NULL.
@@ -394,6 +398,30 @@ def delete_fit_history_for_slug(company_slug: str) -> int:
         return cur.rowcount
 
 
+ALIAS_SEP = "|"
+
+
+def _clean_alias(name: str | None) -> str:
+    """별칭 하나를 정리한다 — 한글 자모 조합 방식을 통일하고 앞뒤 공백을 지우며, 이름 속
+    구분자는 목록 구분이 깨지지 않게 "/"로 바꾼다."""
+    return unicodedata.normalize("NFC", name or "").replace(ALIAS_SEP, "/").strip()
+
+
+def merge_company_aliases(
+    existing: str | None, new_names: list[str | None] | None, company_name: str | None,
+) -> str | None:
+    """회사 별칭 목록(ALIAS_SEP로 이은 글자)에 새 이름을 덧붙여 돌려준다. 대표 이름
+    (company_name)과 같은 이름·이미 있는 이름·빈 이름은 붙이지 않고, 목록에 있던 대표 이름과
+    같은 항목은 뺀다. 목록이 비면 None."""
+    main = _clean_alias(company_name)
+    names: list[str] = []
+    for raw in (existing or "").split(ALIAS_SEP) + list(new_names or []):
+        name = _clean_alias(raw)
+        if name and name != main and name not in names:
+            names.append(name)
+    return ALIAS_SEP.join(names) or None
+
+
 def upsert_company_info(
     source: str,
     source_company_id: str,
@@ -407,21 +435,29 @@ def upsert_company_info(
     listing_status: str | None = None,
     funding_stage: str | None = None,
     funding_total: str | None = None,
+    aliases: list[str | None] | None = None,
 ) -> int:
     """회사(source, source_company_id)의 회사 정보 줄을 최신 값으로 덮어쓴다 — 이력은 쌓지
     않는다. 이미 있으면 그 줄을 제자리에서 고쳐 id가 유지된다(원문 버전 줄이 이 id를 가리킨다).
-    평가용 컬럼은 받은 값만 채우고 나머지는 비운다. 반환값은 그 줄의 id."""
+    평가용 컬럼은 받은 값만 채우고 나머지는 비운다. 별칭(display_name)만은 덮어쓰지 않고
+    기존 목록에 aliases의 새 이름을 합친다(aliases가 없으면 기존 목록 유지).
+    반환값은 그 줄의 id."""
     def dumps(value: dict | None) -> str | None:
         return None if value is None else json.dumps(value, ensure_ascii=False)
 
     with get_connection() as conn:
+        existing = conn.execute(
+            "SELECT display_name FROM company_info WHERE source = ? AND source_company_id = ?",
+            (source, source_company_id),
+        ).fetchone()
+        display_name = merge_company_aliases(existing["display_name"] if existing else None, aliases, company_name)
         conn.execute(
-            "INSERT INTO company_info (source, source_company_id, company_name, source_url, collected_at, "
-            "company_payload, posting_company_payload, employee_count, revenue_won, "
+            "INSERT INTO company_info (source, source_company_id, company_name, display_name, source_url, "
+            "collected_at, company_payload, posting_company_payload, employee_count, revenue_won, "
             "revenue_as_of, listing_status, funding_stage, funding_total) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT (source, source_company_id) DO UPDATE SET "
-            "company_name = excluded.company_name, "
+            "company_name = excluded.company_name, display_name = excluded.display_name, "
             "source_url = excluded.source_url, collected_at = excluded.collected_at, "
             "company_payload = excluded.company_payload, "
             "posting_company_payload = excluded.posting_company_payload, "
@@ -429,7 +465,7 @@ def upsert_company_info(
             "revenue_as_of = excluded.revenue_as_of, listing_status = excluded.listing_status, "
             "funding_stage = excluded.funding_stage, funding_total = excluded.funding_total",
             (
-                source, source_company_id, company_name, source_url,
+                source, source_company_id, company_name, display_name, source_url,
                 datetime.now().isoformat(timespec="seconds"),
                 dumps(company_payload), dumps(posting_company_payload),
                 employee_count, revenue_won, revenue_as_of, listing_status,
