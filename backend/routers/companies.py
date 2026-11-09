@@ -588,6 +588,11 @@ async def _process_company(
     if not extracted.get("display_name"):
         extracted["display_name"] = extracted.get("company_name") or ""
 
+    # 회사 페이지에서 받은 값은 AI가 뽑은 값을 덮어쓴다(받은 값이 있을 때만). 덮어쓰기 전 AI 이름은
+    # 같은 회사의 다른 이름(별칭)으로 company_info에 남긴다.
+    ai_names = [extracted.get("company_name"), extracted.get("display_name")]
+    scraper.apply_company_page_values(extracted, company_info)
+
     # 2. 잡플래닛 평점 조회 (refill 시 기존 점수 있으면 재사용, 없으면 스크래핑)
     # 저장 회사명으로 검색한다 — 표시 이름은 영문 브랜드(SWING)일 수 있어 잡플래닛 등록명(더스윙)과 안 맞는다
     company_name_for_jp = extracted.get("company_name") or extracted.get("display_name", "")
@@ -685,7 +690,7 @@ async def _process_company(
     if company_info:
         # 기업 페이지 원본 보관 — 실패해도 등록은 계속한다(핵심 기능이 아니다).
         try:
-            company_info_id = upsert_company_info(**company_info)
+            company_info_id = upsert_company_info(**company_info, aliases=ai_names)
         except Exception as e:
             logger.warning("회사 정보 저장 실패 (slug=%s): %s", slug, e)
     raw_version_id = None

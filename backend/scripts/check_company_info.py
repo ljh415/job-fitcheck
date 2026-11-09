@@ -12,7 +12,7 @@ import pathlib
 import tempfile
 
 from config import settings
-from services import app_db
+from services import app_db, scraper
 from services.app_db import get_connection, init_db
 from services.jobplanet import JobplanetResult
 
@@ -32,7 +32,11 @@ class FakeLLM:
         return "시험 본문"
 
 
+_jp_names = []  # 잡플래닛 조회에 넘어온 이름들(검색어가 사이트 이름인지 확인용)
+
+
 async def _fake_jobplanet(name):
+    _jp_names.append(name)
     return JobplanetResult(None, None, "not_found")
 
 
@@ -82,7 +86,15 @@ async def main():
     assert wanted_name and row["company_name"] == wanted_name, row
     assert all(row[c] is None for c in ("funding_stage", "funding_total")), row
     assert row["collected_at"]
-    print("1. 원티드 등록: 행 1개, 기업 payload 4항목, 공고 payload 없음, 임직원·매출·기준일이 원본과 일치")
+    # 회사 페이지 값이 AI 값(가짜 "시험원티드")을 덮어씀 — 이름·임직원 수·매출, 파일 이름·잡플래닛 검색어도
+    # 사이트 이름을 따르고, 덮어쓰기 전 AI 이름은 별칭으로 남는다
+    fm = rec.frontmatter
+    assert fm.company_name == wanted_name and rec.slug.startswith(wanted_name), (fm.company_name, rec.slug)
+    assert fm.employee_count == row["employee_count"], fm.employee_count
+    assert fm.revenue_status == scraper.format_revenue(row["revenue_won"], row["revenue_as_of"]), fm.revenue_status
+    assert _jp_names[-1] == wanted_name, _jp_names
+    assert row["display_name"] == "시험원티드", row["display_name"]
+    print("1. 원티드 등록: 행 1개, 기업 payload 4항목, 공고 payload 없음, 임직원·매출·기준일이 원본과 일치, 사이트 값이 AI 값을 덮어쓰고 AI 이름은 별칭으로 저장")
 
     # 2. 리멤버 공고 등록 → 공고 페이지 회사 부분까지 보관
     _fake_name["value"] = "시험리멤버"
@@ -102,7 +114,13 @@ async def main():
     chips = {c["value"] for c in json.loads(row["posting_company_payload"])["chips"]}
     assert row["funding_stage"] in chips and f"누적 투자 {row['funding_total']}" in chips, row
     assert all(row[c] is None for c in ("revenue_won", "revenue_as_of", "listing_status")), row
-    print("2. 리멤버 등록: 기업 payload(employeeStatistics 포함)와 공고 payload 3항목 보관, 임직원 수·투자 단계·누적 투자금이 원본과 일치")
+    fm = rec.frontmatter
+    assert fm.company_name == remember_name and rec.slug.startswith(remember_name), (fm.company_name, rec.slug)
+    assert fm.employee_count == row["employee_count"], fm.employee_count
+    assert fm.investment_stage == row["funding_stage"] and fm.funding_total == row["funding_total"], fm
+    assert fm.revenue_status is None  # 리멤버는 회사 페이지에 매출이 없어 AI 값(가짜는 없음)을 그대로 둔다
+    assert _jp_names[-1] == remember_name and row["display_name"] == "시험리멤버", (_jp_names, row["display_name"])
+    print("2. 리멤버 등록: 기업 payload(employeeStatistics 포함)와 공고 payload 3항목 보관, 임직원 수·투자 단계·누적 투자금이 원본과 일치, 사이트 값이 AI 값을 덮어쓰고 AI 이름은 별칭으로 저장")
 
     # 3. 텍스트 등록(기업 페이지 없음) → 공고 파일은 생기고 행은 안 생김
     _fake_name["value"] = "시험텍스트"
@@ -110,7 +128,8 @@ async def main():
     rec = await companies._process_company("붙여넣은 공고 본문", "text_paste", None)
     assert storage.read_company(rec.slug) is not None
     assert len(_rows()) == rows_before
-    print("3. 텍스트 등록: 공고 파일 생성, 회사 정보 행 없음")
+    assert rec.frontmatter.company_name == "시험텍스트"  # 회사 페이지가 없으면 AI 값 그대로
+    print("3. 텍스트 등록: 공고 파일 생성, 회사 정보 행 없음, 이름은 AI 값 그대로")
 
     # 4. 같은 회사를 다시 저장 → 줄 1개·id 유지, 새 값으로 덮어씀. 같은 회사의 다른 공고(다른 slug)도 그 줄을 쓴다
     changed = {"source": "wanted", "source_company_id": "1", "source_url": "https://x/company/1",
@@ -160,7 +179,6 @@ async def main():
     # 7. 기업 페이지 수집만 실패 → 등록은 성공, 행 없음, 서버 로그에 회사 번호와 사유가 남음
     import logging
     import httpx
-    from services import scraper
 
     records = []
 
@@ -353,7 +371,6 @@ async def main():
     #     받기 실패 시 기존 값 보존, URL 등록이 아닌 공고는 사이트를 부르지 않음 (스크래핑은 가짜)
     import httpx
     from fastapi import HTTPException
-    from services import scraper
 
     def fake_company(**over):
         base = {"source": "wanted", "source_company_id": "9100", "source_url": "https://x/company/9100",
@@ -475,6 +492,46 @@ def check_company_aliases():
     print("14. 별칭: 같은 이름은 중복해서 붙지 않고 다른 이름은 덧붙으며, 대표 이름·빈 이름은 빠지고, aliases를 안 넘기면 기존 목록이 유지되고 id도 유지")
 
 
+def check_company_page_values():
+    """회사 페이지 값 덮어쓰기: 4경우 규칙과 매출 형식."""
+    fmt = scraper.format_revenue
+    assert fmt(8_293_903_000, "2024-12-31") == "82.9억원 (2024-12-31 기준)"
+    assert fmt(8_285_000_000, "2024-12-31") == "82.9억원 (2024-12-31 기준)"  # 82.85 → 사사오입
+    assert fmt(332_147_131_000, "2024-12-31T00:00:00") == "3,321.5억원 (2024-12-31 기준)"
+    assert fmt(1_234_570_000_000, "2024-12-31") == "12,345.7억원 (2024-12-31 기준)"  # 1조 이상도 억 단위
+    assert fmt(50_000_000, "2024-12-31") == "0.5억원 (2024-12-31 기준)"
+    assert fmt(8_293_903_000, None) == "82.9억원" and fmt(8_293_903_000, "") == "82.9억원"  # 기준일 없으면 괄호 생략
+    assert fmt(None, "2024-12-31") is None and fmt(0, None) is None
+    assert fmt(4_000_000, "2024-12-31") is None  # 0.04억 → 0.0억이라 덮어쓰지 않음
+
+    page = {"company_name": "사이트이름", "employee_count": "160명 (국민연금 기준)", "funding_stage": "시리즈B",
+            "funding_total": "누적 400억+", "revenue_won": 8_293_903_000, "revenue_as_of": "2024-12-31"}
+    empty = {k: None for k in page}
+    ai = {"company_name": "AI이름", "employee_count": "1,001-10,000명", "investment_stage": "시리즈A",
+          "funding_total": "누적 10억", "revenue_status": "연매출 82억원, 성장 중", "display_name": "브랜드", "tech_stack": ["x"]}
+
+    case1 = dict(ai)  # AI 값 있음 + 페이지 값 있음 → 덮어씀(회사 페이지와 상관없는 필드는 그대로)
+    scraper.apply_company_page_values(case1, page)
+    assert case1 == {**ai, "company_name": "사이트이름", "employee_count": "160명 (국민연금 기준)",
+                     "investment_stage": "시리즈B", "funding_total": "누적 400억+",
+                     "revenue_status": "82.9억원 (2024-12-31 기준)"}, case1
+    case2 = dict(ai)  # AI 값 있음 + 페이지 값 없음 → AI 값 유지
+    scraper.apply_company_page_values(case2, empty)
+    assert case2 == ai, case2
+    case3 = {"company_name": "AI이름", "employee_count": None}  # AI 값 없음 + 페이지 값 있음 → 채움
+    scraper.apply_company_page_values(case3, page)
+    assert case3 == {"company_name": "사이트이름", "employee_count": "160명 (국민연금 기준)", "investment_stage": "시리즈B",
+                     "funding_total": "누적 400억+", "revenue_status": "82.9억원 (2024-12-31 기준)"}, case3
+    case4 = {"company_name": "AI이름"}  # 둘 다 없음 → 비어 있음(키를 새로 만들지 않음)
+    scraper.apply_company_page_values(case4, empty)
+    assert case4 == {"company_name": "AI이름"}, case4
+    for no_page in (None, {}):  # 회사 페이지가 없는 입력 → 변화 없음
+        case5 = dict(ai)
+        scraper.apply_company_page_values(case5, no_page)
+        assert case5 == ai
+    print("15. 회사 페이지 값 덮어쓰기: AI 있음·페이지 있음 → 덮어씀, AI 있음·없음 → 유지, AI 없음·페이지 있음 → 채움, 둘 다 없음 → 비어 있음, 회사 페이지가 없으면 변화 없음, 매출 형식(82.9억원 (기준일 기준), 사사오입, 1조 이상, 0.05억 미만 제외)")
+
+
 with tempfile.TemporaryDirectory() as tmp:
     settings.data_dir = pathlib.Path(tmp)
     app_db.DB_PATH = settings.data_dir / "app.db"
@@ -483,5 +540,6 @@ with tempfile.TemporaryDirectory() as tmp:
     asyncio.run(main())
     check_company_name_migration()
     check_company_aliases()
+    check_company_page_values()
 
 print("company_info 연결 self-check 통과")

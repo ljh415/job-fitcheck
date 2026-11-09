@@ -13,6 +13,7 @@ import ipaddress
 import json
 import logging
 import re
+from decimal import ROUND_HALF_UP, Decimal
 from urllib.parse import urljoin, urlparse
 
 import httpx
@@ -636,6 +637,42 @@ def _remember_eval_columns(payload: dict, posting: dict | None) -> dict:
         "funding_stage": stage or None,
         "funding_total": funding or None,
     }
+
+
+# 공고 필드 ← 회사 페이지 값(company_info 컬럼) 대응. 매출(revenue_status)은 금액·기준일을 글자로
+# 만들어야 해서 format_revenue로 따로 다룬다.
+_COMPANY_PAGE_FIELDS = (
+    ("company_name", "company_name"),
+    ("employee_count", "employee_count"),
+    ("investment_stage", "funding_stage"),
+    ("funding_total", "funding_total"),
+)
+
+
+def format_revenue(revenue_won: int | None, revenue_as_of: str | None) -> str | None:
+    """매출 금액(원)을 "82.9억원 (2024-12-31 기준)"으로 만든다 — 억 단위 소수점 한 자리 사사오입,
+    기준일이 날짜 모양이 아니면 괄호를 생략한다. 금액이 없거나 반올림하면 0.0억이 되는 작은
+    값이면 None(덮어쓰지 않음)."""
+    if not revenue_won:
+        return None
+    eok = (Decimal(int(revenue_won)) / Decimal(100_000_000)).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+    if eok <= 0:
+        return None
+    as_of = re.match(r"\d{4}-\d{2}-\d{2}", revenue_as_of or "")
+    return f"{eok:,}억원" + (f" ({as_of.group()} 기준)" if as_of else "")
+
+
+def apply_company_page_values(extracted: dict, company: dict | None) -> None:
+    """AI가 공고에서 뽑은 값(extracted)을 스크래퍼가 회사 페이지에서 받은 값(company)으로 고친다.
+    페이지 값이 있으면 덮어쓰거나 채우고(AI 값 유무와 상관없이), 없으면 AI 값을 그대로 둔다.
+    company가 없으면(회사 페이지가 없는 입력) 아무것도 하지 않는다."""
+    if not company:
+        return
+    values = {field: company.get(column) for field, column in _COMPANY_PAGE_FIELDS}
+    values["revenue_status"] = format_revenue(company.get("revenue_won"), company.get("revenue_as_of"))
+    for field, value in values.items():
+        if value:
+            extracted[field] = value
 
 
 def _extract_main_content(soup: BeautifulSoup) -> str:
