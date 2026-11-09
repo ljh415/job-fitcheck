@@ -22,7 +22,6 @@ import frontmatter
 import httpx
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
 
 import prompts
 from services import company_analysis, scraper
@@ -196,7 +195,7 @@ _CSV_SCALAR_COLS = [
     "fit_score", "fit_label",
     "location", "employee_count", "stability", "investment_stage",
     "jobplanet_score", "salary_min", "salary_max", "salary_note",
-    "industry", "experience_required", "employment_type",
+    "experience_required", "employment_type",
     "salary_check", "stability_check", "location_check",
     "source_url", "created_at",
 ]

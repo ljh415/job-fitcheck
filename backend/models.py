@@ -31,7 +31,6 @@ class CompanyFrontmatter(BaseModel):
     # 회사 정보 — 구조화 추출(High 티어)이 공고 텍스트에서 추출
     location: str | None = None
     employee_count: str | None = None
-    employee_count_meets_threshold: bool | None = None  # 50명 이상 여부
     stability: Literal["강", "중", "약"] | None = None
     investment_stage: str | None = None
     funding_total: str | None = None
@@ -39,8 +38,6 @@ class CompanyFrontmatter(BaseModel):
     # jobplanet_score는 LLM 추출 대상이 아님 — jobplanet.py가 별도 수집
     jobplanet_score: float | None = None
     jobplanet_review_count: int | None = None
-    website: str | None = None
-    industry: str | None = None
     salary_min: int | None = None   # 공고 명시 최소 연봉 (만원)
     salary_max: int | None = None   # 공고 명시 최대 연봉 (만원)
     salary_note: str | None = None  # "협의", "경력별 차등" 등

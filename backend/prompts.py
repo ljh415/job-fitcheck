@@ -71,10 +71,6 @@ EXTRACT_COMPANY_TOOL_SCHEMA = {
         "source_url": {"type": ["string", "null"], "description": "공고 URL (있는 경우)"},
         "location": {"type": ["string", "null"], "description": "근무지 (예: 서울 성수)"},
         "employee_count": {"type": ["string", "null"], "description": "임직원 수 범위 (예: 51~200)"},
-        "employee_count_meets_threshold": {
-            "type": ["boolean", "null"],
-            "description": "임직원 50명 이상 여부"
-        },
         "stability": {
             "type": ["string", "null"],
             "enum": ["강", "중", "약"],
@@ -83,8 +79,6 @@ EXTRACT_COMPANY_TOOL_SCHEMA = {
         "investment_stage": {"type": ["string", "null"], "description": "투자 단계 (예: 시리즈C)"},
         "funding_total": {"type": ["string", "null"], "description": "누적 투자금 (예: 누적 400억+)"},
         "revenue_status": {"type": ["string", "null"], "description": "매출 현황. 구체적 수치나 설명이 있으면 원문 표현 그대로 기재하고, 원문에 없는 연도·출처 등을 추가하지 마세요 (예: '흑자 전환', 'BEP 달성', '매출 성장 중'). 단순히 매출이 있다는 사실만 알 수 있으면 null."},
-        "website": {"type": ["string", "null"], "description": "회사 웹사이트"},
-        "industry": {"type": ["string", "null"], "description": "산업/도메인 (예: B2B SaaS / CRM)"},
         "experience_required": {"type": ["string", "null"], "description": "요구 경력 (예: 신입/경력 3년+)"},
         "employment_type": {"type": ["string", "null"], "description": "고용 형태 (예: 정규직)"},
         "salary_min": {"type": ["integer", "null"], "description": "공고에 명시된 최소 연봉 (만원 단위, 없으면 null)"},
@@ -175,7 +169,6 @@ GENERATE_BODY_USER_TEMPLATE = """다음 회사 정보를 바탕으로 구조화�
 | 근무지 | {{location}} |
 | 경력요건 | {{experience_required}} |
 | 고용형태 | {{employment_type}} |
-| 분야 | {{industry}} |
 | 연봉 | {{salary_min}}–{{salary_max}}만원 또는 {{salary_note}} (없으면 이 행 생략) |
 
 ## 2. 회사 규모 / 안정성
