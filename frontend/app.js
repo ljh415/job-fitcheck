@@ -1430,7 +1430,7 @@ async function initCompare(slugs) {
 
   const table = document.getElementById('compare-table');
   const headerRow = `<tr><th class="row-label">항목</th>${records.map(r =>
-    `<th>${escHtml(r.frontmatter.display_name || r.frontmatter.company_name)}<br/><small>${escHtml(r.frontmatter.job_title || '')}</small></th>`
+    `<th>${escHtml(r.frontmatter.company_name)}<br/><small>${escHtml(r.frontmatter.job_title || '')}</small></th>`
   ).join('')}</tr>`;
 
   const rows = FIELDS.map(([label, fn, field]) =>

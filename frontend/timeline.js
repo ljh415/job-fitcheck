@@ -147,7 +147,7 @@ function renderTimelineList() {
           <span class="tl-label" style="color:${color}">${escHtml(e.label)}</span>
         </div>
         <div class="tl-entry-info">
-          <span class="tl-company">${escHtml(e.company.display_name)}</span>
+          <span class="tl-company">${escHtml(e.company.company_name)}</span>
           <span class="tl-job">${escHtml(e.company.job_title)}</span>
         </div>
         <div class="tl-entry-badges">
@@ -192,7 +192,7 @@ function renderCalendar() {
     const dayEntries = dateMap[dateStr] || [];
     const chips = dayEntries.slice(0, 3).map(e => {
       const color = _logColor(e.label);
-      return `<div class="cal-chip" style="background:${color}" data-slug="${escHtml(e.company.slug)}" data-nav="detail" title="${escHtml(e.company.display_name)} — ${escHtml(e.company.job_title)} (${escHtml(e.label)})"><div class="cal-chip-name">${escHtml(e.company.display_name)}</div><div class="cal-chip-job">${escHtml(e.company.job_title)}</div></div>`;
+      return `<div class="cal-chip" style="background:${color}" data-slug="${escHtml(e.company.slug)}" data-nav="detail" title="${escHtml(e.company.company_name)} — ${escHtml(e.company.job_title)} (${escHtml(e.label)})"><div class="cal-chip-name">${escHtml(e.company.company_name)}</div><div class="cal-chip-job">${escHtml(e.company.job_title)}</div></div>`;
     }).join('');
     const more = dayEntries.length > 3 ? `<div class="cal-chip-more">+${dayEntries.length - 3}</div>` : '';
     html += `<div class="cal-cell${isToday ? ' cal-cell--today' : ''}">

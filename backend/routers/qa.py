@@ -226,7 +226,7 @@ async def multi_company_qa(req: MultiQARequest):
         if record:
             history_summary = _fit_history_summary(slug)
             contexts.append(
-                f"=== {record.frontmatter.display_name} ===\n"
+                f"=== {record.frontmatter.company_name} ===\n"
                 f"{record.frontmatter.model_dump_json(indent=2, exclude=_QA_FRONTMATTER_EXCLUDE)}\n\n{record.body}"
                 + (f"\n\n{history_summary}" if history_summary else "")
             )

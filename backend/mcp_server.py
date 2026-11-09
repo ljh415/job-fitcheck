@@ -284,7 +284,7 @@ async def prepare_company_import(url: str | None = None, raw_text: str | None = 
             return {
                 "duplicate": True,
                 "slug": duplicate.slug,
-                "name": duplicate.frontmatter.display_name or duplicate.frontmatter.company_name,
+                "name": duplicate.frontmatter.company_name,
             }
         try:
             text, _ = await scraper.fetch_url(url)
@@ -527,7 +527,7 @@ async def create_company(
             if duplicate:
                 raise ToolError(
                     f"이미 등록된 URL입니다: {duplicate.slug} "
-                    f"({duplicate.frontmatter.display_name or duplicate.frontmatter.company_name})"
+                    f"({duplicate.frontmatter.company_name})"
                 )
 
         projected = {k: v for k, v in effective_company_data.items() if k in _CREATE_COMPANY_ALLOWED_FIELDS}
@@ -598,10 +598,10 @@ async def create_company(
         companies.snapshot_fit_history(slug, fm.fit_score, fm.fit_label, profile_version_id, raw_version_id)
         result = record.model_dump()
         result["next_step"] = (
-            f"저장이 완료됐습니다. 사용자에게 회사명({fm.display_name or fm.company_name})·직무({fm.job_title}), "
+            f"저장이 완료됐습니다. 사용자에게 회사명({fm.company_name})·직무({fm.job_title}), "
             f"적합도 점수({fm.fit_score}점, {fm.fit_label}), 핵심 근거 2~3가지를 요약해서 보여주세요."
             if judge_result else
-            f"저장이 완료됐습니다. 사용자에게 회사명({fm.display_name or fm.company_name})·직무({fm.job_title}) 등"
+            f"저장이 완료됐습니다. 사용자에게 회사명({fm.company_name})·직무({fm.job_title}) 등"
             " 주요 정보를 요약해서 보여주세요."
         )
     except Exception:

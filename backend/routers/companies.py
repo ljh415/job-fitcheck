@@ -142,7 +142,7 @@ def build_fit_notification_materials(fm: CompanyFrontmatter) -> dict:
     """분석 완료 알림 재료를 사용자 알림 설정에 따라 조립한다. mcp_server.py의
     create_company도 재사용한다."""
     materials = {
-        "company": fm.display_name or fm.company_name,
+        "company": fm.company_name,
         "job_title": fm.job_title or "",
         "score": fm.fit_score if fm.fit_score is not None else "",
         "label": fm.fit_label or "",
@@ -304,7 +304,7 @@ def _build_weekly_summary_materials() -> dict:
             days_elapsed = (today - last_date).days
             if days_elapsed >= _NEGLECTED_DAYS:
                 neglected.append({
-                    "name": fm.display_name or fm.company_name,
+                    "name": fm.company_name,
                     "status": fm.status,
                     "days": days_elapsed,
                 })
@@ -357,7 +357,7 @@ async def get_companies_timeline():
             continue
         results.append({
             "slug": meta.slug,
-            "display_name": fm.display_name or fm.company_name,
+            "company_name": fm.company_name,
             "job_title": fm.job_title or "",
             "status": fm.status or "미지원",
             "fit_score": fm.fit_score,
@@ -744,7 +744,7 @@ async def add_from_url(req: FromUrlRequest):
             status_code=409,
             detail={
                 "slug": duplicate.slug,
-                "name": duplicate.frontmatter.display_name or duplicate.frontmatter.company_name,
+                "name": duplicate.frontmatter.company_name,
             },
         )
     raw_text, company = await _fetch_posting(req.url)
