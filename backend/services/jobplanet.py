@@ -130,18 +130,37 @@ def _match_score(query: str, snippet_company: str) -> float:
     return common / max(len(q), len(s))
 
 
-def _best_candidate(company_name: str, candidates: list[tuple[float, int, str]]) -> JobplanetResult | None:
-    """후보 목록에서 회사명 유사도 0.5 이상인 최선 항목을 반환."""
+# 같은 회사로 이미 아는 다른 이름(AI가 뽑은 display_name 등)은 정규화 후 이 글자 수 이상일 때만 쓴다 —
+# 짧고 흔한 이름("삼성")으로 엉뚱한 회사의 평점이 채택되는 것을 막는다.
+_MIN_KNOWN_NAME_LEN = 3
+
+
+def _usable_known_names(known_names: list[str | None] | None) -> list[str]:
+    """아는 다른 이름 중 쓸 수 있는 것(정규화 후 _MIN_KNOWN_NAME_LEN 글자 이상)만 원래 모양대로 돌려준다."""
+    return [n for n in known_names or [] if n and len(_normalize(n)) >= _MIN_KNOWN_NAME_LEN]
+
+
+def _best_candidate(
+    company_name: str, candidates: list[tuple[float, int, str]], known_names: list[str | None] | None = None,
+) -> JobplanetResult | None:
+    """후보 목록에서 회사명 유사도 0.5 이상인 최선 항목을 반환. 같은 회사로 아는 다른 이름도
+    조회한 이름과 똑같이 비교해 가장 높은 유사도를 쓴다."""
+    names = [company_name] + _usable_known_names(known_names)
     best_sim = 0.0
     best: tuple[float, int, str] | None = None
+    best_name = company_name
     for jp_score, count, title in candidates:
         m = _SNIPPET_COMPANY_RE.match(title)
         snippet_company = m.group(1) if m else ""
-        sim = _match_score(company_name, snippet_company)
-        if sim > best_sim:
-            best_sim = sim
-            best = (jp_score, count, title)
+        for name in names:
+            sim = _match_score(name, snippet_company)
+            if sim > best_sim:
+                best_sim = sim
+                best = (jp_score, count, title)
+                best_name = name
     if best and best_sim >= 0.5:
+        if best_name != company_name:
+            logger.info("잡플래닛 후보가 조회한 이름(%s)이 아니라 같은 회사의 다른 이름(%s)과 맞아 채택: %s", company_name, best_name, best[2][:60])
         return JobplanetResult(best[0], best[1], "search_snippet", best[2][:200])
     return None
 
@@ -191,25 +210,35 @@ def _extract_naver_candidates(html: str) -> list[tuple[float, int, str]]:
     return candidates
 
 
-def _read_gemini_answer(text: str, company_name: str) -> tuple[JobplanetResult | None, str]:
+def _read_gemini_answer(
+    text: str, company_name: str, known_names: list[str | None] | None = None,
+) -> tuple[JobplanetResult | None, str]:
     """Gemini 답에서 (회사명, 평점, 리뷰 수)를 읽는다. 채택하면 (결과, ""), 못 쓰면 (None, 사유).
     네트워크와 분리해뒀다 — self-check에서 답 문장으로 직접 검증할 수 있도록.
 
-    답의 회사명이 조회한 회사명과 정규화 후 정확히 같을 때만 채택한다 — 계열사·부서
-    (더스윙오퍼레이션)나 이름이 비슷한 다른 회사가 섞인 답을 걸러낸다. 리뷰가 0건이면
+    답의 회사명이 조회한 회사명, 또는 같은 회사로 이미 아는 다른 이름(known_names — AI가 뽑은
+    display_name 등)과 정규화 후 정확히 같을 때만 채택한다 — 계열사·부서(더스윙오퍼레이션)나
+    이름이 비슷한 다른 회사가 섞인 답을 걸러낸다. 구글은 조회한 이름(케이티밀리의서재)이 아니라
+    잡플래닛 등록명(밀리의서재)을 돌려줄 수 있어서 아는 이름도 인정한다. 리뷰가 0건이면
     평점이 의미 없으므로(0.0) 정보 없음으로 본다."""
     m = _GEMINI_ANSWER_RE.search(text)
     if not m:
         return None, f"답에서 값을 못 읽음: {text[:60]!r}"
     found, score, count = m.group(1).strip(), float(m.group(2)), int(m.group(3).replace(",", ""))
-    if _normalize(found) != _normalize(company_name):
-        return None, f"답의 회사명이 다름 (조회 {company_name} ≠ 답 {found})"
+    found_norm = _normalize(found)
+    via_known = None
+    if found_norm != _normalize(company_name):
+        via_known = next((n for n in _usable_known_names(known_names) if _normalize(n) == found_norm), None)
+        if via_known is None:
+            return None, f"답의 회사명이 다름 (조회 {company_name} ≠ 답 {found})"
     if count == 0 or not 0 < score <= 5:
         return None, f"쓸 수 없는 값 (평점 {score}, 리뷰 {count}건)"
+    if via_known is not None:
+        logger.info("잡플래닛 답의 회사명(%s)이 조회한 이름(%s)이 아니라 같은 회사의 다른 이름(%s)과 같아 채택", found, company_name, via_known)
     return JobplanetResult(score, count, "gemini_search", text[:200]), ""
 
 
-async def _search_gemini(company_name: str) -> JobplanetResult | None:
+async def _search_gemini(company_name: str, known_names: list[str | None] | None = None) -> JobplanetResult | None:
     """Gemini의 구글 검색 연결로 잡플래닛 평점을 조회한다. 키가 없거나 한도 초과(무료 키)·
     오류·답이 맞지 않으면 사유를 로그로 남기고 None을 돌려줘 다음 경로로 넘어가게 한다."""
     key = settings.google_api_key
@@ -247,7 +276,7 @@ async def _search_gemini(company_name: str) -> JobplanetResult | None:
         )
     grounding = response.candidates[0].grounding_metadata if response.candidates else None
     searches = len(getattr(grounding, "web_search_queries", None) or [])
-    result, reason = _read_gemini_answer((response.text or "").strip(), company_name)
+    result, reason = _read_gemini_answer((response.text or "").strip(), company_name, known_names)
     if result:
         logger.info("잡플래닛 Gemini 조회 (%s): %.1f점 %d건, 검색 %d회", company_name, result.score, result.review_count, searches)
     else:
@@ -289,8 +318,11 @@ async def _search_ddg(company_name: str, client: httpx.AsyncClient) -> list[tupl
     return candidates
 
 
-async def fetch_jobplanet_score(company_name: str) -> JobplanetResult:
+async def fetch_jobplanet_score(company_name: str, known_names: list[str | None] | None = None) -> JobplanetResult:
     """Gemini 검색 연결 → Naver → DuckDuckGo 순서로 잡플래닛 평점을 조회한다.
+
+    known_names: 같은 회사로 이미 아는 다른 이름들(AI가 뽑은 display_name·덮어쓰기 전 company_name·
+    별칭). 검색은 company_name으로만 한 번 하고, 검증·유사도 비교에서만 이 이름들도 인정한다.
 
     Returns:
         JobplanetResult:
@@ -301,7 +333,7 @@ async def fetch_jobplanet_score(company_name: str) -> JobplanetResult:
     search_name = re.sub(r"\([^)]*\)", "", company_name).strip() or company_name
 
     # 0차: Gemini 구글 검색 연결 (키가 없거나 실패하면 None → 아래 경로로)
-    result = await _search_gemini(search_name)
+    result = await _search_gemini(search_name, known_names)
     if result:
         return result
 
@@ -309,14 +341,14 @@ async def fetch_jobplanet_score(company_name: str) -> JobplanetResult:
         async with httpx.AsyncClient(headers=_HEADERS, timeout=15, follow_redirects=True) as client:
             # 1차: Naver
             candidates = await _search_naver(search_name, client)
-            result = _best_candidate(search_name, candidates)
+            result = _best_candidate(search_name, candidates, known_names)
             if result:
                 return result
             logger.info("잡플래닛 Naver 후보 %d건, 일치 없음 (%s)", len(candidates), search_name)
 
             # 2차: DuckDuckGo fallback
             candidates = await _search_ddg(search_name, client)
-            result = _best_candidate(search_name, candidates)
+            result = _best_candidate(search_name, candidates, known_names)
             if result:
                 return result
             logger.info("잡플래닛 DuckDuckGo 후보 %d건, 일치 없음 (%s)", len(candidates), search_name)
@@ -361,6 +393,29 @@ if __name__ == "__main__":
         assert _bad is None and _why, (_text, _bad)
     print("Gemini 답 읽기 fixture 통과")
 
+    # 아는 다른 이름(display_name 등)과의 일치 — 구글이 조회한 이름이 아니라 잡플래닛 등록명을 돌려주는 경우
+    _MILLIE = "회사명=(주)밀리의서재, 평점=3.2, 리뷰수=143"
+    _known_ok, _ = _read_gemini_answer(_MILLIE, "케이티밀리의서재", ["밀리의서재"])
+    assert _known_ok and (_known_ok.score, _known_ok.review_count) == (3.2, 143), _known_ok
+    _known_ok2, _ = _read_gemini_answer(_MILLIE, "케이티밀리의서재", ["주식회사 케이티 밀리의서재", None, "(주)밀리의서재"])
+    assert _known_ok2 and _known_ok2.score == 3.2  # 목록에 None·다른 모양이 섞여 있어도
+    for _args in [
+        (_MILLIE, "케이티밀리의서재"),                                                        # 아는 이름이 없으면 기존처럼 거절
+        (_MILLIE, "케이티밀리의서재", ["다른회사이름"]),                                        # 다른 이름이면 거절
+        ("회사명=(주)더스윙오퍼레이션, 평점=1.9, 리뷰수=11", "더스윙", ["SWING"]),              # 계열사는 아는 이름이 있어도 거절
+        ("회사명=삼성, 평점=3.5, 리뷰수=999", "삼성SDS", ["삼성"]),                           # 정규화 3글자 미만의 아는 이름은 안 씀
+        ("회사명=(주)밀리의서재, 평점=0.0, 리뷰수=0", "케이티밀리의서재", ["밀리의서재"]),         # 아는 이름이어도 리뷰 0건은 거절
+    ]:
+        _bad2, _why2 = _read_gemini_answer(*_args)
+        assert _bad2 is None and _why2, (_args, _bad2)
+    # 네이버·DuckDuckGo 후보 비교: 아는 이름이 있으면 그 이름과의 유사도도 본다
+    _snippet = [(3.2, 143, "(주) 밀리의서재 기업정보")]
+    assert _best_candidate("케이티밀리의서재", _snippet) is None
+    _cand = _best_candidate("케이티밀리의서재", _snippet, ["밀리의서재"])
+    assert _cand and (_cand.score, _cand.source) == (3.2, "search_snippet"), _cand
+    assert _best_candidate("케이티밀리의서재", _snippet, ["밀리"]) is None  # 3글자 미만은 안 씀
+    print("아는 이름 fixture 통과")
+
     async def _check():
         # 카카오: title JSON 절단 방식이었다면 not_found로 오탐했을 사례
         kakao = await fetch_jobplanet_score("카카오")
@@ -372,6 +427,11 @@ if __name__ == "__main__":
         enerdat = await fetch_jobplanet_score("에너닷")
         assert enerdat.source in ("gemini_search", "search_snippet"), f"에너닷: {enerdat.source}"
         print("에너닷:", enerdat.score, enerdat.review_count, enerdat.source)
+
+        # 모회사 접두가 붙은 이름: 구글이 등록명(밀리의서재)을 돌려줘도 아는 이름(display_name)이 있으면 채택
+        millie = await fetch_jobplanet_score("(주)케이티밀리의서재", ["밀리의서재"])
+        assert millie.source in ("gemini_search", "search_snippet") and millie.score, f"밀리의서재: {millie.source}"
+        print("밀리의서재(아는 이름):", millie.score, millie.review_count, millie.source)
 
         # 존재하지 않는 회사: false positive 없이 not_found여야 함
         none_result = await fetch_jobplanet_score("존재하지않는가상의회사이름ABCXYZ123")

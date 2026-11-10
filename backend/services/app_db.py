@@ -480,6 +480,16 @@ def upsert_company_info(
         return row_id
 
 
+def get_company_aliases(source: str, source_company_id: str) -> list[str]:
+    """회사(source, source_company_id)의 별칭 목록(display_name 칸)을 읽는다. 줄이 없거나 비면 빈 목록."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT display_name FROM company_info WHERE source = ? AND source_company_id = ?",
+            (source, source_company_id),
+        ).fetchone()
+    return [a for a in (row["display_name"] or "").split(ALIAS_SEP) if a] if row else []
+
+
 def record_raw_version(slug: str, raw_text: str, company_info_id: int | None = None) -> int:
     """공고(slug)의 원문을 버전으로 남긴다. 원문의 SHA-256이 그 공고의 가장 최근 버전과 같으면
     행을 추가하지 않고 그 행의 id를 반환하고, 다르면 새 행을 추가해 그 id를 반환한다.

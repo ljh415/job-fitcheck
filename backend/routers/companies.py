@@ -34,6 +34,7 @@ from services.app_db import (
     delete_fit_history_for_slug,
     delete_qa_history_for_slug,
     delete_raw_versions_for_slug,
+    get_company_aliases,
     get_fit_history_entry,
     get_profile_version,
     is_healthy,
@@ -613,7 +614,14 @@ async def _process_company(
             logger.info("[2/4] 잡플래닛 기존값 재사용: %.1f점", existing_jp_score)
         else:
             logger.info("[2/4] 잡플래닛 조회: %s", company_name_for_jp)
-            jp = await fetch_jobplanet_score(company_name_for_jp)
+            # 같은 회사로 아는 다른 이름(덮어쓰기 전 AI 이름 + 이미 저장된 별칭)도 답 검증에서 인정한다.
+            jp_known_names = list(ai_names)
+            if company_info:
+                try:
+                    jp_known_names += get_company_aliases(company_info["source"], company_info["source_company_id"])
+                except Exception as e:
+                    logger.warning("회사 별칭 읽기 실패 — 잡플래닛 조회는 아는 이름 없이 진행 (%s)", e)
+            jp = await fetch_jobplanet_score(company_name_for_jp, jp_known_names)
             if jp.score is not None:
                 extracted["jobplanet_score"] = jp.score
                 extracted["jobplanet_review_count"] = jp.review_count

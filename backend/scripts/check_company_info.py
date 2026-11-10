@@ -33,10 +33,12 @@ class FakeLLM:
 
 
 _jp_names = []  # 잡플래닛 조회에 넘어온 이름들(검색어가 사이트 이름인지 확인용)
+_jp_known = []  # 같이 넘어온 "같은 회사로 아는 다른 이름" 목록(AI 이름·저장된 별칭)
 
 
-async def _fake_jobplanet(name):
+async def _fake_jobplanet(name, known_names=None):
     _jp_names.append(name)
+    _jp_known.append(list(known_names or []))
     return JobplanetResult(None, None, "not_found")
 
 
@@ -93,6 +95,7 @@ async def main():
     assert fm.employee_count == row["employee_count"], fm.employee_count
     assert fm.revenue_status == scraper.format_revenue(row["revenue_won"], row["revenue_as_of"]), fm.revenue_status
     assert _jp_names[-1] == wanted_name, _jp_names
+    assert "시험원티드" in _jp_known[-1], _jp_known[-1]  # 덮어쓰기 전 AI 이름이 아는 이름으로 같이 넘어감
     assert row["display_name"] == "시험원티드", row["display_name"]
     print("1. 원티드 등록: 행 1개, 기업 payload 4항목, 공고 payload 없음, 임직원·매출·기준일이 원본과 일치, 사이트 값이 AI 값을 덮어쓰고 AI 이름은 별칭으로 저장")
 
@@ -120,6 +123,7 @@ async def main():
     assert fm.investment_stage == row["funding_stage"] and fm.funding_total == row["funding_total"], fm
     assert fm.revenue_status is None  # 리멤버는 회사 페이지에 매출이 없어 AI 값(가짜는 없음)을 그대로 둔다
     assert _jp_names[-1] == remember_name and row["display_name"] == "시험리멤버", (_jp_names, row["display_name"])
+    assert "시험리멤버" in _jp_known[-1], _jp_known[-1]
     print("2. 리멤버 등록: 기업 payload(employeeStatistics 포함)와 공고 payload 3항목 보관, 임직원 수·투자 단계·누적 투자금이 원본과 일치, 사이트 값이 AI 값을 덮어쓰고 AI 이름은 별칭으로 저장")
 
     # 3. 텍스트 등록(기업 페이지 없음) → 공고 파일은 생기고 행은 안 생김
@@ -146,7 +150,9 @@ async def main():
     assert len(same) == 1 and same[0]["id"] == first["id"], same
     assert json.loads(same[0]["company_payload"]) == {"changed": "again"}, same
     assert len(_rows()) == count_after_first
-    print("4. 같은 회사 재저장: 줄 1개·id 유지, 새 값으로 덮어씀, 같은 회사의 다른 공고도 같은 줄 사용")
+    # 두 번째 공고의 잡플래닛 조회에는 첫 공고에서 저장된 별칭("시험공유A")도 아는 이름으로 넘어간다
+    assert "시험공유A" in _jp_known[-1] and "시험공유B" in _jp_known[-1], _jp_known[-1]
+    print("4. 같은 회사 재저장: 줄 1개·id 유지, 새 값으로 덮어씀, 같은 회사의 다른 공고도 같은 줄 사용, 저장된 별칭이 잡플래닛 조회의 아는 이름으로 넘어감")
 
     # 5. DB 저장 실패 → 등록은 성공(공고 파일 저장), 행은 없음
     def boom(*args, **kwargs):
@@ -489,6 +495,8 @@ def check_company_aliases():
     assert stored() == "베이글코드|Bagelcode"
     app_db.upsert_company_info(**base, aliases=["Bagelcode", "베이글"])
     assert stored() == "베이글코드|Bagelcode|베이글"
+    assert app_db.get_company_aliases("wanted", "alias-1") == ["베이글코드", "Bagelcode", "베이글"]  # 읽기
+    assert app_db.get_company_aliases("wanted", "없는회사") == []
     print("14. 별칭: 같은 이름은 중복해서 붙지 않고 다른 이름은 덧붙으며, 대표 이름·빈 이름은 빠지고, aliases를 안 넘기면 기존 목록이 유지되고 id도 유지")
 
 
