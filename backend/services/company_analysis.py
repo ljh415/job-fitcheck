@@ -269,10 +269,10 @@ if __name__ == "__main__":
                     "career_years": {"status": "충족", "note": ""},
                     "location": {"status": "충족", "note": ""},
                     "stability": {"status": "충족", "note": ""},
-                    # LLM이 임계값 지시를 놓친 상황(2.4점인데 status="양호") — 코드가 점수로 gap을 만들어야 함
-                    "jobplanet": {"status": "양호", "note": "2.4점"},
+                    # 비기술 요인은 gap으로 올라가지 않는다(2026-11-11) — 낮은 점수도 요약 줄에만 나온다
+                    "jobplanet": {"status": "미달", "note": "2.4점"},
                     "salary": {"status": "미확인", "note": ""},
-                    "custom_criteria": {"status": "해당없음", "note": ""},
+                    "custom_criteria": [],
                 },
             }, {"fit_score": 65, "report": "종합의견 텍스트"}]),
         )
@@ -283,7 +283,8 @@ if __name__ == "__main__":
             )
         assert fit_result["item_judgments"][0]["id"] == "required:0", fit_result["item_judgments"]
         assert fit_result["evaluation_incomplete"] is False, fit_result
-        assert any(g.startswith("(미달)") and "잡플래닛" in g for g in fit_result["gaps"]), fit_result["gaps"]
+        assert not any("잡플래닛" in g for g in fit_result["gaps"]), f"비기술 요인은 gaps에 안 올라감: {fit_result['gaps']}"
+        assert "잡플래닛 평점 미달" in fit_report and "사용자 지정 평가 기준 해당없음" in fit_report, fit_report
         assert "종합의견 텍스트" in fit_report, fit_report
         assert fake_high_structured.extract_structured.call_args_list[0].kwargs["operation"] == "적합도 평가"
         assert fake_high_structured.extract_structured.call_args.kwargs["operation"] == "적합도 평가(보고서)"
@@ -309,8 +310,9 @@ if __name__ == "__main__":
         # 6. 보고서 호출이 점수를 못 돌려주면(문자열 점수) 1번 다시 요청, 그래도 안 되면 점수 0 + 불완전
         no_items = {"required_skills": [], "preferred_skills": [], "key_responsibilities": []}
         factors = {k: {"status": "충족", "note": ""} for k in
-                   ("career_years", "location", "stability", "jobplanet", "salary", "custom_criteria")}
+                   ("career_years", "location", "stability", "jobplanet", "salary")}
         factors["salary"]["status"] = "미확인"
+        factors["custom_criteria"] = []
         judge_ok = {"item_judgments": [], "decision_factors": factors}
         cases = (
             ([judge_ok, {"fit_score": "70", "report": "글"}, {"fit_score": 70, "report": "다시 쓴 글"}], 70, False, 3),

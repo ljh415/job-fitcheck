@@ -59,7 +59,7 @@ class CompanyFrontmatter(BaseModel):
     strengths: list[str] = Field(default_factory=list)
     gaps: list[str] = Field(default_factory=list)
     salary_check: Literal["양호", "미확인", "낮음"] | None = None
-    stability_check: Literal["충족", "조건부", "미달"] | None = None
+    stability_check: Literal["충족", "조건부", "미달", "미확인"] | None = None
     location_check: str | None = None
     # 적합도 평가 구조 개편(docs/fit-eval-structural-redesign/PLAN.md) 1단계 중간
     # 판정 결과 — 디버깅·감사용으로 보존(4번 열린 질문 참고). refit 입력과 QnA

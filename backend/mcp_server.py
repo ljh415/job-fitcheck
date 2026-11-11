@@ -552,10 +552,7 @@ async def create_company(
                 fallback_items = [
                     it["id"] for it in normalized["item_judgments"] if it.get("filled_by") == "code_fallback"
                 ]
-                fallback_factors = [
-                    k for k, v in normalized["decision_factors"].items()
-                    if v.get("status") == fit_normalization._FALLBACK_STATUS
-                ]
+                fallback_factors = fit_normalization.fallback_factor_keys(normalized["decision_factors"])
                 raise ToolError(
                     "판정이 불완전해 저장을 거부합니다 — evaluate_fit_judge를 다시 호출해 "
                     f"아래 항목을 재제출하세요. 판정 누락/무효 id: {fallback_items or '없음'}, "
