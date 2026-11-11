@@ -406,6 +406,7 @@
       <h3>📝 커스텀 평가 기준</h3>
       <p style="font-size:13px;color:#6b7280;margin-bottom:12px">적합도 평가 시 LLM에게 추가로 전달할 기준을 자유롭게 입력하세요.<br>예: "스타트업보다 중견기업 이상 선호", "재택근무 가능 여부 중요", "Python 기반 팀 우대"</p>
       <label class="full-width">
+        <p style="font-size:13px;color:#6b7280;margin:0 0 6px"><b>한 줄에 조건 하나씩</b> 적어 주세요. 줄마다 따로 판정해 점수에 반영하고, 공고에 정보가 없는 줄은 "미확인"으로 둡니다.</p>
         <textarea id="eval-criteria-input" rows="6" placeholder="예시&#10;- 임직원 100명 이상 회사 우선&#10;- 풀스택보다 백엔드 전문 팀 선호&#10;- 서울 강남/판교 근무 가능 여부 중요"></textarea>
       </label>
       <button onclick="saveEvalCriteria()" class="btn-primary" style="margin-top:8px">평가 기준 저장</button>

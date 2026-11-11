@@ -4,6 +4,7 @@ provider(Claude/OpenAI/Gemini) 공통으로 담당해, 각 provider가 같은 �
 구현하지 않게 한다."""
 import json
 import logging
+import re
 
 import prompts
 
@@ -40,6 +41,32 @@ def build_input_items(company_data: dict) -> list[dict]:
                 items.append({"id": f"{prefix}:{n}", "source_item": entry})
                 n += 1
     return items
+
+
+# 줄 앞의 목록 기호("- ", "* ", "• ", "1. ", "2) ")만 뗀다. 뒤에 공백이 있을 때만 — "3.0점 이상"이나
+# "**굵게**"의 앞부분을 기호로 오인해 자르지 않기 위해서다. 떼는 이유는 모델 이해가 아니라
+# 요약 줄에 줄 문구가 그대로 나오기 때문(2026-11-11).
+_LIST_MARKER_RE = re.compile(r"^(?:[-*•]|\d+[.)])\s+")
+
+
+def split_criteria_lines(text: str) -> list[str]:
+    """사용자 지정 평가 기준 원문을 판정 단위 줄 목록으로 나눈다. 빈 줄과 `#` 제목 줄은 뺀다.
+    줄글로 쓰여 줄바꿈이 없으면 줄이 하나라 지금처럼 한 번에 판정된다."""
+    lines = []
+    for raw in (text or "").splitlines():
+        line = _LIST_MARKER_RE.sub("", raw.strip(), count=1).strip()
+        if line and not line.startswith("#"):
+            lines.append(line)
+    return lines
+
+
+def render_custom_criteria_section(criteria_lines: list[str]) -> str:
+    """판정 호출 사용자 메시지에 붙일 번호 목록(`- criteria:N: 줄`) + 권한 안내문. 줄이 없으면 빈 문자열.
+    id 형식은 `_reconcile_custom_criteria`가 판정을 맞출 때 쓰는 `criteria:N`과 같아야 한다."""
+    if not criteria_lines:
+        return ""
+    listing = "\n".join(f"- criteria:{i}: {line}" for i, line in enumerate(criteria_lines))
+    return f"\n\n## 추가 평가 기준 (사용자 지정)\n{listing}{prompts.CUSTOM_CRITERIA_BOUNDARY_NOTICE}"
 
 
 def _code_fallback(item_id: str, source_item: str) -> dict:
@@ -906,6 +933,19 @@ if __name__ == "__main__":
     # 자체도 방어해야 함 — set 멤버십에 dict가 들어오면 TypeError로 죽을 수 있음)
     unsafe = derive_legacy_checks({"salary": {"status": {"x": 1}}, "location": {"status": {"y": 2}}})
     assert unsafe == {"salary_check": None, "stability_check": None, "location_check": None}, unsafe
+
+    # 7-1. split_criteria_lines — 빈 줄·# 제목 제외, 앞 목록 기호만 제거("3.0점", "**굵게**"는 보존)
+    raw_criteria = "# 제목\n- 서울 선호\n\n* 50명 이상 선호\n1. 3.0점 이상 선호\n2) 잡플래닛\n**굵게**\n100명 이상\n   \n• 점 기호"
+    assert split_criteria_lines(raw_criteria) == [
+        "서울 선호", "50명 이상 선호", "3.0점 이상 선호", "잡플래닛", "**굵게**", "100명 이상", "점 기호"], \
+        split_criteria_lines(raw_criteria)
+    assert split_criteria_lines("") == [] and split_criteria_lines(None) == [] and split_criteria_lines("\n# 제목만\n") == []
+    assert split_criteria_lines("서울이면 좋고 50명 이상이면 더 좋음") == ["서울이면 좋고 50명 이상이면 더 좋음"], "줄글은 한 줄"
+    # 7-2. render_custom_criteria_section — 번호 목록 + 안내문, 줄이 없으면 빈 문자열
+    assert render_custom_criteria_section([]) == ""
+    sec = render_custom_criteria_section(["서울 선호", "50명 이상 선호"])
+    assert "- criteria:0: 서울 선호\n- criteria:1: 50명 이상 선호" in sec, sec
+    assert "## 추가 평가 기준 (사용자 지정)" in sec and prompts.CUSTOM_CRITERIA_BOUNDARY_NOTICE in sec, sec
 
     # 8. normalize_and_render — REST/MCP 공유 정규화 함수 통합 테스트
     # (2026-09-03, MCP 구조화 계약 전환 1단계). company_analysis.evaluate_fit_structured()가

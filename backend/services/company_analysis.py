@@ -111,11 +111,8 @@ async def evaluate_fit_structured(
     두 호출부가 이 함수 전용으로 작성돼 있다.
     """
     high, high_model = high_from_snapshot(snap)
-    eval_criteria = storage.read_eval_criteria().strip()
-    custom_criteria_section = (
-        f"\n\n## 추가 평가 기준 (사용자 지정)\n{eval_criteria}{prompts.CUSTOM_CRITERIA_BOUNDARY_NOTICE}"
-        if eval_criteria else ""
-    )
+    criteria_lines = fit_normalization.split_criteria_lines(storage.read_eval_criteria())
+    custom_criteria_section = fit_normalization.render_custom_criteria_section(criteria_lines)
 
     input_items = fit_normalization.build_input_items(company_data)
     item_list_text = "\n".join(f"- {it['id']}: {it['source_item']}" for it in input_items)
@@ -140,7 +137,7 @@ async def evaluate_fit_structured(
     # judge_result 자체가 dict가 아니어도(provider가 tool 인자를 배열 등으로 잘못
     # 반환) normalize_and_render()가 내부에서 빈 dict로 정규화해 fallback+incomplete
     # 계약을 그대로 지킨다(2026-09-02 7차 리뷰 반영, 2026-09-03 공유 함수로 이관).
-    normalized = fit_normalization.normalize_and_render(judge_result, company_data)
+    normalized = fit_normalization.normalize_and_render(judge_result, company_data, criteria_lines)
 
     # 보고서 호출이 정리된 판정 표 전체를 보고 점수를 정하고(점수 → 산문 순서) 산문까지
     # 쓴다. 점수나 산문을 못 읽으면 1번만 다시 요청하고, 그래도 안 되면 점수 0 + 불완전.
@@ -291,6 +288,40 @@ if __name__ == "__main__":
         assert fit_result["fit_score"] == 65 and fit_result["fit_label"] == "조건부추천", fit_result
         report_call = fake_high_structured.extract_structured.call_args_list[1].kwargs
         assert "- [필수] Python 경험: 충족" in report_call["user"], report_call["user"]
+
+        # 4-1. 사용자 지정 기준이 있으면 번호 목록(criteria:N)이 판정 호출 입력에 들어가고, 판정이 줄과
+        # 맞춰져 저장되며, 요약 줄에 줄마다 나온다(2026-11-11)
+        fake_high_custom = SimpleNamespace(
+            extract_structured=AsyncMock(side_effect=[{
+                "item_judgments": [
+                    {"id": "required:0", "verdict": "met", "evidence_basis": "explicit",
+                     "evidence_summary": "프로젝트 X에서 Python 사용", "evidence_source": "X",
+                     "evidence_excerpt": "", "reason": ""},
+                ],
+                "decision_factors": {
+                    "career_years": {"status": "충족", "note": ""},
+                    "location": {"status": "충족", "note": ""},
+                    "stability": {"status": "미확인", "note": "투자·매출 정보 없음"},
+                    "jobplanet": {"status": "충족", "note": ""},
+                    "salary": {"status": "미확인", "note": ""},
+                    "custom_criteria": [
+                        {"id": "criteria:0", "status": "충족", "note": "서울"},
+                        {"id": "criteria:1", "status": "미확인", "note": "규모 정보 없음"},
+                    ],
+                },
+            }, {"fit_score": 70, "report": "종합의견"}]),
+        )
+        with patch.object(_this, "high_from_snapshot", return_value=(fake_high_custom, "model")), \
+             patch.object(storage, "read_eval_criteria", return_value="- 서울 선호\n- 50명 이상 선호\n"):
+            fit_custom, report_custom = await evaluate_fit_structured(
+                _snap("claude"), "프로필", company_data_structured, "원문", operation="적합도 평가",
+            )
+        judge_user_sent = fake_high_custom.extract_structured.call_args_list[0].kwargs["user"]
+        assert "- criteria:0: 서울 선호\n- criteria:1: 50명 이상 선호" in judge_user_sent, judge_user_sent
+        assert fit_custom["evaluation_incomplete"] is False, fit_custom
+        assert [e["status"] for e in fit_custom["decision_factors"]["custom_criteria"]] == ["충족", "미확인"], fit_custom
+        assert "서울 선호 충족 · 50명 이상 선호 미확인" in report_custom, report_custom
+        assert fit_custom["stability_check"] == "미확인", fit_custom
 
         # 5. judge_result(1단계 응답) 자체가 dict가 아니면(provider가 tool 인자를 배열
         # 등으로 잘못 반환) 예외 없이 fallback+incomplete=true로 넘어가야 함(2026-09-02
