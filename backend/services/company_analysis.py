@@ -179,7 +179,7 @@ async def evaluate_fit_structured(
         "decision_factors": normalized["decision_factors"],
         # 구 salary_check/stability_check/location_check 필드 하위 호환(CSV 내보내기·
         # MCP 계약, 4번 열린 질문 결정: B). decision_factors로 대체하지 않고 계속 채운다.
-        "salary_check": normalized["salary_check"],
+        "salary_check": normalized["salary_check"],  # 연봉 요인을 평가에서 뺀 뒤(2026-11-12) 항상 None — 재평가가 옛 값을 남기지 않게 키는 유지
         "stability_check": normalized["stability_check"],
         "location_check": normalized["location_check"],
     }
@@ -267,8 +267,6 @@ if __name__ == "__main__":
                     "location": {"status": "충족", "note": ""},
                     "stability": {"status": "충족", "note": ""},
                     # 비기술 요인은 gap으로 올라가지 않는다(2026-11-11) — 낮은 점수도 요약 줄에만 나온다
-                    "jobplanet": {"status": "미달", "note": "2.4점"},
-                    "salary": {"status": "미확인", "note": ""},
                     "custom_criteria": [],
                 },
             }, {"fit_score": 65, "report": "종합의견 텍스트"}]),
@@ -281,7 +279,7 @@ if __name__ == "__main__":
         assert fit_result["item_judgments"][0]["id"] == "required:0", fit_result["item_judgments"]
         assert fit_result["evaluation_incomplete"] is False, fit_result
         assert not any("잡플래닛" in g for g in fit_result["gaps"]), f"비기술 요인은 gaps에 안 올라감: {fit_result['gaps']}"
-        assert "잡플래닛 평점 미달" in fit_report and "사용자 지정 평가 기준 해당없음" in fit_report, fit_report
+        assert "잡플래닛" not in fit_report and "사용자 지정 평가 기준 해당없음" in fit_report, fit_report
         assert "종합의견 텍스트" in fit_report, fit_report
         assert fake_high_structured.extract_structured.call_args_list[0].kwargs["operation"] == "적합도 평가"
         assert fake_high_structured.extract_structured.call_args.kwargs["operation"] == "적합도 평가(보고서)"
@@ -302,8 +300,6 @@ if __name__ == "__main__":
                     "career_years": {"status": "충족", "note": ""},
                     "location": {"status": "충족", "note": ""},
                     "stability": {"status": "미확인", "note": "투자·매출 정보 없음"},
-                    "jobplanet": {"status": "충족", "note": ""},
-                    "salary": {"status": "미확인", "note": ""},
                     "custom_criteria": [
                         {"id": "criteria:0", "status": "충족", "note": "서울"},
                         {"id": "criteria:1", "status": "미확인", "note": "규모 정보 없음"},
@@ -341,8 +337,7 @@ if __name__ == "__main__":
         # 6. 보고서 호출이 점수를 못 돌려주면(문자열 점수) 1번 다시 요청, 그래도 안 되면 점수 0 + 불완전
         no_items = {"required_skills": [], "preferred_skills": [], "key_responsibilities": []}
         factors = {k: {"status": "충족", "note": ""} for k in
-                   ("career_years", "location", "stability", "jobplanet", "salary")}
-        factors["salary"]["status"] = "미확인"
+                   ("career_years", "location", "stability")}
         factors["custom_criteria"] = []
         judge_ok = {"item_judgments": [], "decision_factors": factors}
         cases = (

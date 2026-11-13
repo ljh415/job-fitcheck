@@ -233,7 +233,7 @@ def safe_fit_score(raw_score) -> tuple[int | None, bool]:
     return max(0, min(100, raw_score)), False
 
 
-_DECISION_FACTOR_KEYS = ("career_years", "location", "stability", "jobplanet", "salary", "custom_criteria")
+_DECISION_FACTOR_KEYS = ("career_years", "location", "stability", "custom_criteria")
 # validate_decision_factors()가 fallback에 채우는 status 표식 — derive_decision_factor_gaps()가
 # 이 값을 보고 "판정 실패"임을 알아채 gaps에 노출한다(두 함수가 문자열을
 # 각자 하드코딩하면 한쪽만 바뀔 때 조용히 어긋나므로 상수 하나로 공유).
@@ -243,15 +243,14 @@ _FALLBACK_STATUS = "확인필요"
 _SIMPLE_FACTOR_KEYS = tuple(k for k in _DECISION_FACTOR_KEYS if k != "custom_criteria")
 _CUSTOM_STATUS_VALUES = ("충족", "미달", "미확인")
 
-# 구 CompanyFrontmatter salary_check/stability_check(Pydantic Literal)와 같은 어휘 —
+# 구 CompanyFrontmatter stability_check(Pydantic Literal)와 같은 어휘 —
 # validate_decision_factors()의 enum 검증과 derive_legacy_checks()의 매핑 양쪽에서 쓴다.
-# location은 여기 포함하지 않는다 — 프롬프트가 salary/stability처럼 짧은 고정 어휘를
+# location은 여기 포함하지 않는다 — 프롬프트가 stability처럼 짧은 고정 어휘를
 # 지시하지 않고("근무지 — 후보자 선호 위치가 설정된 경우만 반영") "정보없음"/"해당없음"
 # 등도 정상값일 수 있어서, enum으로 좁히면 정상 케이스까지 판정 실패로 오분류할 위험이
 # 있다(2026-09-02 7차 리뷰에서 시도했다가 위험성 확인 후 되돌림 — 별도 제품 결정 필요).
-_SALARY_CHECK_VALUES = {"양호", "미확인", "낮음"}
 _STABILITY_CHECK_VALUES = {"충족", "조건부", "미달", "미확인"}
-_STATUS_ENUM_BY_KEY = {"salary": _SALARY_CHECK_VALUES, "stability": _STABILITY_CHECK_VALUES}
+_STATUS_ENUM_BY_KEY = {"stability": _STABILITY_CHECK_VALUES}
 
 
 def _reconcile_custom_criteria(llm_entries, criteria_lines: list[str]) -> tuple[list[dict], bool]:
@@ -281,7 +280,7 @@ def _reconcile_custom_criteria(llm_entries, criteria_lines: list[str]) -> tuple[
 
 def validate_decision_factors(decision_factors: dict, criteria_lines: list[str] | None = None) -> tuple[dict, bool]:
     """decision_factors의 5개 단일 요인이 전부 존재하고 `status`/`note`가 문자열인지,
-    salary/stability는 status가 구 필드와 같은 enum인지 검증한다(2026-09-01 2차
+    stability는 status가 구 필드와 같은 enum인지 검증한다(2026-09-01 2차
     리뷰, 2026-09-02 4·5차 리뷰 반영). 위반 시 안전한 기본값(확인 필요 status·note)
     으로 교체한 뒤 incomplete로 표시한다. 최상위 `decision_factors` 자체가
     dict가 아니면(provider가 list/문자열/숫자를 반환하는 등) `.get()` 호출이
@@ -347,11 +346,7 @@ _DECISION_FACTOR_LABELS = {
     "career_years": "경력 연수",
     "location": "근무지",
     "stability": "기업 안정성",
-    "jobplanet": "잡플래닛 평점",
     "custom_criteria": "사용자 지정 평가 기준",
-    # salary도 판정 실패(fallback)면 gap으로 노출돼야 하므로 맵에 포함시킨다(2026-09-02
-    # 브랜치 전체 리뷰 반영, b632c66에서 salary만 빠뜨렸던 걸 발견).
-    "salary": "연봉",
 }
 
 
@@ -418,9 +413,19 @@ def fallback_factor_keys(decision_factors: dict) -> list[str]:
     return keys
 
 
+def render_custom_criteria_for_score(entries) -> str:
+    """점수 호출 입력의 `### 사용자 지정 평가 기준(사용자의 지시)` 구역 본문. 줄마다
+    `- 줄 문구: 상태 — note`, 줄이 없으면 `(없음)`. 사용자 기준을 비기술 요인 JSON(기존 분석 결과로
+    취급돼 지시로 안 읽힘)과 분리해 사용자의 지시로 보여주기 위한 것이다(2026-11-11)."""
+    rows = [f"- {e.get('source_item', '')}: {e.get('status')} — {e.get('note', '')}"
+            for e in (entries if isinstance(entries, list) else []) if isinstance(e, dict)]
+    return "\n".join(rows) if rows else "(없음)"
+
+
 def derive_legacy_checks(decision_factors: dict) -> dict:
-    """decision_factors → 구 CompanyFrontmatter 필드(salary_check/stability_check/
-    location_check) 매핑. CSV 내보내기·MCP 계약 하위 호환용(4번 열린 질문, 결정:
+    """decision_factors → 구 CompanyFrontmatter 필드(stability_check/location_check) 매핑.
+    salary_check는 연봉 요인을 평가에서 뺀 뒤(2026-11-12) 항상 None으로 비운다 — 재평가가
+    `model_copy(update=…)`로 필드를 덮어쓰므로 옛 값이 남지 않게 키는 유지한다. CSV 내보내기·MCP 계약 하위 호환용(4번 열린 질문, 결정:
     B — decision_factors로 대체하지 않고 계속 채운다). status는 프롬프트가 이미
     이 구 필드들과 같은 어휘로 채우도록 지시돼 있으므로(EVALUATE_FIT_JUDGE_SYSTEM
     [decision_factors 판정]) 그대로 옮기되, enum을 벗어나면 버린다(salary_check/
@@ -428,11 +433,10 @@ def derive_legacy_checks(decision_factors: dict) -> dict:
     validate_decision_factors()가 status를 문자열로 보장하지만(4차 리뷰 반영),
     이 함수 자체도 비문자열 status가 들어와도 안전하도록 isinstance로 한 번 더
     막는다(set 멤버십 검사에 dict 등 unhashable 값이 들어오면 TypeError)."""
-    salary_status = (decision_factors.get("salary") or {}).get("status")
     stability_status = (decision_factors.get("stability") or {}).get("status")
     location_status = (decision_factors.get("location") or {}).get("status")
     return {
-        "salary_check": salary_status if isinstance(salary_status, str) and salary_status in _SALARY_CHECK_VALUES else None,
+        "salary_check": None,
         "stability_check": stability_status if isinstance(stability_status, str) and stability_status in _STABILITY_CHECK_VALUES else None,
         "location_check": location_status if isinstance(location_status, str) and location_status else None,
     }
@@ -552,7 +556,9 @@ def normalize_and_render(judge_result: dict, company_data: dict, criteria_lines:
 
     report_user = prompts.EVALUATE_FIT_REPORT_USER_TEMPLATE.format(
         judgment_table_text=render_judgment_table_text(normalized),
-        decision_factors_text=json.dumps(decision_factors, ensure_ascii=False),
+        decision_factors_text=json.dumps(
+            {k: v for k, v in decision_factors.items() if k != "custom_criteria"}, ensure_ascii=False),
+        custom_criteria_text=render_custom_criteria_for_score(decision_factors.get("custom_criteria")),
         score_guidance=prompts.FIT_SCORE_GUIDANCE,
     )
 
@@ -740,7 +746,6 @@ if __name__ == "__main__":
 
     # 3-7. validate_decision_factors — 누락되거나 status가 문자열이 아니면 안전한 기본값+incomplete
     valid_factors = {k: {"status": "충족", "note": ""} for k in _SIMPLE_FACTOR_KEYS}
-    valid_factors["salary"] = {"status": "양호", "note": ""}
     valid_factors["stability"] = {"status": "충족", "note": ""}
     valid_factors["custom_criteria"] = []  # 사용자 지정 기준 줄이 없으면 빈 목록
     result_ok, incomplete_ok = validate_decision_factors(valid_factors)
@@ -756,15 +761,13 @@ if __name__ == "__main__":
         assert all(result_bad_top[k]["status"] == _FALLBACK_STATUS for k in _SIMPLE_FACTOR_KEYS), bad_top
         assert result_bad_top["custom_criteria"] == [], "기준 줄이 없으면 빈 목록(판정 실패 아님)"
 
-    # 3-7-3. salary/stability는 status가 구 필드 enum 밖이면 무효
+    # 3-7-3. stability는 status가 구 필드 enum 밖이면 무효
     # (schema상 허용되는 임의 문자열이 evaluation_incomplete=false로 통과해 legacy
     # 필드만 조용히 None이 되는 정보 유실 방지, 5차 리뷰 반영)
     enum_violation = dict(valid_factors)
-    enum_violation["salary"] = {"status": "협의", "note": ""}
     enum_violation["stability"] = {"status": "강", "note": ""}
     result_enum, incomplete_enum = validate_decision_factors(enum_violation)
     assert incomplete_enum is True
-    assert result_enum["salary"]["status"] == "확인필요"
     assert result_enum["stability"]["status"] == "확인필요"
     # 3-7-3-1. 안정성은 정보가 없을 때 "미확인"을 쓸 수 있다(2026-11-11)
     stab_unknown = dict(valid_factors)
@@ -800,12 +803,15 @@ if __name__ == "__main__":
         assert res_s["custom_criteria"] == [] and inc_s is False, (stray, res_s)
 
     broken_factors = dict(valid_factors)
-    broken_factors["jobplanet"] = {"status": 5, "note": "2.4점"}  # 문자열이 아닌 status
-    del broken_factors["salary"]  # 통째로 누락
+    broken_factors["career_years"] = {"status": 5, "note": "x"}  # 문자열이 아닌 status
+    del broken_factors["location"]  # 통째로 누락
     result_broken, incomplete_broken = validate_decision_factors(broken_factors)
     assert incomplete_broken is True
-    assert result_broken["jobplanet"]["status"] == _FALLBACK_STATUS, "비문자열 status는 그대로 노출되면 안 됨"
-    assert result_broken["salary"]["status"] == _FALLBACK_STATUS, "누락된 요인은 안전한 기본값으로 채워져야 함"
+    assert result_broken["career_years"]["status"] == _FALLBACK_STATUS, "비문자열 status는 그대로 노출되면 안 됨"
+    assert "jobplanet" not in result_broken, "잡플래닛 요인은 정규화 결과에 없다"
+    assert result_broken["location"]["status"] == _FALLBACK_STATUS, "누락된 요인은 안전한 기본값으로 채워져야 함"
+    # 연봉 요인은 평가에서 뺐다(2026-11-12) — 입력에 있어도 정규화 결과에 나오지 않는다
+    assert "salary" not in validate_decision_factors({**valid_factors, "salary": {"status": "양호", "note": ""}})[0]
 
     # 3-7-1. status가 dict 등 비문자열이면 무효 처리(4차 리뷰 반영 —
     # 안 걸러지면 derive_legacy_checks()가 그대로 옮겨 location_check(str) 저장이 깨짐)
@@ -859,8 +865,7 @@ if __name__ == "__main__":
     decision_factors = {
         "career_years": {"status": "미달", "note": "요구 3년, 보유 1년"},
         "location": {"status": "충족", "note": "서울 일치"},
-        "jobplanet": {"status": "낮음", "note": "2.4점"},
-        "salary": {"status": "낮음", "note": "gap으로 안 나가야 함"},
+        "stability": {"status": "낮음", "note": "소규모"},
     }
     df_gaps = derive_decision_factor_gaps(decision_factors)
     assert df_gaps == [], f"조건부·미달·낮음은 gap으로 올라가면 안 됨: {df_gaps}"
@@ -869,10 +874,12 @@ if __name__ == "__main__":
     # 함(2026-09-02, LLM Judge 비교 실험에서 잡플래닛 정상 판정이 산문에서 빠지는
     # 문제 발견 반영). 없는 키는 "확인필요"로 표시.
     summary_line = render_decision_factors_summary(decision_factors)
-    assert "잡플래닛 평점 낮음" in summary_line, summary_line
+    assert "기업 안정성 낮음" in summary_line, summary_line
+    assert "잡플래닛" not in summary_line, "잡플래닛은 비기술 요인 항목이 아니라 사용자 지정 기준 줄로만 나온다"
     assert "근무지 충족" in summary_line, summary_line
-    assert "연봉 낮음" in summary_line, summary_line
-    assert "기업 안정성 확인필요" in summary_line, "누락된 키는 확인필요로 표시돼야 함"
+    assert "연봉" not in summary_line, "연봉 요인은 요약 줄에 없다"
+    assert "경력 연수 미달" in summary_line, summary_line
+    assert derive_decision_factor_gaps({}) == [] and "기업 안정성" in render_decision_factors_summary({}), "누락된 키는 확인필요로 표시"
     assert "사용자 지정 평가 기준 확인필요" in summary_line, "목록이 아니면(누락) 확인필요"
     # 사용자 지정 기준은 줄마다 "줄 문구 상태"를 따로 보여준다(기준 줄이 없으면 해당없음)
     sl_empty = render_decision_factors_summary({"custom_criteria": []})
@@ -893,23 +900,13 @@ if __name__ == "__main__":
     df_gaps_fb = derive_decision_factor_gaps(decision_factors_with_fallback)
     assert any(g.startswith("(확인필요) 기업 안정성") for g in df_gaps_fb), df_gaps_fb
 
-    # 6-2. salary도 fallback이면 (확인필요) 노출 대상에 포함돼야 함(b632c66에서 salary만
-    # 빠뜨렸던 걸 2026-09-02 브랜치 전체 리뷰로 발견)
-    decision_factors_salary_fb = dict(decision_factors)
-    decision_factors_salary_fb["salary"] = {
-        "status": _FALLBACK_STATUS, "note": "시스템이 이 요인을 판정하지 못함",
-    }
-    df_gaps_salary_fb = derive_decision_factor_gaps(decision_factors_salary_fb)
-    assert any(g.startswith("(확인필요) 연봉") for g in df_gaps_salary_fb), df_gaps_salary_fb
-    # 정상 salary는 여전히 gap으로 안 나가야 함(기존 정책 유지 확인)
-    assert not any("연봉" in g for g in df_gaps), "정상 salary는 여전히 파생되면 안 됨"
+    # 6-2. 연봉 요인은 평가에서 뺐으므로(2026-11-12) 입력에 있어도 gap·요약 줄에 안 나온다
+    assert derive_decision_factor_gaps({"salary": {"status": _FALLBACK_STATUS, "note": "x"}}) == []
 
     # 6-3. 잡플래닛 점수(3.0 미만)로 gap을 보정하던 로직은 비기술 요인을 gaps에서 뺀 2026-11-11
     # 결정으로 없앴다 — 판정 실패만 노출하고, 정상 판정은 점수와 무관하게 gap이 아니다.
-    jp = {"jobplanet": {"status": "양호", "note": "LLM 착오"}}
-    assert derive_decision_factor_gaps(jp) == []
-    jp_fb = {"jobplanet": {"status": _FALLBACK_STATUS, "note": "판정 실패"}}
-    assert derive_decision_factor_gaps(jp_fb) == ["(확인필요) 잡플래닛 평점 - 판정 실패"]
+    # 잡플래닛은 비기술 요인 항목에서 뺐다(2026-11-12) — 입력에 있어도 gap·요약 줄에 안 나온다
+    assert derive_decision_factor_gaps({"jobplanet": {"status": _FALLBACK_STATUS, "note": "x"}}) == []
     assert derive_decision_factor_gaps({"location": {"status": "조건부", "note": "재택 불가"}}) == []
     # 6-4. 사용자 지정 기준은 판정 실패한 줄만 줄마다 노출, fallback_factor_keys가 줄 id까지 돌려줌
     custom_fb = {"custom_criteria": [
@@ -924,14 +921,14 @@ if __name__ == "__main__":
 
     # 7. derive_legacy_checks — status를 구 필드 어휘로 그대로 옮기되 enum 밖이면 버림
     legacy = derive_legacy_checks(decision_factors)
-    assert legacy == {"salary_check": "낮음", "stability_check": None, "location_check": "충족"}, legacy
+    assert legacy == {"salary_check": None, "stability_check": None, "location_check": "충족"}, legacy
     assert derive_legacy_checks({}) == {"salary_check": None, "stability_check": None, "location_check": None}
     assert derive_legacy_checks({"stability": {"status": "미확인"}})["stability_check"] == "미확인"
-    bad = derive_legacy_checks({"salary": {"status": "괜찮음"}})  # enum 밖 값은 버림
-    assert bad["salary_check"] is None, bad
+    bad = derive_legacy_checks({"stability": {"status": "괜찮음"}})  # enum 밖 값은 버림
+    assert bad["stability_check"] is None and bad["salary_check"] is None, bad
     # status가 비문자열이면(validate_decision_factors가 걸러야 정상이지만, 이 함수
     # 자체도 방어해야 함 — set 멤버십에 dict가 들어오면 TypeError로 죽을 수 있음)
-    unsafe = derive_legacy_checks({"salary": {"status": {"x": 1}}, "location": {"status": {"y": 2}}})
+    unsafe = derive_legacy_checks({"stability": {"status": {"x": 1}}, "location": {"status": {"y": 2}}})
     assert unsafe == {"salary_check": None, "stability_check": None, "location_check": None}, unsafe
 
     # 7-1. split_criteria_lines — 빈 줄·# 제목 제외, 앞 목록 기호만 제거("3.0점", "**굵게**"는 보존)
@@ -969,8 +966,6 @@ if __name__ == "__main__":
             "career_years": {"status": "충족", "note": ""},
             "location": {"status": "충족", "note": ""},
             "stability": {"status": "미확인", "note": "투자·매출 정보 없음"},
-            "jobplanet": {"status": "양호", "note": ""},
-            "salary": {"status": "미확인", "note": ""},
             "custom_criteria": [
                 {"id": "criteria:0", "status": "충족", "note": "서울"},
                 {"id": "criteria:1", "status": "미확인", "note": "규모 정보 없음"},
@@ -988,7 +983,8 @@ if __name__ == "__main__":
     assert "기업 안정성 미확인" in nr_result["factors_summary"]
     assert nr_result["stability_check"] == "미확인", nr_result
     assert [e["source_item"] for e in nr_result["decision_factors"]["custom_criteria"]] == ["서울 선호", "50명 이상 선호"]
-    assert nr_result["salary_check"] == "미확인" and nr_result["location_check"] == "충족", nr_result
+    assert nr_result["salary_check"] is None and nr_result["location_check"] == "충족", nr_result
+    assert "salary" not in nr_result["decision_factors"], "연봉 요인은 평가 결과에 없다"
     # report_user에 실제로 정규화된 fit_score·gaps 내용이 채워져 들어갔는지(REST가
     # 2단계 프롬프트에 넣던 것과 동일한 입력이어야 함)
     assert any(g.startswith("(우대 미충족) AWS 경험") for g in nr_result["gaps"]), nr_result["gaps"]
@@ -999,6 +995,12 @@ if __name__ == "__main__":
     assert "심각도" not in ru, ru
     assert "AWS 경험 없음" in ru and "점수 산정 우선순위" in ru and "확인 필요" in ru, ru
     assert "{judgment_table_text}" not in ru and "{score_guidance}" not in ru, "미치환 자리표시자"
+    assert "{custom_criteria_text}" not in ru, "미치환 자리표시자"
+    # 사용자 지정 기준은 비기술 요인 JSON이 아니라 별도 구역(사용자의 지시)으로 들어간다
+    assert "### 사용자 지정 평가 기준(사용자의 지시)\n- 서울 선호: 충족 — 서울\n- 50명 이상 선호: 미확인 — 규모 정보 없음" in ru, ru
+    assert "custom_criteria" not in ru.split("### 비기술 요인")[1].split("### 사용자 지정 평가 기준")[0], "JSON에 사용자 기준이 남음"
+    assert render_custom_criteria_for_score([]) == "(없음)" and render_custom_criteria_for_score(None) == "(없음)"
+    assert "(없음)" in normalize_and_render(nr_judge_result, nr_company_data)["report_user"], "기준 줄이 없으면 (없음)"
     unclear_row = {"id": "responsibility:0", "source_item": "업무", "verdict": "verify", "evidence_summary": "판정 누락", "group": "묶음"}
     assert render_judgment_table_text([unclear_row]).startswith("- [주요업무] 묶음 > 업무: 확인 필요 — 판정 누락")
 
