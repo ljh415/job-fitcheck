@@ -263,7 +263,6 @@ if __name__ == "__main__":
                      "evidence_excerpt": "", "reason": ""},
                 ],
                 "decision_factors": {
-                    "career_years": {"status": "충족", "note": ""},
                     "location": {"status": "충족", "note": ""},
                     "stability": {"status": "충족", "note": ""},
                     # 비기술 요인은 gap으로 올라가지 않는다(2026-11-11) — 낮은 점수도 요약 줄에만 나온다
@@ -297,7 +296,6 @@ if __name__ == "__main__":
                      "evidence_excerpt": "", "reason": ""},
                 ],
                 "decision_factors": {
-                    "career_years": {"status": "충족", "note": ""},
                     "location": {"status": "충족", "note": ""},
                     "stability": {"status": "미확인", "note": "투자·매출 정보 없음"},
                     "custom_criteria": [
@@ -337,7 +335,7 @@ if __name__ == "__main__":
         # 6. 보고서 호출이 점수를 못 돌려주면(문자열 점수) 1번 다시 요청, 그래도 안 되면 점수 0 + 불완전
         no_items = {"required_skills": [], "preferred_skills": [], "key_responsibilities": []}
         factors = {k: {"status": "충족", "note": ""} for k in
-                   ("career_years", "location", "stability")}
+                   ("location", "stability")}
         factors["custom_criteria"] = []
         judge_ok = {"item_judgments": [], "decision_factors": factors}
         cases = (

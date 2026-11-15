@@ -40,7 +40,26 @@ def build_input_items(company_data: dict) -> list[dict]:
             else:
                 items.append({"id": f"{prefix}:{n}", "source_item": entry})
                 n += 1
+    _add_experience_row(items, company_data)
     return items
+
+
+# 연차는 판정 표 행 한 곳에서만 판정한다(2026-11-14). 필수 요건 줄 중에 연차가 적힌 줄이 없으면
+# 따로 추출된 experience_required("5년 이상" 등)로 필수 행 하나를 만든다. 연차 줄이 없는 공고도
+# 판정을 받게 하려는 것이고, 값이 "신입"·"경력"처럼 숫자가 없으면 만들지 않는다.
+_YEAR_RE = re.compile(r"\d+\s*년|연차")
+
+
+def _add_experience_row(items: list[dict], company_data: dict) -> None:
+    exp = company_data.get("experience_required")
+    if not isinstance(exp, str) or not _YEAR_RE.search(exp):
+        return
+    required = [it for it in items if it["id"].startswith("required:")]
+    if any(_YEAR_RE.search(str(it["source_item"])) for it in required):
+        return
+    row = {"id": f"required:{len(required)}", "source_item": exp if "경력" in exp else f"경력 {exp}"}
+    last = max((i for i, it in enumerate(items) if it["id"].startswith("required:")), default=-1)
+    items.insert(last + 1, row)
 
 
 # 줄 앞의 목록 기호("- ", "* ", "• ", "1. ", "2) ")만 뗀다. 뒤에 공백이 있을 때만 — "3.0점 이상"이나
@@ -233,7 +252,7 @@ def safe_fit_score(raw_score) -> tuple[int | None, bool]:
     return max(0, min(100, raw_score)), False
 
 
-_DECISION_FACTOR_KEYS = ("career_years", "location", "stability", "custom_criteria")
+_DECISION_FACTOR_KEYS = ("location", "stability", "custom_criteria")
 # validate_decision_factors()가 fallback에 채우는 status 표식 — derive_decision_factor_gaps()가
 # 이 값을 보고 "판정 실패"임을 알아채 gaps에 노출한다(두 함수가 문자열을
 # 각자 하드코딩하면 한쪽만 바뀔 때 조용히 어긋나므로 상수 하나로 공유).
@@ -343,7 +362,6 @@ def derive_gaps_strengths(items: list[dict]) -> tuple[list[str], list[str]]:
 
 
 _DECISION_FACTOR_LABELS = {
-    "career_years": "경력 연수",
     "location": "근무지",
     "stability": "기업 안정성",
     "custom_criteria": "사용자 지정 평가 기준",
@@ -591,6 +609,17 @@ if __name__ == "__main__":
         {"id": "preferred:0", "source_item": "문제 정의 및 해결 의지"},
     ], inputs
 
+    # 1-1. 연차 행(2026-11-14) — 필수 요건에 연차 줄이 없고 experience_required에 숫자가 있으면 필수 행 추가
+    with_exp = build_input_items({**company_data, "experience_required": "5년 이상"})
+    assert with_exp[2] == {"id": "required:2", "source_item": "경력 5년 이상"} and with_exp[3]["id"] == "preferred:0", with_exp
+    assert build_input_items({**company_data, "experience_required": "경력 3~7년"})[2]["source_item"] == "경력 3~7년"
+    for no_row in ("경력", "신입", None):  # 숫자가 없으면 만들지 않는다
+        assert build_input_items({**company_data, "experience_required": no_row}) == inputs, no_row
+    has_line = {**company_data, "required_skills": ["Python 3년 이상 경력"], "experience_required": "5년 이상"}
+    assert [it["id"] for it in build_input_items(has_line)] == ["required:0", "preferred:0"], "연차 줄이 이미 있으면 안 만든다"
+    only_exp = build_input_items({"required_skills": [], "preferred_skills": ["x"], "experience_required": "3년+"})
+    assert [it["id"] for it in only_exp] == ["required:0", "preferred:0"], only_exp
+
     # 2. reconcile_judgments — 정상/누락/중복/미지 id 각각 처리
     # 서술 필드 4개(evidence_summary/evidence_source/evidence_excerpt/reason)는 스키마상
     # 전부 required라 실제 준수 응답이라면 항상 다 옴 — 픽스처도 그렇게 맞춘다.
@@ -803,11 +832,11 @@ if __name__ == "__main__":
         assert res_s["custom_criteria"] == [] and inc_s is False, (stray, res_s)
 
     broken_factors = dict(valid_factors)
-    broken_factors["career_years"] = {"status": 5, "note": "x"}  # 문자열이 아닌 status
+    broken_factors["stability"] = {"status": 5, "note": "x"}  # 문자열이 아닌 status
     del broken_factors["location"]  # 통째로 누락
     result_broken, incomplete_broken = validate_decision_factors(broken_factors)
     assert incomplete_broken is True
-    assert result_broken["career_years"]["status"] == _FALLBACK_STATUS, "비문자열 status는 그대로 노출되면 안 됨"
+    assert result_broken["stability"]["status"] == _FALLBACK_STATUS, "비문자열 status는 그대로 노출되면 안 됨"
     assert "jobplanet" not in result_broken, "잡플래닛 요인은 정규화 결과에 없다"
     assert result_broken["location"]["status"] == _FALLBACK_STATUS, "누락된 요인은 안전한 기본값으로 채워져야 함"
     # 연봉 요인은 평가에서 뺐다(2026-11-12) — 입력에 있어도 정규화 결과에 나오지 않는다
@@ -863,7 +892,6 @@ if __name__ == "__main__":
     # 6. derive_decision_factor_gaps — 조건부·미달·낮음도 gap으로 올리지 않는다(2026-11-11:
     # 비기술 요인은 고정 요약 한 줄에만 나온다). 판정 실패(확인필요)만 gap
     decision_factors = {
-        "career_years": {"status": "미달", "note": "요구 3년, 보유 1년"},
         "location": {"status": "충족", "note": "서울 일치"},
         "stability": {"status": "낮음", "note": "소규모"},
     }
@@ -878,7 +906,7 @@ if __name__ == "__main__":
     assert "잡플래닛" not in summary_line, "잡플래닛은 비기술 요인 항목이 아니라 사용자 지정 기준 줄로만 나온다"
     assert "근무지 충족" in summary_line, summary_line
     assert "연봉" not in summary_line, "연봉 요인은 요약 줄에 없다"
-    assert "경력 연수 미달" in summary_line, summary_line
+    assert "경력 연수" not in summary_line, "연차는 판정 표 행으로만 판정한다"
     assert derive_decision_factor_gaps({}) == [] and "기업 안정성" in render_decision_factors_summary({}), "누락된 키는 확인필요로 표시"
     assert "사용자 지정 평가 기준 확인필요" in summary_line, "목록이 아니면(누락) 확인필요"
     # 사용자 지정 기준은 줄마다 "줄 문구 상태"를 따로 보여준다(기준 줄이 없으면 해당없음)
@@ -963,7 +991,6 @@ if __name__ == "__main__":
              "reason": "AWS 경험 없음"},
         ],
         "decision_factors": {
-            "career_years": {"status": "충족", "note": ""},
             "location": {"status": "충족", "note": ""},
             "stability": {"status": "미확인", "note": "투자·매출 정보 없음"},
             "custom_criteria": [
