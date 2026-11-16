@@ -733,6 +733,9 @@ async def _fetch_posting(url: str) -> tuple[str, dict | None]:
         raise HTTPException(status_code=504, detail="사이트 응답 시간이 초과됐습니다 (20초). 사이트가 느리거나 접근이 차단됐을 수 있습니다.")
     except httpx.HTTPStatusError as e:
         logger.warning("공고 URL 오류 응답 %s (url=%s)", e.response.status_code, log_url)
+        if e.response.status_code in (404, 410):
+            # 내려간 공고 — 사이트 장애(5xx·접속 불가)와 구분해 410으로 돌려준다
+            raise HTTPException(status_code=410, detail=f"공고 페이지를 찾을 수 없습니다 (사이트 응답 {e.response.status_code}). 공고가 내려갔거나 마감됐을 수 있습니다. URL을 확인해주세요.")
         raise HTTPException(status_code=502, detail=f"사이트가 {e.response.status_code} 오류를 반환했습니다. URL을 확인해주세요.")
     except Exception:
         logger.exception("공고 URL 접근 중 예상 못 한 오류 (url=%s)", log_url)
@@ -899,7 +902,12 @@ async def refill_company(slug: str):
     source_url = record.frontmatter.source_url
     company = None
     if record.frontmatter.source_type == "url" and source_url:
-        raw_text, company = await _fetch_posting(source_url)
+        try:
+            raw_text, company = await _fetch_posting(source_url)
+        except HTTPException as e:
+            if e.status_code == 410:
+                raise HTTPException(status_code=410, detail="공고 페이지가 내려갔거나 마감된 것으로 보입니다. 저장된 원문과 분석은 그대로입니다.")
+            raise
         prior = latest_raw_version(slug)
         if company is None and prior and prior["company_info_id"] is not None:
             # 회사 정보를 받았던 공고인데 이번엔 기업 페이지를 못 받았다 — 기업 정보 블록이 빠진
