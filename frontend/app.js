@@ -998,7 +998,7 @@ function toggleRefitDropdown(e) {
 
 async function refillCompany() {
   document.getElementById('refit-dropdown-panel')?.classList.add('hidden');
-  if (!confirm('원문 기반으로 전체 재분석합니다. 기존 분석 내용이 덮어씌워집니다. 계속할까요?')) return;
+  if (!confirm('URL로 등록한 공고는 사이트에서 다시 받아 전체 재분석합니다. 기존 분석 내용이 덮어씌워집니다. 계속할까요?')) return;
   const btn = document.querySelector('#refit-dropdown-wrap .export-dropdown-btn');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ 재분석 중...'; }
   const slug = currentSlug;  // 요청 시점 고정 — 이유는 saveCompany() 주석 참고
@@ -1029,25 +1029,6 @@ async function refitCompany() {
     showToast('재평가 실패: ' + e.message, 'error');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '🎯 재분석 ▾'; }
-  }
-}
-
-async function syncWanted() {
-  const form = document.getElementById('edit-form');
-  const sourceUrl = form?.elements['source_url']?.value?.trim() || '';
-  if (sourceUrl && !sourceUrl.includes('wanted.co.kr')) {
-    alert('원티드 URL만 지원합니다. (wanted.co.kr)');
-    return;
-  }
-  const slug = currentSlug;
-  try {
-    const body = sourceUrl ? JSON.stringify({ source_url: sourceUrl }) : '{}';
-    const result = await api(`/companies/${encodeURIComponent(slug)}/sync-wanted`, { method: 'POST', body });
-    const updated = Object.keys(result.updated || {}).join(', ');
-    alert(`원티드 동기화 완료!\n업데이트된 항목: ${updated || '없음'}`);
-    if (currentSlug === slug) { initDetail(slug); switchTab('edit'); }
-  } catch (e) {
-    alert('동기화 실패: ' + e.message);
   }
 }
 
@@ -1449,7 +1430,7 @@ async function initCompare(slugs) {
 
   const table = document.getElementById('compare-table');
   const headerRow = `<tr><th class="row-label">항목</th>${records.map(r =>
-    `<th>${escHtml(r.frontmatter.display_name || r.frontmatter.company_name)}<br/><small>${escHtml(r.frontmatter.job_title || '')}</small></th>`
+    `<th>${escHtml(r.frontmatter.company_name)}<br/><small>${escHtml(r.frontmatter.job_title || '')}</small></th>`
   ).join('')}</tr>`;
 
   const rows = FIELDS.map(([label, fn, field]) =>

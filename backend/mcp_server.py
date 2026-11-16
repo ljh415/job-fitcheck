@@ -284,10 +284,10 @@ async def prepare_company_import(url: str | None = None, raw_text: str | None = 
             return {
                 "duplicate": True,
                 "slug": duplicate.slug,
-                "name": duplicate.frontmatter.display_name or duplicate.frontmatter.company_name,
+                "name": duplicate.frontmatter.company_name,
             }
         try:
-            text = await scraper.fetch_url_text(url)
+            text, _ = await scraper.fetch_url(url)
         except ValueError as e:
             raise ToolError(str(e))
         except httpx.TimeoutException:
@@ -311,10 +311,8 @@ async def prepare_company_import(url: str | None = None, raw_text: str | None = 
         # 다시 조회하면, 클라이언트가 평가하는 동안 프로필이 갱신된 경우 실제 평가에
         # 쓰이지 않은 새 버전과 잘못 연결된다.
         profile_version_id = companies.resolve_profile_version_id_for_eval()
-    eval_criteria = storage.read_eval_criteria().strip()
-    custom_criteria = (
-        f"\n\n## 추가 평가 기준 (사용자 지정)\n{eval_criteria}{prompts.CUSTOM_CRITERIA_BOUNDARY_NOTICE}"
-        if eval_criteria else ""
+    custom_criteria = fit_normalization.render_custom_criteria_section(
+        fit_normalization.split_criteria_lines(storage.read_eval_criteria())
     )
     workflow_id = mcp_workflow_cache.create({
         "raw_text": text,
@@ -416,7 +414,9 @@ async def prepare_fit_report(workflow_id: str, judge_result: dict, company_data:
         mcp_workflow_cache.update(workflow_id, company_data=company_data, judge_result=judge_result)
     except mcp_workflow_cache.WorkflowNotFoundError as e:
         raise ToolError(str(e))
-    normalized = fit_normalization.normalize_and_render(judge_result, company_data)
+    normalized = fit_normalization.normalize_and_render(
+        judge_result, company_data, fit_normalization.split_criteria_lines(storage.read_eval_criteria())
+    )
     return {
         # 점수·라벨은 REST 기준으로 보고서 호출이 정하도록 옮겨졌다 — MCP는 후속 작업(후순위)이라
         # 지금은 여기서 반환하지 않고, create_company도 judge_result 저장을 거부한다.
@@ -527,7 +527,7 @@ async def create_company(
             if duplicate:
                 raise ToolError(
                     f"이미 등록된 URL입니다: {duplicate.slug} "
-                    f"({duplicate.frontmatter.display_name or duplicate.frontmatter.company_name})"
+                    f"({duplicate.frontmatter.company_name})"
                 )
 
         projected = {k: v for k, v in effective_company_data.items() if k in _CREATE_COMPANY_ALLOWED_FIELDS}
@@ -541,7 +541,10 @@ async def create_company(
                 raise ToolError("judge_result가 있으면 report_prose(prepare_fit_report로 작성한 종합 의견)도 필요합니다.")
             # 클라이언트가 prepare_fit_report를 실제로 거쳤는지 서버는 신뢰할 수 없다 —
             # 저장 직전 같은 함수로 다시 정규화한다(멱등, PLAN.md §6.2/§5.3).
-            normalized = fit_normalization.normalize_and_render(judge_result, effective_company_data)
+            normalized = fit_normalization.normalize_and_render(
+                judge_result, effective_company_data,
+                fit_normalization.split_criteria_lines(storage.read_eval_criteria()),
+            )
             if "fit_score" not in normalized:
                 # REST는 점수를 보고서 호출이 정하도록 바뀌었고 MCP는 아직 맞추지 않았다(후속, 후순위).
                 raise ToolError(
@@ -552,10 +555,7 @@ async def create_company(
                 fallback_items = [
                     it["id"] for it in normalized["item_judgments"] if it.get("filled_by") == "code_fallback"
                 ]
-                fallback_factors = [
-                    k for k, v in normalized["decision_factors"].items()
-                    if v.get("status") == fit_normalization._FALLBACK_STATUS
-                ]
+                fallback_factors = fit_normalization.fallback_factor_keys(normalized["decision_factors"])
                 raise ToolError(
                     "판정이 불완전해 저장을 거부합니다 — evaluate_fit_judge를 다시 호출해 "
                     f"아래 항목을 재제출하세요. 판정 누락/무효 id: {fallback_items or '없음'}, "
@@ -589,13 +589,19 @@ async def create_company(
         slug = storage.make_slug(fm.company_name, fm.job_title or "")
         storage.write_raw_text(slug, raw_text)
         record = storage.write_company(slug, fm, final_body)
-        companies.snapshot_fit_history(slug, fm.fit_score, fm.fit_label, profile_version_id)
+        raw_version_id = None
+        try:
+            # 회사 정보 행은 만들지 않는 경로라 company_info_id는 비운다.
+            raw_version_id = companies.record_raw_version(slug, raw_text)
+        except Exception:
+            logger.exception("create_company: 공고 원문 버전 저장 실패(저장은 계속, slug=%s)", slug)
+        companies.snapshot_fit_history(slug, fm.fit_score, fm.fit_label, profile_version_id, raw_version_id)
         result = record.model_dump()
         result["next_step"] = (
-            f"저장이 완료됐습니다. 사용자에게 회사명({fm.display_name or fm.company_name})·직무({fm.job_title}), "
+            f"저장이 완료됐습니다. 사용자에게 회사명({fm.company_name})·직무({fm.job_title}), "
             f"적합도 점수({fm.fit_score}점, {fm.fit_label}), 핵심 근거 2~3가지를 요약해서 보여주세요."
             if judge_result else
-            f"저장이 완료됐습니다. 사용자에게 회사명({fm.display_name or fm.company_name})·직무({fm.job_title}) 등"
+            f"저장이 완료됐습니다. 사용자에게 회사명({fm.company_name})·직무({fm.job_title}) 등"
             " 주요 정보를 요약해서 보여주세요."
         )
     except Exception:

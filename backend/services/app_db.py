@@ -4,8 +4,11 @@
 RAG를 안 쓰는 사용자도 써야 하는 핵심 기능이라 선택 기능의 DB에 의존하지 않는다.
 세부 설계는 docs/profile-history/PLAN.md 참고.
 """
+import hashlib
+import json
 import logging
 import sqlite3
+import unicodedata
 from collections import Counter
 from contextlib import contextmanager
 from datetime import datetime
@@ -78,6 +81,11 @@ def init_db() -> None:
                 CREATE INDEX IF NOT EXISTS idx_fit_history_slug
                 ON fit_history(company_slug, created_at)
             """)
+            # 평가에 쓴 공고 원문 버전(posting_raw_versions.id) — 이미 만들어진 DB에도 대응.
+            # 이 칸이 생기기 전의 평가는 소급할 수 없어 NULL로 남는다.
+            cols = {r["name"] for r in conn.execute("PRAGMA table_info(fit_history)").fetchall()}
+            if "raw_version_id" not in cols:
+                conn.execute("ALTER TABLE fit_history ADD COLUMN raw_version_id INTEGER")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS qa_messages (
                     id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -122,6 +130,52 @@ def init_db() -> None:
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_rag_messages_chat
                 ON rag_messages(chat_id, id)
+            """)
+            # 회사별 회사 정보(기업 페이지 원본 + 평가용 컬럼). (source, source_company_id)가 유일 —
+            # 같은 회사를 다시 수집하면 그 줄을 제자리에서 덮어쓴다(이력 없음, id 유지).
+            # 공고와의 연결은 posting_raw_versions.company_info_id가 맡는다.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS company_info (
+                    id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+                    source                   TEXT NOT NULL,
+                    source_company_id        TEXT NOT NULL,
+                    company_name             TEXT,
+                    display_name             TEXT,
+                    source_url               TEXT NOT NULL,
+                    collected_at             TEXT NOT NULL,
+                    company_payload          TEXT,
+                    posting_company_payload  TEXT,
+                    employee_count           TEXT,
+                    revenue_won              INTEGER,
+                    revenue_as_of            TEXT,
+                    listing_status           TEXT,
+                    funding_stage            TEXT,
+                    funding_total            TEXT,
+                    UNIQUE (source, source_company_id)
+                )
+            """)
+            # 회사 이름 칸(기업 페이지 값)과 별칭 칸(공고에서 나온 다른 이름을 구분자로 이은 글자) —
+            # 이미 만들어진 표에도 대응(기존 줄은 NULL)
+            ci_cols = {r["name"] for r in conn.execute("PRAGMA table_info(company_info)").fetchall()}
+            for col in ("company_name", "display_name"):
+                if col not in ci_cols:
+                    conn.execute(f"ALTER TABLE company_info ADD COLUMN {col} TEXT")
+            # 공고 원문 버전 — 평가 이력이 "어느 원문으로 평가했나"를 가리키는 곳. 공고(slug)별로
+            # 원문의 해시가 최신 버전과 다를 때만 줄을 추가한다(누적). company_info_id는 어느 회사
+            # 줄인지만 가리키며(그 줄은 덮어써짐), 회사 정보를 안 받은 공고는 NULL.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS posting_raw_versions (
+                    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                    slug             TEXT NOT NULL,
+                    collected_at     TEXT NOT NULL,
+                    content_hash     TEXT NOT NULL,
+                    raw_text         TEXT NOT NULL,
+                    company_info_id  INTEGER
+                )
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_posting_raw_versions_slug
+                ON posting_raw_versions(slug, id)
             """)
             conn.commit()
         _backfill_profile_version()
@@ -284,12 +338,14 @@ def create_fit_history_entry(
     fit_score: int | None,
     fit_label: str | None,
     content: str,
+    raw_version_id: int | None = None,
 ) -> int:
-    """평가 결과를 이력에 추가한다(덮어쓰기 아님) — 최초 평가도 포함해서 매번 호출."""
+    """평가 결과를 이력에 추가한다(덮어쓰기 아님) — 최초 평가도 포함해서 매번 호출.
+    raw_version_id는 평가에 쓴 공고 원문의 버전(posting_raw_versions.id), 모르면 None."""
     with get_connection() as conn:
         cur = conn.execute(
             "INSERT INTO fit_history (company_slug, created_at, profile_version_id, "
-            "fit_score, fit_label, content) VALUES (?, ?, ?, ?, ?, ?)",
+            "fit_score, fit_label, content, raw_version_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
                 company_slug,
                 datetime.now().isoformat(timespec="seconds"),
@@ -297,6 +353,7 @@ def create_fit_history_entry(
                 fit_score,
                 fit_label,
                 content,
+                raw_version_id,
             ),
         )
         conn.commit()
@@ -339,6 +396,153 @@ def delete_fit_history_for_slug(company_slug: str) -> int:
         cur = conn.execute("DELETE FROM fit_history WHERE company_slug = ?", (company_slug,))
         conn.commit()
         return cur.rowcount
+
+
+ALIAS_SEP = "|"
+
+
+def _clean_alias(name: str | None) -> str:
+    """별칭 하나를 정리한다 — 한글 자모 조합 방식을 통일하고 앞뒤 공백을 지우며, 이름 속
+    구분자는 목록 구분이 깨지지 않게 "/"로 바꾼다."""
+    return unicodedata.normalize("NFC", name or "").replace(ALIAS_SEP, "/").strip()
+
+
+def merge_company_aliases(
+    existing: str | None, new_names: list[str | None] | None, company_name: str | None,
+) -> str | None:
+    """회사 별칭 목록(ALIAS_SEP로 이은 글자)에 새 이름을 덧붙여 돌려준다. 대표 이름
+    (company_name)과 같은 이름·이미 있는 이름·빈 이름은 붙이지 않고, 목록에 있던 대표 이름과
+    같은 항목은 뺀다. 목록이 비면 None."""
+    main = _clean_alias(company_name)
+    names: list[str] = []
+    for raw in (existing or "").split(ALIAS_SEP) + list(new_names or []):
+        name = _clean_alias(raw)
+        if name and name != main and name not in names:
+            names.append(name)
+    return ALIAS_SEP.join(names) or None
+
+
+def upsert_company_info(
+    source: str,
+    source_company_id: str,
+    source_url: str,
+    company_payload: dict | None,
+    posting_company_payload: dict | None,
+    company_name: str | None = None,
+    employee_count: str | None = None,
+    revenue_won: int | None = None,
+    revenue_as_of: str | None = None,
+    listing_status: str | None = None,
+    funding_stage: str | None = None,
+    funding_total: str | None = None,
+    aliases: list[str | None] | None = None,
+) -> int:
+    """회사(source, source_company_id)의 회사 정보 줄을 최신 값으로 덮어쓴다 — 이력은 쌓지
+    않는다. 이미 있으면 그 줄을 제자리에서 고쳐 id가 유지된다(원문 버전 줄이 이 id를 가리킨다).
+    평가용 컬럼은 받은 값만 채우고 나머지는 비운다. 별칭(display_name)만은 덮어쓰지 않고
+    기존 목록에 aliases의 새 이름을 합친다(aliases가 없으면 기존 목록 유지).
+    반환값은 그 줄의 id."""
+    def dumps(value: dict | None) -> str | None:
+        return None if value is None else json.dumps(value, ensure_ascii=False)
+
+    with get_connection() as conn:
+        existing = conn.execute(
+            "SELECT display_name FROM company_info WHERE source = ? AND source_company_id = ?",
+            (source, source_company_id),
+        ).fetchone()
+        display_name = merge_company_aliases(existing["display_name"] if existing else None, aliases, company_name)
+        conn.execute(
+            "INSERT INTO company_info (source, source_company_id, company_name, display_name, source_url, "
+            "collected_at, company_payload, posting_company_payload, employee_count, revenue_won, "
+            "revenue_as_of, listing_status, funding_stage, funding_total) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT (source, source_company_id) DO UPDATE SET "
+            "company_name = excluded.company_name, display_name = excluded.display_name, "
+            "source_url = excluded.source_url, collected_at = excluded.collected_at, "
+            "company_payload = excluded.company_payload, "
+            "posting_company_payload = excluded.posting_company_payload, "
+            "employee_count = excluded.employee_count, revenue_won = excluded.revenue_won, "
+            "revenue_as_of = excluded.revenue_as_of, listing_status = excluded.listing_status, "
+            "funding_stage = excluded.funding_stage, funding_total = excluded.funding_total",
+            (
+                source, source_company_id, company_name, display_name, source_url,
+                datetime.now().isoformat(timespec="seconds"),
+                dumps(company_payload), dumps(posting_company_payload),
+                employee_count, revenue_won, revenue_as_of, listing_status,
+                funding_stage, funding_total,
+            ),
+        )
+        row_id = conn.execute(
+            "SELECT id FROM company_info WHERE source = ? AND source_company_id = ?",
+            (source, source_company_id),
+        ).fetchone()["id"]
+        conn.commit()
+        return row_id
+
+
+def get_company_aliases(source: str, source_company_id: str) -> list[str]:
+    """회사(source, source_company_id)의 별칭 목록(display_name 칸)을 읽는다. 줄이 없거나 비면 빈 목록."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT display_name FROM company_info WHERE source = ? AND source_company_id = ?",
+            (source, source_company_id),
+        ).fetchone()
+    return [a for a in (row["display_name"] or "").split(ALIAS_SEP) if a] if row else []
+
+
+def record_raw_version(slug: str, raw_text: str, company_info_id: int | None = None) -> int:
+    """공고(slug)의 원문을 버전으로 남긴다. 원문의 SHA-256이 그 공고의 가장 최근 버전과 같으면
+    행을 추가하지 않고 그 행의 id를 반환하고, 다르면 새 행을 추가해 그 id를 반환한다.
+    company_info_id는 어느 회사 정보 행인지만 가리킨다(회사 정보를 안 받은 공고는 None)."""
+    content_hash = hashlib.sha256(raw_text.encode("utf-8")).hexdigest()
+    with get_connection() as conn:
+        latest = conn.execute(
+            "SELECT id, content_hash FROM posting_raw_versions WHERE slug = ? ORDER BY id DESC LIMIT 1",
+            (slug,),
+        ).fetchone()
+        if latest and latest["content_hash"] == content_hash:
+            return latest["id"]
+        cur = conn.execute(
+            "INSERT INTO posting_raw_versions (slug, collected_at, content_hash, raw_text, company_info_id) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (slug, datetime.now().isoformat(timespec="seconds"), content_hash, raw_text, company_info_id),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+
+def latest_raw_version(slug: str) -> dict | None:
+    """공고(slug)의 가장 최근 원문 버전 행(id, content_hash, company_info_id). 없으면 None."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT id, content_hash, company_info_id FROM posting_raw_versions "
+            "WHERE slug = ? ORDER BY id DESC LIMIT 1",
+            (slug,),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def delete_raw_versions_for_slug(slug: str) -> tuple[int, int]:
+    """공고 삭제 시 그 공고의 원문 버전 행을 지우고, 그 행들이 가리키던 회사 정보 행 중 다른
+    원문 버전 행이 더 이상 가리키지 않는 것만 지운다(회사 정보는 같은 회사의 다른 공고가 쓸 수
+    있다). 한 트랜잭션으로 처리하고 (지운 원문 버전 행 수, 지운 회사 정보 행 수)를 반환한다."""
+    with get_connection() as conn:
+        company_ids = [
+            r["company_info_id"] for r in conn.execute(
+                "SELECT DISTINCT company_info_id FROM posting_raw_versions "
+                "WHERE slug = ? AND company_info_id IS NOT NULL", (slug,),
+            )
+        ]
+        versions = conn.execute("DELETE FROM posting_raw_versions WHERE slug = ?", (slug,)).rowcount
+        companies = 0
+        for company_id in company_ids:
+            companies += conn.execute(
+                "DELETE FROM company_info WHERE id = ? AND NOT EXISTS "
+                "(SELECT 1 FROM posting_raw_versions WHERE company_info_id = ?)",
+                (company_id, company_id),
+            ).rowcount
+        conn.commit()
+        return versions, companies
 
 
 def migrate_qa_slug_history(device_id: str, company_slug: str, pairs: list[tuple[str, str]]) -> int:

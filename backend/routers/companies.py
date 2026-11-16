@@ -1,4 +1,4 @@
-"""회사 CRUD, 목록/타임라인/비교/CSV export, 원티드 동기화, 주간 요약,
+"""회사 CRUD, 목록/타임라인/비교/CSV export, 주간 요약,
 그리고 회사 추가 파이프라인(URL/텍스트/이미지 → 구조화 추출 → 잡플래닛 → 본문 → 적합도 평가 → 저장).
 
 회사 추가 흐름(_process_company)은 다음 순서로 진행된다:
@@ -22,7 +22,6 @@ import frontmatter
 import httpx
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
 
 import prompts
 from services import company_analysis, scraper
@@ -34,11 +33,16 @@ from services.app_db import (
     create_fit_history_entry,
     delete_fit_history_for_slug,
     delete_qa_history_for_slug,
+    delete_raw_versions_for_slug,
+    get_company_aliases,
     get_fit_history_entry,
     get_profile_version,
     is_healthy,
     latest_profile_version_id,
+    latest_raw_version,
     list_fit_history,
+    record_raw_version,
+    upsert_company_info,
 )
 from services.jobplanet import fetch_jobplanet_score
 from llm.base import LLMAPIError
@@ -116,19 +120,21 @@ def resolve_profile_version_id_for_eval() -> int | None:
         return None
 
 
-def snapshot_fit_history(slug: str, fit_score, fit_label, profile_version_id: int | None) -> None:
+def snapshot_fit_history(
+    slug: str, fit_score, fit_label, profile_version_id: int | None, raw_version_id: int | None = None,
+) -> None:
     """방금 저장된 회사 평가 결과를 이력(SQLite)에 추가한다 — 덮어쓰기 아니라 누적.
     mcp_server.py의 create_company도 재사용한다.
     profile_version_id는 평가에 실제로 사용한 프로필을 읽은 시점에 고정해서 전달받는다
     (평가 완료 시점에 다시 조회하면, 평가 대기 중 프로필이 바뀐 경우 엉뚱한 버전과
-    연결될 수 있다).
+    연결될 수 있다). raw_version_id는 평가에 쓴 공고 원문의 버전(posting_raw_versions.id).
     실제 평가가 있었을 때만(fit_score가 있을 때만) 기록하고, 실패해도 회사 저장 자체에는
     영향 주지 않는다."""
     if fit_score is None:
         return
     try:
         content = (settings.companies_dir / f"{slug}.md").read_text(encoding="utf-8")
-        create_fit_history_entry(slug, profile_version_id, fit_score, fit_label, content)
+        create_fit_history_entry(slug, profile_version_id, fit_score, fit_label, content, raw_version_id)
     except Exception as e:
         logger.warning("평가 이력 저장 실패: %s", e)
 
@@ -137,7 +143,7 @@ def build_fit_notification_materials(fm: CompanyFrontmatter) -> dict:
     """분석 완료 알림 재료를 사용자 알림 설정에 따라 조립한다. mcp_server.py의
     create_company도 재사용한다."""
     materials = {
-        "company": fm.display_name or fm.company_name,
+        "company": fm.company_name,
         "job_title": fm.job_title or "",
         "score": fm.fit_score if fm.fit_score is not None else "",
         "label": fm.fit_label or "",
@@ -190,7 +196,7 @@ _CSV_SCALAR_COLS = [
     "fit_score", "fit_label",
     "location", "employee_count", "stability", "investment_stage",
     "jobplanet_score", "salary_min", "salary_max", "salary_note",
-    "industry", "experience_required", "employment_type",
+    "experience_required", "employment_type",
     "salary_check", "stability_check", "location_check",
     "source_url", "created_at",
 ]
@@ -299,7 +305,7 @@ def _build_weekly_summary_materials() -> dict:
             days_elapsed = (today - last_date).days
             if days_elapsed >= _NEGLECTED_DAYS:
                 neglected.append({
-                    "name": fm.display_name or fm.company_name,
+                    "name": fm.company_name,
                     "status": fm.status,
                     "days": days_elapsed,
                 })
@@ -352,7 +358,7 @@ async def get_companies_timeline():
             continue
         results.append({
             "slug": meta.slug,
-            "display_name": fm.display_name or fm.company_name,
+            "company_name": fm.company_name,
             "job_title": fm.job_title or "",
             "status": fm.status or "미지원",
             "fit_score": fm.fit_score,
@@ -460,57 +466,14 @@ async def delete_company(slug: str):
         delete_qa_history_for_slug(slug)
     except Exception as e:
         logger.warning("삭제된 회사의 QnA 대화 기록 정리 실패 (slug=%s): %s", slug, e)
+    try:
+        # 원문 버전 행과, 그 행들만 가리키던 회사 정보 행(같은 회사의 다른 공고가 쓰면 남김).
+        delete_raw_versions_for_slug(slug)
+    except Exception as e:
+        logger.warning("삭제된 공고의 원문 버전 정리 실패 (slug=%s): %s", slug, e)
     # RAG(opt-in) 자동 재색인 — 삭제된 공고의 고아 임베딩을 prune_deleted_postings()가 정리하도록.
     trigger_reindex_background()
     return {"status": "deleted"}
-
-
-class SyncWantedRequest(BaseModel):
-    source_url: str | None = None
-
-
-@router.post("/api/companies/{slug}/sync-wanted")
-async def sync_wanted(slug: str, req: SyncWantedRequest = SyncWantedRequest()):
-    """Wanted 기업 페이지에서 구조화된 회사 정보를 가져와 frontmatter를 업데이트한다.
-    source_url을 body에 넘기면 그 URL을 사용하고, 없으면 기존 frontmatter의 source_url을 사용한다.
-    """
-    existing = storage.read_company(slug)
-    if not existing:
-        raise HTTPException(status_code=404, detail="회사를 찾을 수 없습니다.")
-
-    url = req.source_url or existing.frontmatter.source_url
-    if not url or not scraper.is_wanted_host(url):
-        raise HTTPException(status_code=400, detail="원티드 URL이 없습니다. 편집 폼에서 source_url을 먼저 입력해주세요.")
-
-    facts = await scraper.fetch_wanted_facts(url)
-    if not facts:
-        raise HTTPException(status_code=502, detail="원티드에서 기업 정보를 가져오지 못했습니다.")
-
-    fm = existing.frontmatter
-    if req.source_url:
-        fm.source_url = req.source_url
-        fm.source_type = "url"
-
-    if facts["employee_count"]:
-        fm.employee_count = facts["employee_count"]
-    if facts["employee_count_meets_threshold"] is not None:
-        fm.employee_count_meets_threshold = facts["employee_count_meets_threshold"]
-    if facts["website"]:
-        fm.website = facts["website"]
-    if facts["location"] and not fm.location:
-        fm.location = facts["location"]
-    if facts["investment_stage"]:
-        fm.investment_stage = facts["investment_stage"]
-    if facts["stability"]:
-        fm.stability = facts["stability"]
-    if facts["revenue_status"]:
-        fm.revenue_status = facts["revenue_status"]
-
-    record = storage.write_company(slug, fm, existing.body)
-    updated_keys = [k for k, v in facts.items() if v is not None]
-    logger.info("원티드 동기화: %s → 업데이트 필드: %s", slug, updated_keys)
-    trigger_reindex_background()  # RAG가 복제하는 stability/employee_count 등 갱신, RAG 꺼져 있으면 no-op
-    return {"status": "ok", "updated": {k: v for k, v in facts.items() if v is not None}}
 
 
 # ── 본문 섹션 유틸 ───────────────────────────────────────────────────────────
@@ -581,6 +544,7 @@ async def _process_company(
     preserve_fm: CompanyFrontmatter | None = None,
     preserved_log_entries: list[dict] | None = None,
     snapshot: LLMSnapshot | None = None,
+    company_info: dict | None = None,
 ) -> CompanyRecord:
     """텍스트 → 추출 → 잡플래닛 조회 → 본문 생성 → 적합도 평가 → 저장.
 
@@ -624,8 +588,14 @@ async def _process_company(
     if not extracted.get("display_name"):
         extracted["display_name"] = extracted.get("company_name") or ""
 
+    # 회사 페이지에서 받은 값은 AI가 뽑은 값을 덮어쓴다(받은 값이 있을 때만). 덮어쓰기 전 AI 이름은
+    # 같은 회사의 다른 이름(별칭)으로 company_info에 남긴다.
+    ai_names = [extracted.get("company_name"), extracted.get("display_name")]
+    scraper.apply_company_page_values(extracted, company_info)
+
     # 2. 잡플래닛 평점 조회 (refill 시 기존 점수 있으면 재사용, 없으면 스크래핑)
-    company_name_for_jp = extracted.get("display_name") or extracted.get("company_name", "")
+    # 저장 회사명으로 검색한다 — 표시 이름은 영문 브랜드(SWING)일 수 있어 잡플래닛 등록명(더스윙)과 안 맞는다
+    company_name_for_jp = extracted.get("company_name") or extracted.get("display_name", "")
     if company_name_for_jp:
         existing_jp_score = None
         existing_jp_review = None
@@ -644,11 +614,18 @@ async def _process_company(
             logger.info("[2/4] 잡플래닛 기존값 재사용: %.1f점", existing_jp_score)
         else:
             logger.info("[2/4] 잡플래닛 조회: %s", company_name_for_jp)
-            jp = await fetch_jobplanet_score(company_name_for_jp)
+            # 같은 회사로 아는 다른 이름(덮어쓰기 전 AI 이름 + 이미 저장된 별칭)도 답 검증에서 인정한다.
+            jp_known_names = list(ai_names)
+            if company_info:
+                try:
+                    jp_known_names += get_company_aliases(company_info["source"], company_info["source_company_id"])
+                except Exception as e:
+                    logger.warning("회사 별칭 읽기 실패 — 잡플래닛 조회는 아는 이름 없이 진행 (%s)", e)
+            jp = await fetch_jobplanet_score(company_name_for_jp, jp_known_names)
             if jp.score is not None:
                 extracted["jobplanet_score"] = jp.score
                 extracted["jobplanet_review_count"] = jp.review_count
-                logger.info("[2/4] 잡플래닛 결과: %.1f점 (%d건)", jp.score, jp.review_count or 0)
+                logger.info("[2/4] 잡플래닛 결과: %.1f점 (%d건, %s)", jp.score, jp.review_count or 0, jp.source)
             else:
                 logger.info("[2/4] 잡플래닛 결과: %s", jp.source)
 
@@ -714,7 +691,21 @@ async def _process_company(
     slug = existing_slug or storage.make_slug(fm.company_name, fm.job_title or "")
     storage.write_raw_text(slug, raw_text)
     record = storage.write_company(slug, fm, body)
-    snapshot_fit_history(slug, fm.fit_score, fm.fit_label, profile_version_id_at_eval)
+    # 회사 정보 → 원문 버전 → 평가 이력 순서: 원문 버전 행이 회사 정보 행의 id를 가리키고,
+    # 평가 이력이 원문 버전 행을 가리켜야 해서 앞쪽이 먼저 저장돼야 한다.
+    company_info_id = None
+    if company_info:
+        # 기업 페이지 원본 보관 — 실패해도 등록은 계속한다(핵심 기능이 아니다).
+        try:
+            company_info_id = upsert_company_info(**company_info, aliases=ai_names)
+        except Exception as e:
+            logger.warning("회사 정보 저장 실패 (slug=%s): %s", slug, e)
+    raw_version_id = None
+    try:
+        raw_version_id = record_raw_version(slug, raw_text, company_info_id)
+    except Exception as e:
+        logger.warning("공고 원문 버전 저장 실패 (slug=%s): %s", slug, e)
+    snapshot_fit_history(slug, fm.fit_score, fm.fit_label, profile_version_id_at_eval, raw_version_id)
 
     materials = build_fit_notification_materials(fm)
     await send_notification(materials)
@@ -722,6 +713,33 @@ async def _process_company(
     # RAG가 꺼져 있으면 즉시 아무 일도 안 함(4번 "데이터 동기화" 항목).
     trigger_reindex_background()
     return record
+
+
+async def _fetch_posting(url: str) -> tuple[str, dict | None]:
+    """공고 URL을 사이트에서 받아 (원문, 회사 정보)를 돌려준다. 실패하면 HTTPException."""
+    log_url = url.split("?")[0]
+    try:
+        return await scraper.fetch_url(url)
+    except scraper.SSRFBlockedError as e:
+        # 서버가 내부망·자기 자신으로 접속하게 만들려는 주소 — 평범한 거부와 달리 눈에 띄게 남긴다
+        logger.warning("내부 주소 접근 차단 (url=%s): %s", log_url, e)
+        raise HTTPException(status_code=422, detail=str(e))
+    except ValueError as e:
+        # JS 렌더링 필요 — 텍스트 붙여넣기 유도
+        logger.info("공고 URL 읽기 거부 (url=%s): %s", log_url, e)
+        raise HTTPException(status_code=422, detail=str(e))
+    except httpx.TimeoutException:
+        logger.warning("공고 URL 응답 시간 초과 (url=%s)", log_url)
+        raise HTTPException(status_code=504, detail="사이트 응답 시간이 초과됐습니다 (20초). 사이트가 느리거나 접근이 차단됐을 수 있습니다.")
+    except httpx.HTTPStatusError as e:
+        logger.warning("공고 URL 오류 응답 %s (url=%s)", e.response.status_code, log_url)
+        if e.response.status_code in (404, 410):
+            # 내려간 공고 — 사이트 장애(5xx·접속 불가)와 구분해 410으로 돌려준다
+            raise HTTPException(status_code=410, detail=f"공고 페이지를 찾을 수 없습니다 (사이트 응답 {e.response.status_code}). 공고가 내려갔거나 마감됐을 수 있습니다. URL을 확인해주세요.")
+        raise HTTPException(status_code=502, detail=f"사이트가 {e.response.status_code} 오류를 반환했습니다. URL을 확인해주세요.")
+    except Exception:
+        logger.exception("공고 URL 접근 중 예상 못 한 오류 (url=%s)", log_url)
+        raise HTTPException(status_code=502, detail="URL 접근 실패: 네트워크 연결 오류. URL을 다시 확인해주세요.")
 
 
 @router.post("/api/companies/from-url")
@@ -737,22 +755,14 @@ async def add_from_url(req: FromUrlRequest):
             status_code=409,
             detail={
                 "slug": duplicate.slug,
-                "name": duplicate.frontmatter.display_name or duplicate.frontmatter.company_name,
+                "name": duplicate.frontmatter.company_name,
             },
         )
+    raw_text, company = await _fetch_posting(req.url)
     try:
-        raw_text = await scraper.fetch_url_text(req.url)
-    except ValueError as e:
-        # JS 렌더링 필요 — 텍스트 붙여넣기 유도
-        raise HTTPException(status_code=422, detail=str(e))
-    except httpx.TimeoutException:
-        raise HTTPException(status_code=504, detail="사이트 응답 시간이 초과됐습니다 (20초). 사이트가 느리거나 접근이 차단됐을 수 있습니다.")
-    except httpx.HTTPStatusError as e:
-        raise HTTPException(status_code=502, detail=f"사이트가 {e.response.status_code} 오류를 반환했습니다. URL을 확인해주세요.")
-    except Exception:
-        raise HTTPException(status_code=502, detail="URL 접근 실패: 네트워크 연결 오류. URL을 다시 확인해주세요.")
-    try:
-        return await asyncio.wait_for(_process_company(raw_text, "url", req.url), timeout=300)
+        return await asyncio.wait_for(
+            _process_company(raw_text, "url", req.url, company_info=company), timeout=300,
+        )
     except asyncio.TimeoutError:
         raise HTTPException(status_code=504, detail="분석 시간이 초과되었습니다 (300초). 잠시 후 다시 시도해주세요.")
     except LLMAPIError as e:
@@ -882,18 +892,41 @@ async def add_manual(req: ManualCompanyRequest):
 @router.post("/api/companies/{slug}/refill")
 @_track_in_progress
 async def refill_company(slug: str):
-    """저장된 원문으로 회사 정보를 전체 재분석한다 (구조화 추출 → 잡플래닛 → 본문 → 적합도).
-    원문이 없는 기존 항목은 마크다운 본문으로 폴백한다."""
+    """공고를 전체 재분석한다 (구조화 추출 → 잡플래닛 → 본문 → 적합도).
+    URL로 등록한 공고는 사이트에서 공고 글과 회사 정보를 다시 받아 쓰고(받기에 실패하면 아무것도
+    바꾸지 않는다), 그 밖의 항목은 저장된 원문(없으면 마크다운 본문)을 쓴다."""
     record = storage.read_company(slug)
     if not record:
         raise HTTPException(status_code=404, detail="회사를 찾을 수 없습니다.")
     raw_text = storage.read_raw_text(slug) or record.body
     source_url = record.frontmatter.source_url
+    company = None
+    if record.frontmatter.source_type == "url" and source_url:
+        try:
+            raw_text, company = await _fetch_posting(source_url)
+        except HTTPException as e:
+            if e.status_code == 410:
+                raise HTTPException(status_code=410, detail="공고 페이지가 내려갔거나 마감된 것으로 보입니다. 저장된 원문과 분석은 그대로입니다.")
+            raise
+        if company is None:
+            # 이전 회사 정보 유무는 기업 페이지를 못 받았을 때만 필요하다(받았으면 DB를 읽지 않는다).
+            try:
+                prior = latest_raw_version(slug)
+            except Exception:
+                # 이력 DB를 못 읽으면 과거에 회사 정보가 있었는지 알 수 없다 — 덮어쓰지 않고 중단
+                logger.exception("원문 버전 조회 실패로 재분석을 건너뜀 (slug=%s)", slug)
+                raise HTTPException(status_code=503, detail="이력 DB를 읽지 못해 재분석하지 않았습니다. 기존 값은 그대로입니다.")
+            if prior and prior["company_info_id"] is not None:
+                # 회사 정보를 받았던 공고인데 이번엔 기업 페이지를 못 받았다 — 기업 정보 블록이 빠진
+                # 원문으로 덮어쓰면 오히려 정보가 줄어든다.
+                logger.warning("기업 페이지를 받지 못해 재분석을 건너뜀 (slug=%s)", slug)
+                raise HTTPException(status_code=502, detail="기업 페이지를 가져오지 못해 재분석하지 않았습니다. 기존 값은 그대로입니다.")
     preserved_log_entries = _parse_status_log(record.body, slug=slug)
     try:
         return await _process_company(
             raw_text, record.frontmatter.source_type, source_url, existing_slug=slug,
             preserve_fm=record.frontmatter, preserved_log_entries=preserved_log_entries,
+            company_info=company,
         )
     except LLMAPIError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e))
@@ -935,7 +968,16 @@ async def refit_company(slug: str):
     profile_text = storage.strip_scoring_excluded(storage.read_profile_text() or "")
     # 이 프로필을 실제로 읽은 시점의 스냅샷 id를 고정 (이유는 resolve_profile_version_id_for_eval 참고)
     profile_version_id_at_eval = resolve_profile_version_id_for_eval()
-    raw_text = prompts.escape_tag_chars(storage.read_raw_text(slug) or record.body)
+    raw_source = storage.read_raw_text(slug) or record.body
+    raw_text = prompts.escape_tag_chars(raw_source)
+    # 이 원문을 읽은 시점에 원문 버전도 고정한다(프로필 버전과 같은 이유). 원문이 그 공고의 최신
+    # 버전과 같으면 행이 늘지 않고, 다르거나 버전 행이 아직 없던 공고면 새 행이 생긴다.
+    raw_version_id = None
+    try:
+        latest = latest_raw_version(slug)
+        raw_version_id = record_raw_version(slug, raw_source, latest["company_info_id"] if latest else None)
+    except Exception as e:
+        logger.warning("공고 원문 버전 저장 실패 (slug=%s): %s", slug, e)
     # 이전 평가 결과(strengths/gaps/fit_score 등)는 LLM 입력에서 제외 — 자기참조 편향 방지.
     # item_judgments/decision_factors/evaluation_incomplete도 같은 이유로 제외한다 —
     # 적합도 평가 구조 개편(docs/fit-eval-structural-redesign/PLAN.md)의 1단계 중간
@@ -968,6 +1010,6 @@ async def refit_company(slug: str):
     body = append_status_log(body, "적합도 재평가 완료")
 
     record = storage.write_company(slug, fm, body)
-    snapshot_fit_history(slug, fm.fit_score, fm.fit_label, profile_version_id_at_eval)
+    snapshot_fit_history(slug, fm.fit_score, fm.fit_label, profile_version_id_at_eval, raw_version_id)
     trigger_reindex_background()  # RAG가 복제하는 fit_score/strengths/gaps 갱신, RAG 꺼져 있으면 no-op
     return record

@@ -4,6 +4,7 @@ provider(Claude/OpenAI/Gemini) 공통으로 담당해, 각 provider가 같은 �
 구현하지 않게 한다."""
 import json
 import logging
+import re
 
 import prompts
 
@@ -39,7 +40,52 @@ def build_input_items(company_data: dict) -> list[dict]:
             else:
                 items.append({"id": f"{prefix}:{n}", "source_item": entry})
                 n += 1
+    _add_experience_row(items, company_data)
     return items
+
+
+# 연차는 판정 표 행 한 곳에서만 판정한다(2026-11-14). 필수 요건 줄 중에 연차가 적힌 줄이 없으면
+# 따로 추출된 experience_required("5년 이상" 등)로 필수 행 하나를 만든다. 연차 줄이 없는 공고도
+# 판정을 받게 하려는 것이고, 값이 "신입"·"경력"처럼 숫자가 없으면 만들지 않는다.
+_YEAR_RE = re.compile(r"\d+\s*년|연차")
+
+
+def _add_experience_row(items: list[dict], company_data: dict) -> None:
+    exp = company_data.get("experience_required")
+    if not isinstance(exp, str) or not _YEAR_RE.search(exp):
+        return
+    required = [it for it in items if it["id"].startswith("required:")]
+    if any(_YEAR_RE.search(str(it["source_item"])) for it in required):
+        return
+    row = {"id": f"required:{len(required)}", "source_item": exp if "경력" in exp else f"경력 {exp}"}
+    last = max((i for i, it in enumerate(items) if it["id"].startswith("required:")), default=-1)
+    items.insert(last + 1, row)
+
+
+# 줄 앞의 목록 기호("- ", "* ", "• ", "1. ", "2) ")만 뗀다. 뒤에 공백이 있을 때만 — "3.0점 이상"이나
+# "**굵게**"의 앞부분을 기호로 오인해 자르지 않기 위해서다. 떼는 이유는 모델 이해가 아니라
+# 요약 줄에 줄 문구가 그대로 나오기 때문(2026-11-11).
+_LIST_MARKER_RE = re.compile(r"^(?:[-*•]|\d+[.)])\s+")
+
+
+def split_criteria_lines(text: str) -> list[str]:
+    """사용자 지정 평가 기준 원문을 판정 단위 줄 목록으로 나눈다. 빈 줄과 `#` 제목 줄은 뺀다.
+    줄글로 쓰여 줄바꿈이 없으면 줄이 하나라 지금처럼 한 번에 판정된다."""
+    lines = []
+    for raw in (text or "").splitlines():
+        line = _LIST_MARKER_RE.sub("", raw.strip(), count=1).strip()
+        if line and not line.startswith("#"):
+            lines.append(line)
+    return lines
+
+
+def render_custom_criteria_section(criteria_lines: list[str]) -> str:
+    """판정 호출 사용자 메시지에 붙일 번호 목록(`- criteria:N: 줄`) + 권한 안내문. 줄이 없으면 빈 문자열.
+    id 형식은 `_reconcile_custom_criteria`가 판정을 맞출 때 쓰는 `criteria:N`과 같아야 한다."""
+    if not criteria_lines:
+        return ""
+    listing = "\n".join(f"- criteria:{i}: {line}" for i, line in enumerate(criteria_lines))
+    return f"\n\n## 추가 평가 기준 (사용자 지정)\n{listing}{prompts.CUSTOM_CRITERIA_BOUNDARY_NOTICE}"
 
 
 def _code_fallback(item_id: str, source_item: str) -> dict:
@@ -206,39 +252,67 @@ def safe_fit_score(raw_score) -> tuple[int | None, bool]:
     return max(0, min(100, raw_score)), False
 
 
-_DECISION_FACTOR_KEYS = ("career_years", "location", "stability", "jobplanet", "salary", "custom_criteria")
+_DECISION_FACTOR_KEYS = ("location", "stability", "custom_criteria")
 # validate_decision_factors()가 fallback에 채우는 status 표식 — derive_decision_factor_gaps()가
 # 이 값을 보고 "판정 실패"임을 알아채 gaps에 노출한다(두 함수가 문자열을
 # 각자 하드코딩하면 한쪽만 바뀔 때 조용히 어긋나므로 상수 하나로 공유).
 _FALLBACK_STATUS = "확인필요"
-# 이 status인 요인이 gaps로 파생된다(프롬프트 [decision_factors 판정]이 같은 어휘를 지시).
-_PROBLEM_STATUS = ("조건부", "미달", "낮음")
+# custom_criteria(사용자 지정 기준)는 한 요인이 아니라 기준 줄마다 판정 하나씩의 목록이다
+# (2026-11-11 — 한 상태로 묶으면 "서울 충족 + 규모 정보 없음"을 표현할 수 없어 조건부로 뭉개졌다).
+_SIMPLE_FACTOR_KEYS = tuple(k for k in _DECISION_FACTOR_KEYS if k != "custom_criteria")
+_CUSTOM_STATUS_VALUES = ("충족", "미달", "미확인")
 
-# 구 CompanyFrontmatter salary_check/stability_check(Pydantic Literal)와 같은 어휘 —
+# 구 CompanyFrontmatter stability_check(Pydantic Literal)와 같은 어휘 —
 # validate_decision_factors()의 enum 검증과 derive_legacy_checks()의 매핑 양쪽에서 쓴다.
-# location은 여기 포함하지 않는다 — 프롬프트가 salary/stability처럼 짧은 고정 어휘를
+# location은 여기 포함하지 않는다 — 프롬프트가 stability처럼 짧은 고정 어휘를
 # 지시하지 않고("근무지 — 후보자 선호 위치가 설정된 경우만 반영") "정보없음"/"해당없음"
 # 등도 정상값일 수 있어서, enum으로 좁히면 정상 케이스까지 판정 실패로 오분류할 위험이
 # 있다(2026-09-02 7차 리뷰에서 시도했다가 위험성 확인 후 되돌림 — 별도 제품 결정 필요).
-_SALARY_CHECK_VALUES = {"양호", "미확인", "낮음"}
-_STABILITY_CHECK_VALUES = {"충족", "조건부", "미달"}
-_STATUS_ENUM_BY_KEY = {"salary": _SALARY_CHECK_VALUES, "stability": _STABILITY_CHECK_VALUES}
+_STABILITY_CHECK_VALUES = {"충족", "조건부", "미달", "미확인"}
+_STATUS_ENUM_BY_KEY = {"stability": _STABILITY_CHECK_VALUES}
 
 
-def validate_decision_factors(decision_factors: dict) -> tuple[dict, bool]:
-    """decision_factors의 6개 요인이 전부 존재하고 `status`/`note`가 문자열인지,
-    salary/stability는 status가 구 필드와 같은 enum인지 검증한다(2026-09-01 2차
+def _reconcile_custom_criteria(llm_entries, criteria_lines: list[str]) -> tuple[list[dict], bool]:
+    """사용자 지정 기준 줄(criteria_lines)마다 판정 하나를 `criteria:N` id로 맞춘다.
+    reconcile_judgments()와 같은 방식 — 판정이 없거나 status가 어휘 밖이면 그 줄만
+    fallback(확인필요)으로 채우고 incomplete로 표시한다. 줄 문구(source_item)는 코드가
+    입력에서 채우므로 LLM이 바꿀 수 없다. 모르는 id는 버리고 중복 id는 첫 번째만 쓴다.
+    기준 줄이 없으면 LLM이 무엇을 돌려줬든 빈 목록이다."""
+    by_id = {}
+    if isinstance(llm_entries, list):
+        for e in llm_entries:
+            if isinstance(e, dict) and isinstance(e.get("id"), str):
+                by_id.setdefault(e["id"], e)
+    result, incomplete = [], False
+    for i, line in enumerate(criteria_lines):
+        cid = f"criteria:{i}"
+        e = by_id.get(cid)
+        if e and e.get("status") in _CUSTOM_STATUS_VALUES and isinstance(e.get("note"), str):
+            result.append({"id": cid, "source_item": line, "status": e["status"], "note": e["note"]})
+        else:
+            logger.warning("validate_decision_factors: %s 누락 또는 status/note 유효하지 않음 — raw=%r", cid, e)
+            result.append({"id": cid, "source_item": line, "status": _FALLBACK_STATUS,
+                           "note": "시스템이 이 기준을 판정하지 못함"})
+            incomplete = True
+    return result, incomplete
+
+
+def validate_decision_factors(decision_factors: dict, criteria_lines: list[str] | None = None) -> tuple[dict, bool]:
+    """decision_factors의 5개 단일 요인이 전부 존재하고 `status`/`note`가 문자열인지,
+    stability는 status가 구 필드와 같은 enum인지 검증한다(2026-09-01 2차
     리뷰, 2026-09-02 4·5차 리뷰 반영). 위반 시 안전한 기본값(확인 필요 status·note)
     으로 교체한 뒤 incomplete로 표시한다. 최상위 `decision_factors` 자체가
     dict가 아니면(provider가 list/문자열/숫자를 반환하는 등) `.get()` 호출이
     `AttributeError`로 죽어 1단계 LLM 호출 비용만 쓰고 평가 전체가 예외로
-    끝나는 것을 막기 위해 먼저 빈 dict로 정규화한다(5차 리뷰 반영)."""
+    끝나는 것을 막기 위해 먼저 빈 dict로 정규화한다(5차 리뷰 반영).
+    사용자 지정 기준(custom_criteria)은 criteria_lines의 줄마다 하나씩 맞춘다
+    (`_reconcile_custom_criteria`)."""
     if not isinstance(decision_factors, dict):
         logger.warning("validate_decision_factors: 최상위 타입이 dict 아님 — raw=%r", decision_factors)
         decision_factors = {}
     result = {}
     incomplete = False
-    for key in _DECISION_FACTOR_KEYS:
+    for key in _SIMPLE_FACTOR_KEYS:
         factor = decision_factors.get(key)
         allowed_status = _STATUS_ENUM_BY_KEY.get(key)
         if (
@@ -252,7 +326,10 @@ def validate_decision_factors(decision_factors: dict) -> tuple[dict, bool]:
             incomplete = True
         else:
             result[key] = factor
-    return result, incomplete
+    result["custom_criteria"], custom_incomplete = _reconcile_custom_criteria(
+        decision_factors.get("custom_criteria"), criteria_lines or []
+    )
+    return result, incomplete or custom_incomplete
 
 
 _VERDICT_TEXT = {"met": "충족", "unmet": "미충족", "unclear": "불명확", "verify": "확인 필요"}
@@ -285,16 +362,9 @@ def derive_gaps_strengths(items: list[dict]) -> tuple[list[str], list[str]]:
 
 
 _DECISION_FACTOR_LABELS = {
-    "career_years": "경력 연수",
     "location": "근무지",
     "stability": "기업 안정성",
-    "jobplanet": "잡플래닛 평점",
     "custom_criteria": "사용자 지정 평가 기준",
-    # salary는 정상 판정이면 절대 gap으로 파생 안 됨(기존 규칙: 연봉은 감점 근거로
-    # 안 씀, 아래 루프에서 스킵됨) — 다만 fallback인
-    # 경우까지 숨으면 안 되므로 맵에는 포함시킨다(2026-09-02 브랜치 전체 리뷰 반영,
-    # b632c66에서 salary만 빠뜨렸던 걸 발견).
-    "salary": "연봉",
 }
 
 
@@ -308,51 +378,72 @@ def render_decision_factors_summary(decision_factors: dict) -> str:
     기준이 실제로는 정확히 판정됐는데 산문에서 빠져 있었음). LLM에게 "언급하라"고
     시키는 대신 이미 계산된 값을 코드가 그대로 이어붙인다 — 추가 LLM 호출이나
     입력 토큰 증가 없이(decision_factors는 이미 2단계 프롬프트에 통째로 들어가
-    있음) 판정 여부가 매번 똑같은 형식으로 노출되게 한다."""
-    parts = [
-        f"{label} {(decision_factors.get(key) or {}).get('status') or '확인필요'}"
-        for key, label in _DECISION_FACTOR_LABELS.items()
-    ]
+    있음) 판정 여부가 매번 똑같은 형식으로 노출되게 한다. 비기술 요인은 gaps에
+    올리지 않으므로(2026-11-11 결정) 이 한 줄이 화면에서 비기술 요인이 나오는 유일한 곳이다."""
+    parts = []
+    for key, label in _DECISION_FACTOR_LABELS.items():
+        factor = decision_factors.get(key)
+        if key == "custom_criteria":
+            # 기준 줄마다 "줄 문구 상태"를 따로 보여준다(합치지 않음). 줄이 없으면 해당없음.
+            if not isinstance(factor, list):
+                parts.append(f"{label} {_FALLBACK_STATUS}")
+            elif not factor:
+                parts.append(f"{label} 해당없음")
+            else:
+                parts += [f"{e.get('source_item', '')} {e.get('status') or _FALLBACK_STATUS}"
+                          for e in factor if isinstance(e, dict)]
+        else:
+            parts.append(f"{label} {(factor or {}).get('status') or _FALLBACK_STATUS}")
     return "**비기술 요인**: " + " · ".join(parts)
 
 
-def derive_decision_factor_gaps(decision_factors: dict, company_data: dict | None = None) -> list[str]:
-    """decision_factors에서 gaps 문자열을 파생한다. status가 `_PROBLEM_STATUS`
-    (조건부·미달·낮음)인 요인만 gap으로 포함한다. 잡플래닛은 점수가 있으면 LLM status가
-    아니라 점수(3.0 미만)로 정해 LLM이 임계값을 놓쳐도 위험 신호가 사라지지 않게 한다.
-    `salary`는 fallback이 아닌 이상 절대 파생되지 않는다(기존 규칙: 연봉은 감점 근거로
-    안 씀).
-
-    validate_decision_factors()의 fallback도 "판정 실패"와 "정상이라 문제없음"이
-    구분 안 돼 리포트에서 조용히 사라지는 걸 막기 위해(2026-09-02, 실제 refit 결과에서
-    stability 판정 실패가 리포트에 전혀 안 보이는 문제를 Codex 교차검증으로 발견),
-    status가 fallback 표식(_FALLBACK_STATUS)이면 "(확인필요)" gap으로 노출한다.
-    salary도 이 fallback 노출 대상에는 포함된다."""
-    jobplanet_score = (company_data or {}).get("jobplanet_score")
-    has_score = isinstance(jobplanet_score, (int, float)) and not isinstance(jobplanet_score, bool)
+def derive_decision_factor_gaps(decision_factors: dict) -> list[str]:
+    """판정에 실패한(status가 `_FALLBACK_STATUS`) 비기술 요인만 "(확인필요)" gap으로 노출한다.
+    판정 실패와 "정상이라 문제없음"이 구분 안 돼 리포트에서 조용히 사라지는 걸 막기 위해
+    (2026-09-02, 실제 refit 결과에서 stability 판정 실패가 리포트에 전혀 안 보이는 문제를
+    Codex 교차검증으로 발견) 남겨 둔 것이다. 조건부·미달·낮음 판정은 gaps로 올리지 않는다 —
+    비기술 요인은 고정 요약 한 줄(render_decision_factors_summary)에만 나온다(2026-11-11
+    결정; 이전엔 요인마다 gap 한 줄씩 올라와 필수·우대 요건 갭과 섞였다). 사용자 지정 기준은
+    줄마다 하나씩 노출한다."""
     gaps = []
     for key, label in _DECISION_FACTOR_LABELS.items():
-        factor = decision_factors.get(key) or {}
-        status = factor.get("status", "")
-        note = factor.get("note", "")
-        if status == _FALLBACK_STATUS:
-            gaps.append(f"(확인필요) {label} - {note}")
-            continue
-        if key == "salary":
-            continue
-        if key == "jobplanet" and has_score:
-            if jobplanet_score >= 3.0:
-                continue
-            status = status if status in _PROBLEM_STATUS else "미달"
-        elif status not in _PROBLEM_STATUS:
-            continue
-        gaps.append(f"({status}) {label} - {note}")
+        factor = decision_factors.get(key)
+        if key == "custom_criteria":
+            for e in factor if isinstance(factor, list) else []:
+                if isinstance(e, dict) and e.get("status") == _FALLBACK_STATUS:
+                    gaps.append(f"(확인필요) {label} - {e.get('source_item', '')}: {e.get('note', '')}")
+        elif isinstance(factor, dict) and factor.get("status") == _FALLBACK_STATUS:
+            gaps.append(f"(확인필요) {label} - {factor.get('note', '')}")
     return gaps
 
 
+def fallback_factor_keys(decision_factors: dict) -> list[str]:
+    """판정에 실패한(status가 `_FALLBACK_STATUS`) 비기술 요인 이름 목록 — MCP가 저장 거부 메시지에
+    쓴다. 사용자 지정 기준은 줄 id까지 `custom_criteria:criteria:N`으로 돌려준다."""
+    keys = []
+    for key in _DECISION_FACTOR_KEYS:
+        factor = decision_factors.get(key)
+        if key == "custom_criteria":
+            keys += [f"{key}:{e.get('id')}" for e in factor if isinstance(e, dict) and e.get("status") == _FALLBACK_STATUS] \
+                if isinstance(factor, list) else []
+        elif isinstance(factor, dict) and factor.get("status") == _FALLBACK_STATUS:
+            keys.append(key)
+    return keys
+
+
+def render_custom_criteria_for_score(entries) -> str:
+    """점수 호출 입력의 `### 사용자 지정 평가 기준(사용자의 지시)` 구역 본문. 줄마다
+    `- 줄 문구: 상태 — note`, 줄이 없으면 `(없음)`. 사용자 기준을 비기술 요인 JSON(기존 분석 결과로
+    취급돼 지시로 안 읽힘)과 분리해 사용자의 지시로 보여주기 위한 것이다(2026-11-11)."""
+    rows = [f"- {e.get('source_item', '')}: {e.get('status')} — {e.get('note', '')}"
+            for e in (entries if isinstance(entries, list) else []) if isinstance(e, dict)]
+    return "\n".join(rows) if rows else "(없음)"
+
+
 def derive_legacy_checks(decision_factors: dict) -> dict:
-    """decision_factors → 구 CompanyFrontmatter 필드(salary_check/stability_check/
-    location_check) 매핑. CSV 내보내기·MCP 계약 하위 호환용(4번 열린 질문, 결정:
+    """decision_factors → 구 CompanyFrontmatter 필드(stability_check/location_check) 매핑.
+    salary_check는 연봉 요인을 평가에서 뺀 뒤(2026-11-12) 항상 None으로 비운다 — 재평가가
+    `model_copy(update=…)`로 필드를 덮어쓰므로 옛 값이 남지 않게 키는 유지한다. CSV 내보내기·MCP 계약 하위 호환용(4번 열린 질문, 결정:
     B — decision_factors로 대체하지 않고 계속 채운다). status는 프롬프트가 이미
     이 구 필드들과 같은 어휘로 채우도록 지시돼 있으므로(EVALUATE_FIT_JUDGE_SYSTEM
     [decision_factors 판정]) 그대로 옮기되, enum을 벗어나면 버린다(salary_check/
@@ -360,11 +451,10 @@ def derive_legacy_checks(decision_factors: dict) -> dict:
     validate_decision_factors()가 status를 문자열로 보장하지만(4차 리뷰 반영),
     이 함수 자체도 비문자열 status가 들어와도 안전하도록 isinstance로 한 번 더
     막는다(set 멤버십 검사에 dict 등 unhashable 값이 들어오면 TypeError)."""
-    salary_status = (decision_factors.get("salary") or {}).get("status")
     stability_status = (decision_factors.get("stability") or {}).get("status")
     location_status = (decision_factors.get("location") or {}).get("status")
     return {
-        "salary_check": salary_status if isinstance(salary_status, str) and salary_status in _SALARY_CHECK_VALUES else None,
+        "salary_check": None,
         "stability_check": stability_status if isinstance(stability_status, str) and stability_status in _STABILITY_CHECK_VALUES else None,
         "location_check": location_status if isinstance(location_status, str) and location_status else None,
     }
@@ -432,7 +522,7 @@ def render_judgment_table_text(items: list[dict]) -> str:
     return "\n".join(lines) or "(판정 항목 없음)"
 
 
-def normalize_and_render(judge_result: dict, company_data: dict) -> dict:
+def normalize_and_render(judge_result: dict, company_data: dict, criteria_lines: list[str] | None = None) -> dict:
     """1단계 판정 원본(judge_result)과 company_data를 받아, 이 파일의 정규화
     함수 전부를 정해진 순서로 실행한 뒤 결정론적 산출물을 한 번에 반환한다.
 
@@ -460,9 +550,9 @@ def normalize_and_render(judge_result: dict, company_data: dict) -> dict:
     gaps, strengths = derive_gaps_strengths(normalized)
 
     decision_factors, factors_incomplete = validate_decision_factors(
-        judge_result.get("decision_factors") or {}
+        judge_result.get("decision_factors") or {}, criteria_lines
     )
-    gaps = gaps + derive_decision_factor_gaps(decision_factors, company_data)
+    gaps = gaps + derive_decision_factor_gaps(decision_factors)
 
     # 점수·라벨은 여기서 정하지 않는다 — 표를 정리한 뒤 보고서 호출이 표 전체를 보고
     # 점수를 정하고(prompts.EVALUATE_FIT_REPORT_TOOL_SCHEMA), 호출자가 safe_fit_score·
@@ -484,7 +574,9 @@ def normalize_and_render(judge_result: dict, company_data: dict) -> dict:
 
     report_user = prompts.EVALUATE_FIT_REPORT_USER_TEMPLATE.format(
         judgment_table_text=render_judgment_table_text(normalized),
-        decision_factors_text=json.dumps(decision_factors, ensure_ascii=False),
+        decision_factors_text=json.dumps(
+            {k: v for k, v in decision_factors.items() if k != "custom_criteria"}, ensure_ascii=False),
+        custom_criteria_text=render_custom_criteria_for_score(decision_factors.get("custom_criteria")),
         score_guidance=prompts.FIT_SCORE_GUIDANCE,
     )
 
@@ -516,6 +608,17 @@ if __name__ == "__main__":
         {"id": "required:1", "source_item": "TensorFlow 또는 PyTorch"},
         {"id": "preferred:0", "source_item": "문제 정의 및 해결 의지"},
     ], inputs
+
+    # 1-1. 연차 행(2026-11-14) — 필수 요건에 연차 줄이 없고 experience_required에 숫자가 있으면 필수 행 추가
+    with_exp = build_input_items({**company_data, "experience_required": "5년 이상"})
+    assert with_exp[2] == {"id": "required:2", "source_item": "경력 5년 이상"} and with_exp[3]["id"] == "preferred:0", with_exp
+    assert build_input_items({**company_data, "experience_required": "경력 3~7년"})[2]["source_item"] == "경력 3~7년"
+    for no_row in ("경력", "신입", None):  # 숫자가 없으면 만들지 않는다
+        assert build_input_items({**company_data, "experience_required": no_row}) == inputs, no_row
+    has_line = {**company_data, "required_skills": ["Python 3년 이상 경력"], "experience_required": "5년 이상"}
+    assert [it["id"] for it in build_input_items(has_line)] == ["required:0", "preferred:0"], "연차 줄이 이미 있으면 안 만든다"
+    only_exp = build_input_items({"required_skills": [], "preferred_skills": ["x"], "experience_required": "3년+"})
+    assert [it["id"] for it in only_exp] == ["required:0", "preferred:0"], only_exp
 
     # 2. reconcile_judgments — 정상/누락/중복/미지 id 각각 처리
     # 서술 필드 4개(evidence_summary/evidence_source/evidence_excerpt/reason)는 스키마상
@@ -671,9 +774,9 @@ if __name__ == "__main__":
     assert safe_fit_score(72.9) == (None, True), "소수점 float은 fit_score로 허용 안 됨"
 
     # 3-7. validate_decision_factors — 누락되거나 status가 문자열이 아니면 안전한 기본값+incomplete
-    valid_factors = {k: {"status": "충족", "note": ""} for k in _DECISION_FACTOR_KEYS}
-    valid_factors["salary"] = {"status": "양호", "note": ""}
+    valid_factors = {k: {"status": "충족", "note": ""} for k in _SIMPLE_FACTOR_KEYS}
     valid_factors["stability"] = {"status": "충족", "note": ""}
+    valid_factors["custom_criteria"] = []  # 사용자 지정 기준 줄이 없으면 빈 목록
     result_ok, incomplete_ok = validate_decision_factors(valid_factors)
     assert incomplete_ok is False
     assert result_ok == valid_factors
@@ -684,26 +787,60 @@ if __name__ == "__main__":
     for bad_top in ([], "bad", 1, None):
         result_bad_top, incomplete_bad_top = validate_decision_factors(bad_top)
         assert incomplete_bad_top is True, bad_top
-        assert all(result_bad_top[k]["status"] == _FALLBACK_STATUS for k in _DECISION_FACTOR_KEYS), bad_top
+        assert all(result_bad_top[k]["status"] == _FALLBACK_STATUS for k in _SIMPLE_FACTOR_KEYS), bad_top
+        assert result_bad_top["custom_criteria"] == [], "기준 줄이 없으면 빈 목록(판정 실패 아님)"
 
-    # 3-7-3. salary/stability는 status가 구 필드 enum 밖이면 무효
+    # 3-7-3. stability는 status가 구 필드 enum 밖이면 무효
     # (schema상 허용되는 임의 문자열이 evaluation_incomplete=false로 통과해 legacy
     # 필드만 조용히 None이 되는 정보 유실 방지, 5차 리뷰 반영)
     enum_violation = dict(valid_factors)
-    enum_violation["salary"] = {"status": "협의", "note": ""}
     enum_violation["stability"] = {"status": "강", "note": ""}
     result_enum, incomplete_enum = validate_decision_factors(enum_violation)
     assert incomplete_enum is True
-    assert result_enum["salary"]["status"] == "확인필요"
     assert result_enum["stability"]["status"] == "확인필요"
+    # 3-7-3-1. 안정성은 정보가 없을 때 "미확인"을 쓸 수 있다(2026-11-11)
+    stab_unknown = dict(valid_factors)
+    stab_unknown["stability"] = {"status": "미확인", "note": "투자·매출 정보 없음"}
+    result_su, incomplete_su = validate_decision_factors(stab_unknown)
+    assert incomplete_su is False and result_su["stability"]["status"] == "미확인", result_su
+
+    # 3-7-4. 사용자 지정 기준은 줄(criteria:N)마다 판정 하나씩 맞춘다 — 빠진 줄·어휘 밖 status는
+    # 그 줄만 fallback, 모르는 id는 버림, 중복 id는 첫 번째만, 줄 문구는 코드가 채움
+    lines = ["서울 선호", "50명 이상 선호", "잡플래닛 3 이상 선호"]
+    custom_llm = [
+        {"id": "criteria:0", "status": "충족", "note": "서울"},
+        {"id": "criteria:0", "status": "미달", "note": "중복은 무시"},
+        {"id": "criteria:1", "status": "조건부", "note": "어휘 밖"},
+        {"id": "criteria:9", "status": "충족", "note": "모르는 id"},
+        "문자열", {"status": "충족"},
+    ]
+    f_custom = dict(valid_factors)
+    f_custom["custom_criteria"] = custom_llm
+    res_c, inc_c = validate_decision_factors(f_custom, lines)
+    assert inc_c is True
+    assert [(e["id"], e["status"], e["source_item"]) for e in res_c["custom_criteria"]] == [
+        ("criteria:0", "충족", "서울 선호"),
+        ("criteria:1", _FALLBACK_STATUS, "50명 이상 선호"),
+        ("criteria:2", _FALLBACK_STATUS, "잡플래닛 3 이상 선호"),
+    ], res_c["custom_criteria"]
+    assert res_c["custom_criteria"][0]["note"] == "서울", "중복 id는 첫 번째만"
+    # 기준 줄이 없으면 LLM이 옛 단일 형태나 임의 값을 돌려줘도 빈 목록, 판정 실패 아님
+    for stray in ({"status": "해당없음", "note": ""}, [{"id": "criteria:0", "status": "충족", "note": ""}], None):
+        f_stray = dict(valid_factors)
+        f_stray["custom_criteria"] = stray
+        res_s, inc_s = validate_decision_factors(f_stray)
+        assert res_s["custom_criteria"] == [] and inc_s is False, (stray, res_s)
 
     broken_factors = dict(valid_factors)
-    broken_factors["jobplanet"] = {"status": 5, "note": "2.4점"}  # 문자열이 아닌 status
-    del broken_factors["salary"]  # 통째로 누락
+    broken_factors["stability"] = {"status": 5, "note": "x"}  # 문자열이 아닌 status
+    del broken_factors["location"]  # 통째로 누락
     result_broken, incomplete_broken = validate_decision_factors(broken_factors)
     assert incomplete_broken is True
-    assert result_broken["jobplanet"]["status"] == _FALLBACK_STATUS, "비문자열 status는 그대로 노출되면 안 됨"
-    assert result_broken["salary"]["status"] == _FALLBACK_STATUS, "누락된 요인은 안전한 기본값으로 채워져야 함"
+    assert result_broken["stability"]["status"] == _FALLBACK_STATUS, "비문자열 status는 그대로 노출되면 안 됨"
+    assert "jobplanet" not in result_broken, "잡플래닛 요인은 정규화 결과에 없다"
+    assert result_broken["location"]["status"] == _FALLBACK_STATUS, "누락된 요인은 안전한 기본값으로 채워져야 함"
+    # 연봉 요인은 평가에서 뺐다(2026-11-12) — 입력에 있어도 정규화 결과에 나오지 않는다
+    assert "salary" not in validate_decision_factors({**valid_factors, "salary": {"status": "양호", "note": ""}})[0]
 
     # 3-7-1. status가 dict 등 비문자열이면 무효 처리(4차 리뷰 반영 —
     # 안 걸러지면 derive_legacy_checks()가 그대로 옮겨 location_check(str) 저장이 깨짐)
@@ -752,28 +889,35 @@ if __name__ == "__main__":
     resp_table = render_requirement_table(table_items, "직무 적합도 분석", table_kind="responsibility")
     assert "| 주요 업무 | 관련 경험 여부 | 근거 |" in resp_table, resp_table
 
-    # 6. derive_decision_factor_gaps — status가 조건부·미달·낮음인 요인만 gap, salary는 파생 안 됨
+    # 6. derive_decision_factor_gaps — 조건부·미달·낮음도 gap으로 올리지 않는다(2026-11-11:
+    # 비기술 요인은 고정 요약 한 줄에만 나온다). 판정 실패(확인필요)만 gap
     decision_factors = {
-        "career_years": {"status": "미달", "note": "요구 3년, 보유 1년"},
         "location": {"status": "충족", "note": "서울 일치"},
-        "jobplanet": {"status": "낮음", "note": "2.4점"},
-        "salary": {"status": "낮음", "note": "gap으로 안 나가야 함"},
+        "stability": {"status": "낮음", "note": "소규모"},
     }
     df_gaps = derive_decision_factor_gaps(decision_factors)
-    assert "(미달) 경력 연수 - 요구 3년, 보유 1년" in df_gaps, df_gaps
-    assert not any("근무지" in g for g in df_gaps), "충족은 파생되면 안 됨"
-    assert not any("연봉" in g or "salary" in g.lower() for g in df_gaps), \
-        "salary는 fallback이 아니면 절대 파생되면 안 됨"
-    assert "(낮음) 잡플래닛 평점 - 2.4점" in df_gaps, df_gaps
+    assert df_gaps == [], f"조건부·미달·낮음은 gap으로 올라가면 안 됨: {df_gaps}"
 
     # 6-0. render_decision_factors_summary — 문제없는 정상 판정도 항상 노출돼야
     # 함(2026-09-02, LLM Judge 비교 실험에서 잡플래닛 정상 판정이 산문에서 빠지는
     # 문제 발견 반영). 없는 키는 "확인필요"로 표시.
     summary_line = render_decision_factors_summary(decision_factors)
-    assert "잡플래닛 평점 낮음" in summary_line, summary_line
+    assert "기업 안정성 낮음" in summary_line, summary_line
+    assert "잡플래닛" not in summary_line, "잡플래닛은 비기술 요인 항목이 아니라 사용자 지정 기준 줄로만 나온다"
     assert "근무지 충족" in summary_line, summary_line
-    assert "연봉 낮음" in summary_line, summary_line
-    assert "기업 안정성 확인필요" in summary_line, "누락된 키는 확인필요로 표시돼야 함"
+    assert "연봉" not in summary_line, "연봉 요인은 요약 줄에 없다"
+    assert "경력 연수" not in summary_line, "연차는 판정 표 행으로만 판정한다"
+    assert derive_decision_factor_gaps({}) == [] and "기업 안정성" in render_decision_factors_summary({}), "누락된 키는 확인필요로 표시"
+    assert "사용자 지정 평가 기준 확인필요" in summary_line, "목록이 아니면(누락) 확인필요"
+    # 사용자 지정 기준은 줄마다 "줄 문구 상태"를 따로 보여준다(기준 줄이 없으면 해당없음)
+    sl_empty = render_decision_factors_summary({"custom_criteria": []})
+    assert "사용자 지정 평가 기준 해당없음" in sl_empty, sl_empty
+    sl_lines = render_decision_factors_summary({"custom_criteria": [
+        {"source_item": "서울 선호", "status": "충족"}, {"source_item": "50명 이상 선호", "status": "미확인"},
+        {"source_item": "잡플래닛 3 이상 선호", "status": "미달"}, {"source_item": "x", "status": _FALLBACK_STATUS},
+    ]})
+    assert "서울 선호 충족 · 50명 이상 선호 미확인 · 잡플래닛 3 이상 선호 미달 · x 확인필요" in sl_lines, sl_lines
+    assert "사용자 지정 평가 기준" not in sl_lines, "기준 줄이 있으면 요인 이름 대신 줄 문구가 나옴"
 
     # 6-1. fallback(status=_FALLBACK_STATUS)은 "(확인필요)" gap으로
     # 노출돼야 함 — 안 그러면 판정 실패가 리포트에서 조용히 사라짐(2026-09-02 실사례로 발견)
@@ -784,43 +928,49 @@ if __name__ == "__main__":
     df_gaps_fb = derive_decision_factor_gaps(decision_factors_with_fallback)
     assert any(g.startswith("(확인필요) 기업 안정성") for g in df_gaps_fb), df_gaps_fb
 
-    # 6-2. salary도 fallback이면 (확인필요) 노출 대상에 포함돼야 함(b632c66에서 salary만
-    # 빠뜨렸던 걸 2026-09-02 브랜치 전체 리뷰로 발견)
-    decision_factors_salary_fb = dict(decision_factors)
-    decision_factors_salary_fb["salary"] = {
-        "status": _FALLBACK_STATUS, "note": "시스템이 이 요인을 판정하지 못함",
-    }
-    df_gaps_salary_fb = derive_decision_factor_gaps(decision_factors_salary_fb)
-    assert any(g.startswith("(확인필요) 연봉") for g in df_gaps_salary_fb), df_gaps_salary_fb
-    # 정상 salary는 여전히 gap으로 안 나가야 함(기존 정책 유지 확인)
-    assert not any("연봉" in g for g in df_gaps), "정상 salary는 여전히 파생되면 안 됨"
+    # 6-2. 연봉 요인은 평가에서 뺐으므로(2026-11-12) 입력에 있어도 gap·요약 줄에 안 나온다
+    assert derive_decision_factor_gaps({"salary": {"status": _FALLBACK_STATUS, "note": "x"}}) == []
 
-    # 6-3. 잡플래닛은 점수가 있으면 LLM status가 아니라 점수(3.0 미만)로 gap 여부를 정한다.
-    # fallback인 요인은 점수와 무관하게 "(확인필요)"로 노출한다.
-    jp = {"jobplanet": {"status": "양호", "note": "LLM 착오"}}
-    assert derive_decision_factor_gaps(jp, {"jobplanet_score": 2.4}) == ["(미달) 잡플래닛 평점 - LLM 착오"]
-    assert derive_decision_factor_gaps(jp, {"jobplanet_score": 2.9}) == ["(미달) 잡플래닛 평점 - LLM 착오"]
-    assert derive_decision_factor_gaps(jp, {"jobplanet_score": 3.0}) == [], "3.0은 경계 — gap 아님"
-    jp_low = {"jobplanet": {"status": "낮음", "note": "LLM 착오"}}
-    assert derive_decision_factor_gaps(jp_low, {"jobplanet_score": 3.5}) == [], "3.0 이상은 LLM이 낮음이라 해도 gap 아님"
-    assert derive_decision_factor_gaps(jp_low, {"jobplanet_score": None}) == ["(낮음) 잡플래닛 평점 - LLM 착오"], \
-        "점수가 없으면 LLM status를 따른다"
-    jp_fb = {"jobplanet": {"status": _FALLBACK_STATUS, "note": "판정 실패"}}
-    assert derive_decision_factor_gaps(jp_fb, {"jobplanet_score": 3.5}) == ["(확인필요) 잡플래닛 평점 - 판정 실패"]
-    # status는 정확히 일치할 때만 매칭 — "조건부 아님" 같은 부정문을 위험으로 오탐하면 안 됨
-    assert derive_decision_factor_gaps({"location": {"status": "조건부 아님", "note": "완전 재택"}}) == []
-    assert derive_decision_factor_gaps({"location": {"status": "조건부", "note": "재택 불가"}}) == ["(조건부) 근무지 - 재택 불가"]
+    # 6-3. 잡플래닛 점수(3.0 미만)로 gap을 보정하던 로직은 비기술 요인을 gaps에서 뺀 2026-11-11
+    # 결정으로 없앴다 — 판정 실패만 노출하고, 정상 판정은 점수와 무관하게 gap이 아니다.
+    # 잡플래닛은 비기술 요인 항목에서 뺐다(2026-11-12) — 입력에 있어도 gap·요약 줄에 안 나온다
+    assert derive_decision_factor_gaps({"jobplanet": {"status": _FALLBACK_STATUS, "note": "x"}}) == []
+    assert derive_decision_factor_gaps({"location": {"status": "조건부", "note": "재택 불가"}}) == []
+    # 6-4. 사용자 지정 기준은 판정 실패한 줄만 줄마다 노출, fallback_factor_keys가 줄 id까지 돌려줌
+    custom_fb = {"custom_criteria": [
+        {"id": "criteria:0", "source_item": "서울 선호", "status": "충족", "note": "서울"},
+        {"id": "criteria:1", "source_item": "50명 이상 선호", "status": _FALLBACK_STATUS, "note": "판정 실패"},
+    ], "stability": {"status": _FALLBACK_STATUS, "note": "x"}}
+    assert derive_decision_factor_gaps(custom_fb) == [
+        "(확인필요) 기업 안정성 - x", "(확인필요) 사용자 지정 평가 기준 - 50명 이상 선호: 판정 실패"], \
+        derive_decision_factor_gaps(custom_fb)
+    assert fallback_factor_keys(custom_fb) == ["stability", "custom_criteria:criteria:1"], fallback_factor_keys(custom_fb)
+    assert fallback_factor_keys({}) == [] and fallback_factor_keys(valid_factors) == []
 
     # 7. derive_legacy_checks — status를 구 필드 어휘로 그대로 옮기되 enum 밖이면 버림
     legacy = derive_legacy_checks(decision_factors)
-    assert legacy == {"salary_check": "낮음", "stability_check": None, "location_check": "충족"}, legacy
+    assert legacy == {"salary_check": None, "stability_check": None, "location_check": "충족"}, legacy
     assert derive_legacy_checks({}) == {"salary_check": None, "stability_check": None, "location_check": None}
-    bad = derive_legacy_checks({"salary": {"status": "괜찮음"}})  # enum 밖 값은 버림
-    assert bad["salary_check"] is None, bad
+    assert derive_legacy_checks({"stability": {"status": "미확인"}})["stability_check"] == "미확인"
+    bad = derive_legacy_checks({"stability": {"status": "괜찮음"}})  # enum 밖 값은 버림
+    assert bad["stability_check"] is None and bad["salary_check"] is None, bad
     # status가 비문자열이면(validate_decision_factors가 걸러야 정상이지만, 이 함수
     # 자체도 방어해야 함 — set 멤버십에 dict가 들어오면 TypeError로 죽을 수 있음)
-    unsafe = derive_legacy_checks({"salary": {"status": {"x": 1}}, "location": {"status": {"y": 2}}})
+    unsafe = derive_legacy_checks({"stability": {"status": {"x": 1}}, "location": {"status": {"y": 2}}})
     assert unsafe == {"salary_check": None, "stability_check": None, "location_check": None}, unsafe
+
+    # 7-1. split_criteria_lines — 빈 줄·# 제목 제외, 앞 목록 기호만 제거("3.0점", "**굵게**"는 보존)
+    raw_criteria = "# 제목\n- 서울 선호\n\n* 50명 이상 선호\n1. 3.0점 이상 선호\n2) 잡플래닛\n**굵게**\n100명 이상\n   \n• 점 기호"
+    assert split_criteria_lines(raw_criteria) == [
+        "서울 선호", "50명 이상 선호", "3.0점 이상 선호", "잡플래닛", "**굵게**", "100명 이상", "점 기호"], \
+        split_criteria_lines(raw_criteria)
+    assert split_criteria_lines("") == [] and split_criteria_lines(None) == [] and split_criteria_lines("\n# 제목만\n") == []
+    assert split_criteria_lines("서울이면 좋고 50명 이상이면 더 좋음") == ["서울이면 좋고 50명 이상이면 더 좋음"], "줄글은 한 줄"
+    # 7-2. render_custom_criteria_section — 번호 목록 + 안내문, 줄이 없으면 빈 문자열
+    assert render_custom_criteria_section([]) == ""
+    sec = render_custom_criteria_section(["서울 선호", "50명 이상 선호"])
+    assert "- criteria:0: 서울 선호\n- criteria:1: 50명 이상 선호" in sec, sec
+    assert "## 추가 평가 기준 (사용자 지정)" in sec and prompts.CUSTOM_CRITERIA_BOUNDARY_NOTICE in sec, sec
 
     # 8. normalize_and_render — REST/MCP 공유 정규화 함수 통합 테스트
     # (2026-09-03, MCP 구조화 계약 전환 1단계). company_analysis.evaluate_fit_structured()가
@@ -841,31 +991,43 @@ if __name__ == "__main__":
              "reason": "AWS 경험 없음"},
         ],
         "decision_factors": {
-            "career_years": {"status": "충족", "note": ""},
             "location": {"status": "충족", "note": ""},
-            "stability": {"status": "조건부", "note": ""},
-            "jobplanet": {"status": "양호", "note": ""},
-            "salary": {"status": "미확인", "note": ""},
-            "custom_criteria": {"status": "해당없음", "note": ""},
+            "stability": {"status": "미확인", "note": "투자·매출 정보 없음"},
+            "custom_criteria": [
+                {"id": "criteria:0", "status": "충족", "note": "서울"},
+                {"id": "criteria:1", "status": "미확인", "note": "규모 정보 없음"},
+            ],
         },
     }
-    nr_result = normalize_and_render(nr_judge_result, nr_company_data)
+    nr_result = normalize_and_render(nr_judge_result, nr_company_data, ["서울 선호", "50명 이상 선호"])
     assert "fit_score" not in nr_result and "fit_label" not in nr_result, "점수·라벨은 보고서 호출이 정한다"
     assert nr_result["evaluation_incomplete"] is False, nr_result
     assert len(nr_result["item_judgments"]) == 2
     assert "자격요건 충족 현황" in nr_result["tables"] and "우대사항 충족 현황" in nr_result["tables"]
     assert "직무 적합도 분석" not in nr_result["tables"], "key_responsibilities가 없으면 해당 표는 생략돼야 함"
     assert nr_result["factors_summary"].startswith("**비기술 요인**:")
-    assert nr_result["salary_check"] == "미확인" and nr_result["location_check"] == "충족", nr_result
+    assert "서울 선호 충족 · 50명 이상 선호 미확인" in nr_result["factors_summary"], nr_result["factors_summary"]
+    assert "기업 안정성 미확인" in nr_result["factors_summary"]
+    assert nr_result["stability_check"] == "미확인", nr_result
+    assert [e["source_item"] for e in nr_result["decision_factors"]["custom_criteria"]] == ["서울 선호", "50명 이상 선호"]
+    assert nr_result["salary_check"] is None and nr_result["location_check"] == "충족", nr_result
+    assert "salary" not in nr_result["decision_factors"], "연봉 요인은 평가 결과에 없다"
     # report_user에 실제로 정규화된 fit_score·gaps 내용이 채워져 들어갔는지(REST가
     # 2단계 프롬프트에 넣던 것과 동일한 입력이어야 함)
     assert any(g.startswith("(우대 미충족) AWS 경험") for g in nr_result["gaps"]), nr_result["gaps"]
-    assert any(g.startswith("(조건부) 기업 안정성") for g in nr_result["gaps"]), nr_result["gaps"]
+    assert not any("기업 안정성" in g or "사용자 지정" in g for g in nr_result["gaps"]), \
+        f"비기술 요인은 gaps에 올라가면 안 됨: {nr_result['gaps']}"
     ru = nr_result["report_user"]
     assert "- [필수] Python 3년 이상: 충족" in ru and "- [우대] AWS 경험: 미충족 — 언급 없음 / AWS 경험 없음" in ru, ru
     assert "심각도" not in ru, ru
     assert "AWS 경험 없음" in ru and "점수 산정 우선순위" in ru and "확인 필요" in ru, ru
     assert "{judgment_table_text}" not in ru and "{score_guidance}" not in ru, "미치환 자리표시자"
+    assert "{custom_criteria_text}" not in ru, "미치환 자리표시자"
+    # 사용자 지정 기준은 비기술 요인 JSON이 아니라 별도 구역(사용자의 지시)으로 들어간다
+    assert "### 사용자 지정 평가 기준(사용자의 지시)\n- 서울 선호: 충족 — 서울\n- 50명 이상 선호: 미확인 — 규모 정보 없음" in ru, ru
+    assert "custom_criteria" not in ru.split("### 비기술 요인")[1].split("### 사용자 지정 평가 기준")[0], "JSON에 사용자 기준이 남음"
+    assert render_custom_criteria_for_score([]) == "(없음)" and render_custom_criteria_for_score(None) == "(없음)"
+    assert "(없음)" in normalize_and_render(nr_judge_result, nr_company_data)["report_user"], "기준 줄이 없으면 (없음)"
     unclear_row = {"id": "responsibility:0", "source_item": "업무", "verdict": "verify", "evidence_summary": "판정 누락", "group": "묶음"}
     assert render_judgment_table_text([unclear_row]).startswith("- [주요업무] 묶음 > 업무: 확인 필요 — 판정 누락")
 
