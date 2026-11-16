@@ -318,17 +318,46 @@ async def _search_ddg(company_name: str, client: httpx.AsyncClient) -> list[tupl
     return candidates
 
 
-async def fetch_jobplanet_score(company_name: str, known_names: list[str | None] | None = None) -> JobplanetResult:
-    """Gemini 검색 연결 → Naver → DuckDuckGo 순서로 잡플래닛 평점을 조회한다.
+# 아는 이름으로 다시 검색할 때의 최소 길이. 이 검색은 company_name으로 못 찾았을 때만 돌아서 짧은 이름
+# (티빙·SK)도 허용한다 — 답 검증에 쓰는 아는 이름(_MIN_KNOWN_NAME_LEN)보다 느슨하다.
+_MIN_SEARCH_NAME_LEN = 2
 
-    known_names: 같은 회사로 이미 아는 다른 이름들(AI가 뽑은 display_name·덮어쓰기 전 company_name·
-    별칭). 검색은 company_name으로만 한 번 하고, 검증·유사도 비교에서만 이 이름들도 인정한다.
+
+def _search_names(company_name: str, known_names: list[str | None] | None) -> list[str]:
+    """검색할 이름 후보: company_name 먼저, 그다음 아는 이름(정규화 후 _MIN_SEARCH_NAME_LEN 글자 이상,
+    정규화 후 같은 이름은 한 번만)."""
+    names, seen = [company_name], {_normalize(company_name)}
+    for n in known_names or []:
+        if n and len(_normalize(n)) >= _MIN_SEARCH_NAME_LEN and _normalize(n) not in seen:
+            seen.add(_normalize(n))
+            names.append(n)
+    return names
+
+
+async def fetch_jobplanet_score(company_name: str, known_names: list[str | None] | None = None) -> JobplanetResult:
+    """잡플래닛 평점을 조회한다. company_name으로 먼저 조회하고, 못 찾으면(not_found) 같은 회사로
+    이미 아는 다른 이름들(AI가 뽑은 display_name·덮어쓰기 전 company_name·별칭)로 차례로 다시 조회한다.
+    점수를 찾거나 오류가 나면 거기서 멈춘다. 이름마다 검증은 똑같이 적용되고, 아는 이름은 검증·유사도
+    비교에서도 인정된다.
 
     Returns:
         JobplanetResult:
             - score/review_count가 None이면 미확인 (소규모·미등록 회사)
             - source="error" 면 네트워크 오류 (호출 측에서 무시해도 됨)
     """
+    all_known = [company_name] + list(known_names or [])
+    result = JobplanetResult(None, None, "not_found")
+    for name in _search_names(company_name, known_names):
+        result = await _fetch_one(name, all_known)
+        if result.source != "not_found":
+            if name != company_name and result.score is not None:
+                logger.info("잡플래닛 %s(으)로 조회해 찾음 (company_name %s로는 못 찾음)", name, company_name)
+            return result
+    return result
+
+
+async def _fetch_one(company_name: str, known_names: list[str | None] | None = None) -> JobplanetResult:
+    """이름 하나로 Gemini 검색 연결 → Naver → DuckDuckGo 순서로 조회한다."""
     # 괄호 내 영문 제거 — "딥파인(DEEP.FINE)" → "딥파인" 으로 검색
     search_name = re.sub(r"\([^)]*\)", "", company_name).strip() or company_name
 
@@ -415,6 +444,37 @@ if __name__ == "__main__":
     assert _cand and (_cand.score, _cand.source) == (3.2, "search_snippet"), _cand
     assert _best_candidate("케이티밀리의서재", _snippet, ["밀리"]) is None  # 3글자 미만은 안 씀
     print("아는 이름 fixture 통과")
+
+    # 검색할 이름 후보: company_name 먼저, 중복·3글자 미만·None 제외
+    assert _search_names("롯데그룹", ["롯데이노베이트", "(주)롯데그룹", None, "LOTTE", "롯", "롯데"]) == ["롯데그룹", "롯데이노베이트", "LOTTE", "롯데"]
+    assert _search_names("에스케이그룹", ["SK"]) == ["에스케이그룹", "SK"]  # 두 글자 이름도 후보
+    assert _search_names("TVING", ["티빙", "(주)티빙"]) == ["TVING", "티빙"]
+    assert _search_names("토스", ["토스"]) == ["토스"]
+    # 앞 이름이 not_found면 다음 이름을 시도하고, 찾으면 멈춘다(네트워크 대신 가짜 조회)
+    _real_fetch_one = _fetch_one
+    _calls = []
+
+    async def _fake_fetch_one(name, known=None):
+        _calls.append(name)
+        if name == "에스케이그룹":
+            return JobplanetResult(None, None, "not_found")
+        if name == "SK에너지":
+            return JobplanetResult(None, None, "error", "x")
+        return JobplanetResult(3.6, 114, "gemini_search")
+
+    _fetch_one = _fake_fetch_one
+    try:
+        _r = asyncio.run(fetch_jobplanet_score("에스케이그룹", ["SK그룹", "SK에너지"]))
+        assert _calls == ["에스케이그룹", "SK그룹"] and _r.score == 3.6, (_calls, _r.score)
+        _calls.clear()
+        _r = asyncio.run(fetch_jobplanet_score("에스케이그룹", ["SK에너지", "SK그룹"]))
+        assert _calls == ["에스케이그룹", "SK에너지"] and _r.source == "error", (_calls, _r.source)  # 오류는 바로 돌려줌
+        _calls.clear()
+        _r = asyncio.run(fetch_jobplanet_score("에스케이그룹", []))
+        assert _calls == ["에스케이그룹"] and _r.source == "not_found", (_calls, _r.source)  # 후보가 없으면 not_found
+    finally:
+        _fetch_one = _real_fetch_one
+    print("이름 후보·다음 이름 시도 fixture 통과")
 
     async def _check():
         # 카카오: title JSON 절단 방식이었다면 not_found로 오탐했을 사례
