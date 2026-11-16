@@ -25,6 +25,10 @@ from routers import settings as settings_router
 from services.app_db import init_db
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+# httpx는 요청마다 전체 URL을 INFO로 찍는다 — 텔레그램 봇 토큰·슬랙/디스코드 웹훅 주소처럼 비밀이 URL에 든
+# 요청이 로그에 그대로 남으므로 경고 이상만 남긴다.
+for _name in ("httpx", "httpcore"):
+    logging.getLogger(_name).setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 # MCP streamable HTTP 앱은 자체 lifespan(세션 매니저 시작)을 갖고 있는데, FastAPI가 서브앱을

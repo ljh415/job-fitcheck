@@ -18,4 +18,5 @@ async def send_notification(materials: dict) -> None:
             )
             resp.raise_for_status()
     except Exception as e:
-        logger.warning("텔레그램 알림 전송 실패: %s", e)
+        # httpx 상태 오류 문장에는 요청 URL(봇 토큰 포함)이 들어 있다 — 마스킹해서 남긴다
+        logger.warning("텔레그램 알림 전송 실패: %s", str(e).replace(settings.telegram_bot_token, "***"))
