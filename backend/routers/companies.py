@@ -908,12 +908,19 @@ async def refill_company(slug: str):
             if e.status_code == 410:
                 raise HTTPException(status_code=410, detail="공고 페이지가 내려갔거나 마감된 것으로 보입니다. 저장된 원문과 분석은 그대로입니다.")
             raise
-        prior = latest_raw_version(slug)
-        if company is None and prior and prior["company_info_id"] is not None:
-            # 회사 정보를 받았던 공고인데 이번엔 기업 페이지를 못 받았다 — 기업 정보 블록이 빠진
-            # 원문으로 덮어쓰면 오히려 정보가 줄어든다.
-            logger.warning("기업 페이지를 받지 못해 재분석을 건너뜀 (slug=%s)", slug)
-            raise HTTPException(status_code=502, detail="기업 페이지를 가져오지 못해 재분석하지 않았습니다. 기존 값은 그대로입니다.")
+        if company is None:
+            # 이전 회사 정보 유무는 기업 페이지를 못 받았을 때만 필요하다(받았으면 DB를 읽지 않는다).
+            try:
+                prior = latest_raw_version(slug)
+            except Exception:
+                # 이력 DB를 못 읽으면 과거에 회사 정보가 있었는지 알 수 없다 — 덮어쓰지 않고 중단
+                logger.exception("원문 버전 조회 실패로 재분석을 건너뜀 (slug=%s)", slug)
+                raise HTTPException(status_code=503, detail="이력 DB를 읽지 못해 재분석하지 않았습니다. 기존 값은 그대로입니다.")
+            if prior and prior["company_info_id"] is not None:
+                # 회사 정보를 받았던 공고인데 이번엔 기업 페이지를 못 받았다 — 기업 정보 블록이 빠진
+                # 원문으로 덮어쓰면 오히려 정보가 줄어든다.
+                logger.warning("기업 페이지를 받지 못해 재분석을 건너뜀 (slug=%s)", slug)
+                raise HTTPException(status_code=502, detail="기업 페이지를 가져오지 못해 재분석하지 않았습니다. 기존 값은 그대로입니다.")
     preserved_log_entries = _parse_status_log(record.body, slug=slug)
     try:
         return await _process_company(
