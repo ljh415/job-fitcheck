@@ -226,7 +226,6 @@ function render() {
   if (currentView === 'login') initLogin();
   else if (currentView === 'dashboard') initDashboard();
   else if (currentView === 'detail') initDetail(currentSlug);
-  else if (currentView === 'add') initAdd();
   else if (currentView === 'compare') initCompare(compareTargets);
   else if (currentView === 'settings') initSettings();
   else if (currentView === 'timeline') initTimeline();
@@ -272,7 +271,7 @@ async function pollInProgress() {
     } else {
       banner.classList.add('hidden');
     }
-  } catch (e) {
+  } catch {
     // 인증 만료 등은 api()가 이미 로그인 화면 리다이렉트로 처리함 — 여기선 조용히 넘어감
   }
 }
@@ -298,7 +297,7 @@ async function checkRagStatus() {
     ragEnabled = !!data.enabled;
     ragConfiguredProviders = data.configured_providers || [];
     ragIncludeProfile = !!data.include_profile;
-  } catch (e) {
+  } catch {
     ragEnabled = false;
     ragConfiguredProviders = [];
     ragIncludeProfile = false;
@@ -329,7 +328,7 @@ async function submitLogin(event) {
     await checkRagStatus();
     navigate('dashboard');
     startInProgressPolling();
-  } catch (e) {
+  } catch {
     errorEl.classList.remove('hidden');
   }
 }
@@ -1135,7 +1134,7 @@ async function streamQA(fetchFn, bubble) {
     }
     bubble.textContent = '';
     return await consumeSSE(res, bubble);
-  } catch (e) {
+  } catch {
     bubble.textContent = '연결이 끊겼습니다.';
     return null;
   }
@@ -1169,7 +1168,7 @@ async function consumeSSE(res, bubble) {
           fullText += text;
           bubble.innerHTML = parseMarkdown(fullText);
           bubble.scrollIntoView({ block: 'end' });
-        } catch (_) {}
+        } catch {}
       }
     }
   } catch (e) {
@@ -1187,8 +1186,6 @@ async function consumeSSE(res, bubble) {
 }
 
 /* ── 회사 추가 ────────────────────────────────────────────────────── */
-function initAdd() {}
-
 function switchAddTab(name) {
   ['url', 'text', 'image'].forEach(t => {
     document.getElementById(`add-${t}`).classList.toggle('hidden', t !== name);
@@ -1877,7 +1874,7 @@ function initModelTierHover() {
   panel.addEventListener('mouseleave', hide);
 }
 
-function renderModelTierView(models, provider) {
+function renderModelTierView(models) {
   const tierView = document.getElementById('model-tier-view');
   if (!tierView) return;
   const sorted = [...models].sort((a, b) => (getModelPrice(b) ?? 0) - (getModelPrice(a) ?? 0));
@@ -1932,15 +1929,14 @@ function saveModelCache(provider, models) {
 
 function applyModelCache(provider, currentHigh, currentLight) {
   const cache = loadModelCache(provider);
-  if (!cache) return false;
+  if (!cache) return;
   applyModelListToDropdowns(cache.models, provider, currentHigh, currentLight);
-  renderModelTierView(cache.models, provider);
+  renderModelTierView(cache.models);
   const updatedEl = document.getElementById('model-list-updated');
   if (updatedEl) {
     const d = new Date(cache.updatedAt);
     updatedEl.textContent = `마지막 업데이트: ${d.toLocaleDateString('ko-KR')} ${d.toLocaleTimeString('ko-KR')}`;
   }
-  return true;
 }
 
 async function fetchModelList(quiet = false) {
@@ -1956,7 +1952,7 @@ async function fetchModelList(quiet = false) {
 
     saveModelCache(provider, models);
     applyModelListToDropdowns(models, provider, currentHigh, currentLight);
-    renderModelTierView(models, provider);
+    renderModelTierView(models);
 
     const updatedEl = document.getElementById('model-list-updated');
     if (updatedEl) updatedEl.textContent = `마지막 업데이트: ${new Date().toLocaleDateString('ko-KR')} ${new Date().toLocaleTimeString('ko-KR')}`;
@@ -2105,7 +2101,7 @@ function showToast(msg, type = 'success', duration = 5000) {
         osc.start(ctx.currentTime + i * 0.12);
         osc.stop(ctx.currentTime + i * 0.12 + 0.18);
       });
-    } catch (_) {}
+    } catch {}
   }
 
   setTimeout(() => toast.remove(), duration);

@@ -285,7 +285,7 @@ async function runRagAsk(event) {
 
   try {
     await api('/rag/ask', { method: 'POST', body: JSON.stringify({ question, chat_id: chatId }) });
-  } catch (e) {
+  } catch {
     // 실패해도 서버에 status='failed'로 남아있으니 별도 처리 없이 아래에서 최신 상태를 다시 조회
   } finally {
     if (ragGetCurrentChatId() === chatId) await ragSwitchChat(chatId);  // 서버 최신 상태로 갱신

@@ -209,7 +209,6 @@ tr.company-row:hover { background: var(--table-row-hover); }
 
 .detail-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-left: auto; }
 .detail-meta { display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px; }
-.meta-chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .chip { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 12px; background: var(--border); color: var(--text-secondary); }
 .company-facts { font-size: 12px; color: var(--text-muted); display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
 .facts-sep { color: var(--border-input); margin: 0 2px; }
@@ -253,7 +252,6 @@ tr.company-row:hover { background: var(--table-row-hover); }
 /* ── 폼 ──────────────────────────────────────────────────────────── */
 .form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-bottom: 12px; }
 .source-url-row { display: flex; gap: 8px; align-items: center; margin-bottom: 0; }
-.source-url-row .full-width { flex: 1; margin-top: 0; }
 .edit-form-actions { margin: 4px 0 20px; }
 .edit-section { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 14px; }
 .edit-section-title { font-size: 12px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 12px; }
@@ -291,7 +289,6 @@ label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-w
 .qa-turn.assistant { align-items: flex-start; }
 .qa-timestamp { font-size: 11px; color: var(--text-dimmed); white-space: nowrap; margin-top: 2px; }
 .qa-turn.user .qa-timestamp { text-align: right; }
-.qa-turn.assistant .qa-timestamp { text-align: left; }
 .qa-input-row { display: flex; gap: 8px; align-items: flex-end; padding: 12px 0 16px; border-top: 1px solid var(--border); flex-shrink: 0; }
 .qa-input-row textarea { flex: 1; resize: none; }
 
@@ -414,7 +411,6 @@ label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-w
 .export-dropdown-wrap { position: relative; }
 .export-dropdown-btn { font-size: 13px; padding: 6px 12px; white-space: nowrap; }
 .export-dropdown-panel { position: absolute; right: 0; top: calc(100% + 6px); background: var(--bg-surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow-md); padding: 14px; min-width: 240px; z-index: 200; display: flex; flex-direction: column; gap: 7px; }
-.export-dropdown-panel.hidden { display: none; }
 .export-dropdown-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--text-dimmed); margin-bottom: 2px; }
 .export-dropdown-action { width: 100%; margin-top: 4px; font-size: 13px; }
 .export-dropdown-divider { border: none; border-top: 1px solid var(--bg-muted); margin: 4px 0; }
@@ -525,7 +521,6 @@ label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-w
 
   /* 비교 뷰: 가로 스크롤 */
   .view--compare { min-width: unset; }
-  .view--compare .table-wrap { overflow-x: auto; }
   #compare-table { min-width: 600px; }
 
   /* 캘린더: 가로 스크롤 */
