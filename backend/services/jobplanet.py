@@ -96,13 +96,6 @@ class JobplanetResult:
         self.source = source
         self.raw_snippet = raw_snippet
 
-    def to_dict(self) -> dict:
-        return {
-            "jobplanet_score": self.score,
-            "jobplanet_review_count": self.review_count,
-            "jobplanet_source": self.source,
-        }
-
 
 def _normalize(name: str) -> str:
     """법인 접두/접미사·괄호 내 영문 제거 후 소문자 정규화."""
@@ -445,7 +438,7 @@ if __name__ == "__main__":
     assert _best_candidate("케이티밀리의서재", _snippet, ["밀리"]) is None  # 3글자 미만은 안 씀
     print("아는 이름 fixture 통과")
 
-    # 검색할 이름 후보: company_name 먼저, 중복·3글자 미만·None 제외
+    # 검색할 이름 후보: company_name 먼저, 중복·2글자 미만·None 제외
     assert _search_names("롯데그룹", ["롯데이노베이트", "(주)롯데그룹", None, "LOTTE", "롯", "롯데"]) == ["롯데그룹", "롯데이노베이트", "LOTTE", "롯데"]
     assert _search_names("에스케이그룹", ["SK"]) == ["에스케이그룹", "SK"]  # 두 글자 이름도 후보
     assert _search_names("TVING", ["티빙", "(주)티빙"]) == ["TVING", "티빙"]

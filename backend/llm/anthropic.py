@@ -483,7 +483,7 @@ if __name__ == "__main__":
             for v in n:
                 _assert_json_outputs_ok(v)
 
-    for schema_name in ("EXTRACT_COMPANY_TOOL_SCHEMA", "EVALUATE_FIT_JUDGE_TOOL_SCHEMA", "EVALUATE_FIT_TOOL_SCHEMA", "EXTRACT_PROFILE_TOOL_SCHEMA"):
+    for schema_name in ("EXTRACT_COMPANY_TOOL_SCHEMA", "EVALUATE_FIT_JUDGE_TOOL_SCHEMA", "EVALUATE_FIT_TOOL_SCHEMA"):
         _assert_json_outputs_ok(_to_json_outputs_schema(getattr(prompts, schema_name)))
 
     assert _replace_tool_call_phrase("판정 submit_x 툴(함수)을 호출하세요.", "submit_x") == "판정 스키마에 맞는 JSON으로 응답하세요."
@@ -499,8 +499,5 @@ if __name__ == "__main__":
     assert "툴(함수)" not in _replace_tool_call_phrase(judge_user, prompts.EVALUATE_FIT_JUDGE_TOOL_NAME)
     assert "툴(함수)" not in _replace_tool_call_phrase(
         prompts.EXTRACT_COMPANY_USER_TEMPLATE.format(raw_text="r"), prompts.EXTRACT_COMPANY_TOOL_NAME
-    )
-    assert "툴(함수)" not in _replace_tool_call_phrase(
-        prompts.EXTRACT_PROFILE_USER_TEMPLATE.format(pdf_text="r", extra_section=""), prompts.EXTRACT_PROFILE_TOOL_NAME
     )
     print("OK: 5.5는 JSON outputs 경로, 스키마 변환(additionalProperties·전 필드 required·min/max 제거·type 배열+enum→anyOf)과 툴 호출 문구 치환")
