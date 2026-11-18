@@ -87,7 +87,7 @@ def trigger_background() -> bool:
     asyncio.create_task() 예약 자체가 실패하는 경우(동기 예외)엔 _run_sync()가 아예
     시작되지 않아 자체 복구 코드도 못 도니, 여기서 직접 in_progress/pending을 원복하고
     예외를 그대로 다시 던진다 — 그러지 않으면 재색인이 프로세스 재시작 전까지 영구
-    멈춘다(2026-09-04 Codex 리뷰)."""
+    멈춘다."""
     global _reindex_in_progress, _reindex_pending
     if not settings.rag_postgres_host:
         return False

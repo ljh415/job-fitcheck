@@ -18,8 +18,7 @@ from config import settings
 from rag.embed.base import EmbeddingProvider
 
 # TUNNEL_LOCAL_PORT이 클래스 전체에 고정 포트라, 인스턴스 두 개가 동시에 살아있으면 두 번째
-# SSH 터널이 포트 바인딩에 실패해 즉시 죽는다(재색인 웹 트리거 도입으로 동시 요청 가능성이
-# 커지며 실제로 재현됨). 상시 공유 터널(gpu_infra_plan.md)로 바꾸는 게 정석이지만, GPU
+# SSH 터널이 포트 바인딩에 실패해 즉시 죽는다(동시 요청이 오면 실제로 재현된다). 상시 공유 터널(gpu_infra_plan.md)로 바꾸는 게 정석이지만, GPU
 # 서버가 없는 대다수 사용자에겐 아예 안 쓰이는 경로라 지금은 non-blocking 락으로만 완화한다
 # — **blocking 락은 쓰지 않는다**: 이 provider 생성은 `routers/rag.py`에서
 # `asyncio.to_thread`로 감싸져 있어 blocking `acquire()`가 대기해도 uvicorn 이벤트 루프

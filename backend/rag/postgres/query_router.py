@@ -1,10 +1,6 @@
 """자유 텍스트 주제 검색 + 공고 목록/비교 — Agent(agent.py)가 실제로 쓰는 조회 함수들.
 
-옛 Phase 1~4의 "질문을 7종으로 분류 → 고정 함수 실행" 라우팅 시스템(QUERY_TYPES/classify_query/
-answer_query)은 Agent(tool-use) 전환 이후 완전히 대체돼 어디서도 안 쓰여 삭제됨 — git
-히스토리에는 그대로 남아있다.
-
-경위·설계 결정 상세는 `docs/rag-project-plans/conversational-rag/00_design.md` Phase 1 참고.
+설계 결정 상세는 `docs/rag-project-plans/conversational-rag/00_design.md` 참고.
 """
 import asyncio
 
@@ -59,7 +55,7 @@ def list_postings(
 
 def compare_postings(conn: psycopg.Connection, company_names: list[str]) -> list[dict]:
     """공고 비교 — posting의 구조화 필드를 그대로 나열(메인 앱 /api/companies/compare와 같은
-    원리). LLM 호출 없음 — "왜 더 나은지" 판단은 이번 범위 밖(Phase 2 하이브리드 검색 이후)."""
+    원리). LLM 호출 없음 — "왜 더 나은지" 판단은 하지 않는다."""
     results = []
     for name in company_names:
         row = conn.execute(

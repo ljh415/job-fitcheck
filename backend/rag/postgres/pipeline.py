@@ -4,7 +4,7 @@ list[float]을 그대로 저장/조회하므로 BLOB pack/unpack이 필요 없�
 `rag/postgres/db.py`에서 등록됨).
 
 `chunk_embedding`은 차원별로 컬럼이 나뉜다(`vector_1536`/`vector_1024`, HNSW 인덱싱을 위해
-고정 차원이 필요해서, Stage 4) — 이 provider가 어느 컬럼에 써야 하는지 `_VECTOR_COLUMN`으로
+고정 차원이 필요해서) — 이 provider가 어느 컬럼에 써야 하는지 `_VECTOR_COLUMN`으로
 결정한다.
 """
 import psycopg

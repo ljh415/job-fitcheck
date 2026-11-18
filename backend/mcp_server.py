@@ -40,9 +40,8 @@ mcp = MCPServer(name="job-fitcheck")
 _LIST_COMPANIES_EXCLUDED_FIELDS = {
     "strengths", "gaps", "key_responsibilities",
     "required_skills", "preferred_skills", "benefits", "hiring_process",
-    # 적합도 평가 구조 개편(docs/fit-eval-structural-redesign/PLAN.md) 1단계 중간
-    # 판정 결과 — 디버깅·감사용 상세 배열이라 목록 크기만 키운다(4차 리뷰 반영,
-    # 116개 기준 1MB SSE 제한 재초과 재현됨). 상세는 get_company로.
+    # 중간 판정 결과 — 디버깅·감사용 상세 배열이라 목록 크기만 키우고 1MB SSE 제한을
+    # 넘길 수 있다. 상세는 get_company로.
     "item_judgments", "decision_factors",
 }
 
@@ -391,7 +390,7 @@ async def prepare_fit_report(workflow_id: str, judge_result: dict, company_data:
     여기서는 반환하지 않는다(중복 방지)."""
     # complete()는 대용량 데이터를 비우므로(has_profile 포함), 완료된 workflow를
     # 먼저 구분하지 않으면 아래 has_profile 체크가 기본값(False)에 걸려 "프로필
-    # 없음"이라는 잘못된 안내가 나간다(Codex 리뷰 2026-09-04 r2 낮음1).
+    # 없음"이라는 잘못된 안내가 나간다.
     if mcp_workflow_cache.get_completed_result(workflow_id) is not None:
         raise ToolError(
             "이 workflow는 이미 저장이 완료됐습니다 — 다시 판정할 필요 없이 "
@@ -404,8 +403,7 @@ async def prepare_fit_report(workflow_id: str, judge_result: dict, company_data:
     if not cached.get("has_profile", False):
         # 프로필 없는 workflow는 애초에 적합도 평가 대상이 아니다 — 여기서 막지 않으면
         # create_company의 has_profile=false 분기(캐시 우선)를 통해 "프로필 없으면
-        # 평가 생략"이라는 경계를 정상 호출만으로 우회할 수 있다(Codex 리뷰
-        # 2026-09-04 중간2).
+        # 평가 생략"이라는 경계를 정상 호출만으로 우회할 수 있다.
         raise ToolError(
             "이 workflow는 프로필이 없는 상태로 시작됐습니다 — 적합도 평가를 저장할 수 없습니다. "
             "company_data만으로 create_company를 바로 호출하세요(judge_result/report_prose 생략)."
@@ -436,7 +434,7 @@ async def prepare_fit_report(workflow_id: str, judge_result: dict, company_data:
 
 # extract_company 스키마 필드만 허용 — 적합도 평가 필드(fit_score/gaps/decision_factors 등)는
 # judge_result에서만 받아 서버가 직접 재정규화해 채운다(company_data로 직접 제출 불가 —
-# 2026-09-03 MCP 구조화 계약 전환, 클라이언트가 판정을 조작해 제출하는 경로를 원천 차단).
+# 클라이언트가 판정을 조작해 제출하는 경로를 막는다).
 # status/pinned/created_at 등도 여기 없어 자동 제외된다.
 _CREATE_COMPANY_ALLOWED_FIELDS = set(prompts.EXTRACT_COMPANY_TOOL_SCHEMA["properties"])
 
@@ -609,15 +607,14 @@ async def create_company(
         raise
 
     # 회사 파일·이력 저장은 여기서 이미 끝났다 — 재시도가 중복 저장을 만들지
-    # 않도록 알림/재색인(후처리)보다 먼저 완료 처리한다(Codex 리뷰 2026-09-04
-    # 중간1: 취소·후처리 예외가 completed 표식 이전에 나면 release_save로
-    # 잠금이 풀려 재시도가 두 번째 회사를 만들었음).
+    # 않도록 알림/재색인(후처리)보다 먼저 완료 처리한다. 취소·후처리 예외가
+    # completed 표식 이전에 나면 release_save로 잠금이 풀려 재시도가 두 번째 회사를 만든다.
     mcp_workflow_cache.complete(workflow_id, result)
 
     # RAG 재색인 트리거를 알림 await보다 먼저 호출한다 — 알림 대기 중 요청이
     # 취소되면(asyncio.CancelledError는 except Exception에 안 걸림) 그 뒤에 있는
     # 코드는 아예 실행되지 않으므로, 재색인 예약을 먼저 끝내둬야 취소돼도 새
-    # 회사가 RAG 색인에서 영구히 빠지지 않는다(Codex 리뷰 2026-09-04 r2 중간1).
+    # 회사가 RAG 색인에서 영구히 빠지지 않는다.
     try:
         trigger_reindex_background()
     except Exception:

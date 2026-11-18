@@ -1,4 +1,4 @@
-"""Plan B 4단계 — RRF(Reciprocal Rank Fusion)로 관계형 정확 매칭(posting_skill)과
+"""RRF(Reciprocal Rank Fusion)로 관계형 정확 매칭(posting_skill)과
 pgvector 검색 결과를 결합한다. `02_structured_career_intelligence_rag.md`의 검색 구조
 ("정확 기술 질문 → skill/alias 관계형 검색, 의미 질문 → pgvector 검색 → RRF 결합")를 그대로
 구현한 것.

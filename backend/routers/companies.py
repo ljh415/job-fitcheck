@@ -783,10 +783,9 @@ async def add_from_text(req: FromTextRequest):
         )
         body = f"# {req.company_name} — {req.job_title}\n\n## 지원 상태 로그\n- {date.today().isoformat()}: 등록"
         slug = storage.make_slug(req.company_name, req.job_title)
-        # RAG는 .raw.txt만 원문으로 스캔한다 — 프론트가 실제로 쓰는 경로인데도 이 분기는
-        # write_raw_text()/trigger_reindex_background()가 빠져 있으면 RAG에서 계속 안 보인다
-        # (add_manual()만 고쳐지고 프론트는 그 엔드포인트를 안 쓰는 경우가 있었음). body를
-        # 원문으로 저장한다 — 자유 텍스트 입력 자체가 없는 최소 등록이라 body가 가장
+        # RAG는 .raw.txt만 원문으로 스캔한다 — 프론트가 실제로 쓰는 경로라 이 분기에
+        # write_raw_text()/trigger_reindex_background()가 없으면 RAG에서 계속 안 보인다.
+        # body를 원문으로 저장한다 — 자유 텍스트 입력 자체가 없는 최소 등록이라 body가 가장
         # 원문에 가깝다.
         storage.write_raw_text(slug, body)
         record = storage.write_company(slug, fm, body)
@@ -879,9 +878,8 @@ async def add_manual(req: ManualCompanyRequest):
     )
     body = f"# {fm.display_name} — {fm.job_title}\n\n{req.notes}"
     slug = storage.make_slug(fm.company_name, fm.job_title or "")
-    # RAG(rag/postgres/ingest.py)는 .raw.txt만 원문으로 스캔한다 — 수동 추가는 다른 경로
-    # (add_from_url/text/image)와 달리 write_raw_text()를 안 불러서 원래 RAG에서 안
-    # 보였다(4번 "데이터 동기화" 항목에서 발견). 수동 입력 시 사용자가 직접 쓴 notes가
+    # RAG(rag/postgres/ingest.py)는 .raw.txt만 원문으로 스캔한다 — 수동 추가도
+    # write_raw_text()로 원문을 남겨야 RAG에서 보인다. 수동 입력 시 사용자가 직접 쓴 notes가
     # 가장 원문에 가까우므로 그대로 raw.txt로 저장한다.
     storage.write_raw_text(slug, req.notes)
     record = storage.write_company(slug, fm, body)
@@ -980,10 +978,9 @@ async def refit_company(slug: str):
         logger.warning("공고 원문 버전 저장 실패 (slug=%s): %s", slug, e)
     # 이전 평가 결과(strengths/gaps/fit_score 등)는 LLM 입력에서 제외 — 자기참조 편향 방지.
     # item_judgments/decision_factors/evaluation_incomplete도 같은 이유로 제외한다 —
-    # 적합도 평가 구조 개편(docs/fit-eval-structural-redesign/PLAN.md)의 1단계 중간
-    # 판정 결과라, 안 빼면 직전 평가의 결론이 "회사 데이터"인 것처럼 다음 평가에
-    # 섞여 들어간다. salary_check/stability_check/location_check도 같은 부류(평가
-    # 결과)인데 원래부터 여기 빠져 있었음 — 이번 개편 4차 리뷰 교차검증 중 발견해 같이 뺌.
+    # 이 필드들은 평가의 중간 판정 결과라, 안 빼면 직전 평가의 결론이 "회사 데이터"인 것처럼
+    # 다음 평가에 섞여 들어간다. salary_check/stability_check/location_check도 같은 부류(평가
+    # 결과)라 같이 뺀다.
     _REFIT_EXCLUDE = {
         "strengths", "gaps", "fit_score", "fit_label", "fit_report_body",
         "item_judgments", "decision_factors", "evaluation_incomplete",

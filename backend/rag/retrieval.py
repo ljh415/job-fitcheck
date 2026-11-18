@@ -1,5 +1,5 @@
-"""청크 단위 벡터 검색 공통 유틸 — evaluate.py(5단계, posting 단위로 집계)와
-gap.py(6단계, 청크 텍스트 자체가 필요)가 같이 쓴다.
+"""청크 단위 벡터 검색 공통 유틸 — evaluate.py(posting 단위로 집계)와
+gap.py(청크 텍스트 자체가 필요)가 같이 쓴다.
 """
 import sqlite3
 import struct
@@ -54,9 +54,8 @@ def ensure_fts5(conn: sqlite3.Connection) -> None:
     (content='document_chunk') 방식은 MATCH가 항상 빈 결과를 반환하는 문제가 있어서(원인 미확인,
     count(*)/LIKE는 되는데 MATCH만 안 됨) 독립형 테이블로 우회한다.
 
-    검색 경로(읽기)에서 호출하므로 여기서는 "없으면 생성"만 한다 — 한때 매 호출마다 무조건
-    재생성했더니 동시 요청에서 SQLite가 `database is locked`를 던지는 문제가 있었다(재현
-    스크립트로 확인). 청크가 실제로 바뀌었을 때 테이블을
+    검색 경로(읽기)에서 호출하므로 여기서는 "없으면 생성"만 한다 — 매 호출마다 무조건
+    재생성하면 동시 요청에서 SQLite가 `database is locked`를 던진다. 청크가 실제로 바뀌었을 때 테이블을
     최신화하는 책임은 `rebuild_fts5()`로 옮기고, 그건 청크를 실제로 바꾸는 `chunks.py`의
     `populate_posting_chunks()`/`populate_candidate_profile_chunks()`에서만 호출한다."""
     (exists,) = conn.execute(

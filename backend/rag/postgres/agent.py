@@ -1,9 +1,9 @@
 """대화형 근거 기반 RAG — Agent(tool-use) 구조.
 
-Phase 1~4의 "질문을 7종 중 하나로 분류 → 그 유형에 고정된 함수 하나만 실행"(`query_router.py`)
+`query_router.py`의 "질문을 7종 중 하나로 분류 → 그 유형에 고정된 함수 하나만 실행"
 방식은, 질문이 애매하거나 여러 능력을 조합해야 답할 수 있을 때 완전히 무관한 답을 내놓는 구조적
-결함이 실측으로 확인됐다("내가 RAG를 안하면 많이 불리할까?" 질문이 `single_skill_gap`으로
-분류돼 원본 데이터만 던지고 질문 자체엔 답을 안 하는 식으로 재현).
+한계가 있다("내가 RAG를 안하면 많이 불리할까?"가 `single_skill_gap`으로 분류돼 원본
+데이터만 던지고 질문 자체엔 답을 안 한다).
 
 이 모듈은 그 대신, 기존 함수들(`market_demand_hybrid`/`assess_gap`/`assess_all_gaps`/
 `list_postings`/`judge_topic_postings`/`compare_postings`/`generate_action_plan`/
@@ -11,9 +11,8 @@ Phase 1~4의 "질문을 7종 중 하나로 분류 → 그 유형에 고정된 �
 스스로 판단해 답하게 한다(ReAct 스타일 tool-use 루프, `llm.base.LLMProvider.run_agent()`).
 
 Claude/Gemini/OpenAI 셋 다 지원한다 — main이 이미 셋을 위계 없이 동등하게 다루므로,
-Agent도 같은 원칙을 따라야 필수 키(Gemini)만 있는 사용자도 쓸 수 있다("Claude 먼저 만들고
-나중에 확장"으로 Claude만 구현하면, 그 방식대로 main에 이식할 때 대다수 사용자가 못 쓰게
-된다). 임베딩(`embed_provider`)만 빼고, 오케스트레이션(`answer_query_agent()`)과
+Agent도 같은 원칙을 따라야 필수 키(Gemini)만 있는 사용자도 쓸 수 있다(Claude만 구현하면
+필수 키가 Gemini뿐인 사용자는 못 쓰게 된다). 임베딩(`embed_provider`)만 빼고, 오케스트레이션(`answer_query_agent()`)과
 도구 내부 판정(`_make_tool_executor()`)은 `llm.router.high_provider()`가 반환하는(=main의
 현재 설정을 따르는) **같은 provider/model 인스턴스 하나**를 공유한다 — 두 곳에 각각 provider를
 따로 하드코딩하면 구조적으로 어긋날 위험이 있어서다.

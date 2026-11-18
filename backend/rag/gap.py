@@ -1,4 +1,4 @@
-"""Plan A 6단계 — Gap 및 행동 엔진.
+"""Gap 및 행동 엔진.
 
 `01_lean_evidence_first_rag.md`의 원칙을 그대로 구현한다:
   - 기술 빈도·비율은 SQL/Python이 계산한다(LLM이 숫자를 만들지 않음).

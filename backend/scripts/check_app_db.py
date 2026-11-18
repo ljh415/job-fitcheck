@@ -265,8 +265,8 @@ with tempfile.TemporaryDirectory() as tmp:
     # v1.5.1 복구 경로: qa_migrations 기록이 아예 없는(=기기 추적 테이블이 없던 시절
     # 이미 성공한) 새 기기가 같은 내용으로 재호출하면, "already" 단락(같은 device의
     # 재시도 체크)이 아니라 content 기반 스킵으로 걸러져야 한다 — device_id를 반드시
-    # 처음 쓰는 값으로 해야 이 경로를 제대로 검증한다(Codex 2차 리뷰가 지적한 맹점:
-    # 이미 qa_migrations 표식이 있는 기기를 재사용하면 content 검사 전에 반환돼버림)
+    # 처음 쓰는 값으로 해야 이 경로를 제대로 검증한다(이미 qa_migrations 표식이
+    # 있는 기기를 재사용하면 content 검사 전에 반환돼버린다)
     retry_legacy_same_content = migrate_qa_slug_history(
         "device-legacy-untracked", "마이그레이션테스트__직무", pairs_a
     )

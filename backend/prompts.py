@@ -531,10 +531,9 @@ EVALUATE_FIT_TOOL_SCHEMA = {
     "required": ["fit_score", "fit_label", "strengths", "gaps", "fit_report_body"],
 }
 
-# ── 적합도 평가 구조 개편 — 1단계(판정 전용) 스키마 ──────────────────────────
-# docs/fit-eval-structural-redesign/PLAN.md 참고. 기존 EVALUATE_FIT_TOOL_SCHEMA는
-# Claude 경로 연결 전까지 그대로 둔다(하위 호환) — 이 스키마는 새 2단계 파이프라인
-# 전용이며 아직 실제 호출부에 연결되지 않았다.
+# ── 적합도 평가 — 1단계(판정 전용) 스키마 ──────────────────────────
+# 설계: docs/fit-eval-structural-redesign/PLAN.md. 이 스키마는 2단계 파이프라인 전용이고,
+# 기존 EVALUATE_FIT_TOOL_SCHEMA(비교·롤백용)와는 별개다.
 
 EVALUATE_FIT_JUDGE_TOOL_NAME = "submit_fit_judgments"
 EVALUATE_FIT_JUDGE_TOOL_DESCRIPTION = (
@@ -585,7 +584,7 @@ _DECISION_FACTOR_SCHEMA = {
 # stability는 백엔드 검증(fit_normalization.validate_decision_factors)이 status를
 # 구 CompanyFrontmatter stability_check(Literal)와 같은 값으로 엄격히
 # 제한한다. 위 공용 스키마는 status를 자유 서술로 유도해 "불안정" 같은 동의어가 나오면
-# 검증에서 통째로 폐기(판정 실패 fallback)되던 버그가 있었음(2026-09-02) — 이 필드만
+# 검증에서 통째로 폐기(판정 실패 fallback)되므로 이 필드만
 # enum으로 강제해 LLM이 검증 어휘를 벗어나지 않게 한다.
 _DECISION_FACTOR_SCHEMA_STABILITY = {
     **_DECISION_FACTOR_SCHEMA,
@@ -596,7 +595,7 @@ _DECISION_FACTOR_SCHEMA_STABILITY = {
 }
 
 # 사용자 지정 평가 기준은 입력의 번호 목록(criteria:N) 줄마다 판정 하나씩 — 한 요인에 상태 하나로
-# 묶으면 "서울 충족 + 규모 정보 없음" 같은 경우를 표현할 수 없어 조건부로 뭉개졌다(2026-11-11).
+# 묶으면 "서울 충족 + 규모 정보 없음" 같은 경우를 표현할 수 없어 조건부로 뭉개진다.
 _CUSTOM_CRITERION_SCHEMA = {
     "type": "object",
     "properties": {

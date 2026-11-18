@@ -11,10 +11,9 @@
      답의 회사명이 조회한 회사명과 정확히 같을 때만 채택하고 아니면 다음 경로로 넘어간다.
   1. Naver  — 검색결과 안의 안정적인 평점 블록(class="fds-listitem")을 파싱.
      (2026-11-05 기준 이 블록이 사라져 후보 0건 — 보류 중)
-     예전엔 JSON title 필드(최대 300자)를 정규식으로 훑었는데, Naver가 그
-     텍스트를 매번 다른 지점에서 잘라버려서 평점 부분이 종종 통째로 사라졌다
-     (카카오처럼 리뷰 많은 회사도 not_found로 오탐). fds-listitem 블록은 title
-     JSON과 별도로 안정적으로 렌더링되고 잘릴 걱정이 없다.
+     JSON title 필드는 Naver가 텍스트를 매번 다른 지점에서 잘라 평점 부분이 통째로
+     사라질 수 있어(리뷰 많은 회사도 not_found로 오탐) 쓰지 않는다. fds-listitem 블록은
+     title JSON과 별도로 안정적으로 렌더링되고 잘릴 걱정이 없다.
   2. DuckDuckGo HTML — Naver에서 못 찾은 경우 fallback
      단, 연속 요청 시 rate limiting (202) 발생 가능
 
@@ -476,7 +475,7 @@ if __name__ == "__main__":
         assert kakao.score is not None and kakao.score > 0
         print("카카오:", kakao.score, kakao.review_count, kakao.source)
 
-        # 에너닷: 소규모 회사, 예전에도 되던 케이스라 회귀 확인용
+        # 에너닷: 소규모 회사 — 회귀 확인용
         enerdat = await fetch_jobplanet_score("에너닷")
         assert enerdat.source in ("gemini_search", "search_snippet"), f"에너닷: {enerdat.source}"
         print("에너닷:", enerdat.score, enerdat.review_count, enerdat.source)

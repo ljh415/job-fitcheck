@@ -1,5 +1,5 @@
-"""정규화 판정 배열 처리 — 적합도 평가 구조 개편(docs/fit-eval-structural-redesign/PLAN.md)
-1단계 산출물을 다룬다. 완결성 검증·코드 fallback·gaps/strengths 파생·표 렌더링을
+"""정규화 판정 배열 처리 — 적합도 평가 1단계 산출물(설계: docs/fit-eval-structural-redesign/PLAN.md)을
+다룬다. 완결성 검증·코드 fallback·gaps/strengths 파생·표 렌더링을
 provider(Claude/OpenAI/Gemini) 공통으로 담당해, 각 provider가 같은 규칙을 따로
 구현하지 않게 한다."""
 import json
@@ -21,7 +21,7 @@ _ID_PREFIX_MAP = {
 # tuple로 둔다(set 아님) — `in`/`not in` 왼쪽 값(verdict)이 LLM 원본이라
 # list/dict 등 unhashable일 수 있는데, set 멤버십 검사는 왼쪽 값을 먼저 해시하려
 # 시도해 TypeError로 죽는다. tuple 멤버십은 ==만 쓰므로 어떤 타입이 와도 안전하게
-# False를 반환한다(2026-09-02 7차 리뷰 반영 + 자체 발견).
+# False를 반환한다.
 _VALID_VERDICTS = ("met", "unmet", "unclear")
 _VALID_EVIDENCE_BASIS = ("explicit", "assumed", "해당없음")
 
@@ -44,7 +44,7 @@ def build_input_items(company_data: dict) -> list[dict]:
     return items
 
 
-# 연차는 판정 표 행 한 곳에서만 판정한다(2026-11-14). 필수 요건 줄 중에 연차가 적힌 줄이 없으면
+# 연차는 판정 표 행 한 곳에서만 판정한다. 필수 요건 줄 중에 연차가 적힌 줄이 없으면
 # 따로 추출된 experience_required("5년 이상" 등)로 필수 행 하나를 만든다. 연차 줄이 없는 공고도
 # 판정을 받게 하려는 것이고, 값이 "신입"·"경력"처럼 숫자가 없으면 만들지 않는다.
 _YEAR_RE = re.compile(r"\d+\s*년|연차")
@@ -64,7 +64,7 @@ def _add_experience_row(items: list[dict], company_data: dict) -> None:
 
 # 줄 앞의 목록 기호("- ", "* ", "• ", "1. ", "2) ")만 뗀다. 뒤에 공백이 있을 때만 — "3.0점 이상"이나
 # "**굵게**"의 앞부분을 기호로 오인해 자르지 않기 위해서다. 떼는 이유는 모델 이해가 아니라
-# 요약 줄에 줄 문구가 그대로 나오기 때문(2026-11-11).
+# 요약 줄에 줄 문구가 그대로 나오기 때문이다.
 _LIST_MARKER_RE = re.compile(r"^(?:[-*•]|\d+[.)])\s+")
 
 
@@ -131,7 +131,7 @@ def reconcile_judgments(input_items: list[dict], llm_items: list[dict]) -> tuple
       정답이 "해당없음" 하나뿐이므로 폐기하지 않고 코드가 직접 보정한다. 단 verdict
       자체가 무효거나 evidence_basis가 enum 안의 다른 값(예: explicit)이면 보정하지
       않는다 — met을 의도했는데 verdict를 잘못 반환했을 가능성이 있어 그 모순은
-      그대로 fallback으로 드러내야 한다(2026-09-02, Codex 의견 반영).
+      그대로 fallback으로 드러내야 한다.
     - 최종 순서는 LLM이 돌려준 순서가 아니라 입력 순서를 따른다.
     - 빠진/무효 id는 code_fallback으로 채운다(재요청하지 않음).
 
@@ -148,7 +148,7 @@ def reconcile_judgments(input_items: list[dict], llm_items: list[dict]) -> tuple
             continue
         raw_id = raw.get("id")
         # id가 list/dict 등 unhashable이면 dict key로 쓰는 순간 TypeError로 평가 전체가
-        # 죽는다 — dict key로 쓰기 전에 반드시 타입을 먼저 확인한다(2026-09-02 6차 리뷰 반영).
+        # 죽는다 — dict key로 쓰기 전에 반드시 타입을 먼저 확인한다.
         if not isinstance(raw_id, str):
             logger.warning("reconcile_judgments: id가 문자열 아님 — raw=%r", raw_id)
             continue
@@ -174,7 +174,7 @@ def reconcile_judgments(input_items: list[dict], llm_items: list[dict]) -> tuple
         verdict = raw.get("verdict")
         evidence_basis = raw.get("evidence_basis")
         # 정답이 결정론적으로 하나뿐인 필드는 LLM이 스키마 enum을 벗어나도
-        # 항목 전체를 버리지 않고 코드가 직접 확정한다(2026-09-02, Codex 의견 반영).
+        # 항목 전체를 버리지 않고 코드가 직접 확정한다.
         if verdict in ("unmet", "unclear") and evidence_basis not in _VALID_EVIDENCE_BASIS:
             logger.warning(
                 "reconcile_judgments: id=%s evidence_basis 자동 보정 %r → '해당없음'",
@@ -184,10 +184,9 @@ def reconcile_judgments(input_items: list[dict], llm_items: list[dict]) -> tuple
         # evidence_summary/evidence_source/evidence_excerpt/reason은 표·gaps 렌더링에서
         # f-string과 .replace()로 직접 문자열 취급된다 — dict/list 등이 섞여 들어오면
         # 판정 자체는 형식상 맞아도 렌더링 단계에서 죽으므로 여기서 같이 걸러낸다
-        # (2026-09-02 브랜치 전체 리뷰 반영). 스키마상 이 4개는 전부 required라
+        # 스키마상 이 4개는 전부 required라
         # 필드 자체가 아예 없는 것도 위반이다 — raw.get(k, "")처럼 기본값을 주면
-        # "필드 누락"이 "빈 문자열이라 유효함"으로 둔갑하므로 기본값 없이 검사한다
-        # (2026-09-02 6차 리뷰 반영).
+        # "필드 누락"이 "빈 문자열이라 유효함"으로 둔갑하므로 기본값 없이 검사한다.
         descriptive_fields_ok = all(
             isinstance(raw.get(k), str)
             for k in ("evidence_summary", "evidence_source", "evidence_excerpt", "reason")
@@ -195,8 +194,7 @@ def reconcile_judgments(input_items: list[dict], llm_items: list[dict]) -> tuple
 
         if not descriptive_fields_ok or not _is_valid_judgment(verdict, evidence_basis):
             # 사용자가 fallback 사유를 직접 판단할 수 있도록 원본 근거 텍스트도 남긴다
-            # (2026-09-02 — verdict/evidence_basis 값만으로는 실제로 애매한 판정이었는지
-            # 확인할 방법이 없다는 지적 반영).
+            # (verdict/evidence_basis 값만으로는 실제로 애매한 판정이었는지 알 수 없다).
             logger.warning(
                 "reconcile_judgments: id=%s 조건 위반(verdict=%r, evidence_basis=%r, "
                 "descriptive_fields_ok=%s) → code_fallback | reason=%r evidence_summary=%r",
@@ -239,8 +237,7 @@ def label_from_score(fit_score: int) -> str:
 
 
 def safe_fit_score(raw_score) -> tuple[int | None, bool]:
-    """`fit_score`를 안전하게 정수로 변환한다(2026-09-01 2차 리뷰, 2026-09-02 브랜치
-    전체 리뷰 반영) — provider가 도구 응답 스키마를 서버에서 강제 검증하지 않으므로,
+    """`fit_score`를 안전하게 정수로 변환한다 — provider가 도구 응답 스키마를 서버에서 강제 검증하지 않으므로,
     값이 없거나 숫자로 변환 불가능할 수 있다. 이 경우 0점 같은 그럴듯한 잘못된
     기본값으로 조용히 넘어가지 않고 (None, True)를 반환해 `evaluation_incomplete`를
     강제한다. `int(True)==1`, `int(72.9)==72`처럼 `int()`가 자체적으로 허용하는
@@ -258,7 +255,7 @@ _DECISION_FACTOR_KEYS = ("location", "stability", "custom_criteria")
 # 각자 하드코딩하면 한쪽만 바뀔 때 조용히 어긋나므로 상수 하나로 공유).
 _FALLBACK_STATUS = "확인필요"
 # custom_criteria(사용자 지정 기준)는 한 요인이 아니라 기준 줄마다 판정 하나씩의 목록이다
-# (2026-11-11 — 한 상태로 묶으면 "서울 충족 + 규모 정보 없음"을 표현할 수 없어 조건부로 뭉개졌다).
+# (한 상태로 묶으면 "서울 충족 + 규모 정보 없음"을 표현할 수 없어 조건부로 뭉개진다).
 _SIMPLE_FACTOR_KEYS = tuple(k for k in _DECISION_FACTOR_KEYS if k != "custom_criteria")
 _CUSTOM_STATUS_VALUES = ("충족", "미달", "미확인")
 
@@ -267,7 +264,7 @@ _CUSTOM_STATUS_VALUES = ("충족", "미달", "미확인")
 # location은 여기 포함하지 않는다 — 프롬프트가 stability처럼 짧은 고정 어휘를
 # 지시하지 않고("근무지 — 후보자 선호 위치가 설정된 경우만 반영") "정보없음"/"해당없음"
 # 등도 정상값일 수 있어서, enum으로 좁히면 정상 케이스까지 판정 실패로 오분류할 위험이
-# 있다(2026-09-02 7차 리뷰에서 시도했다가 위험성 확인 후 되돌림 — 별도 제품 결정 필요).
+# 있다(별도 제품 결정 필요).
 _STABILITY_CHECK_VALUES = {"충족", "조건부", "미달", "미확인"}
 _STATUS_ENUM_BY_KEY = {"stability": _STABILITY_CHECK_VALUES}
 
@@ -299,12 +296,11 @@ def _reconcile_custom_criteria(llm_entries, criteria_lines: list[str]) -> tuple[
 
 def validate_decision_factors(decision_factors: dict, criteria_lines: list[str] | None = None) -> tuple[dict, bool]:
     """decision_factors의 5개 단일 요인이 전부 존재하고 `status`/`note`가 문자열인지,
-    stability는 status가 구 필드와 같은 enum인지 검증한다(2026-09-01 2차
-    리뷰, 2026-09-02 4·5차 리뷰 반영). 위반 시 안전한 기본값(확인 필요 status·note)
+    stability는 status가 구 필드와 같은 enum인지 검증한다. 위반 시 안전한 기본값(확인 필요 status·note)
     으로 교체한 뒤 incomplete로 표시한다. 최상위 `decision_factors` 자체가
     dict가 아니면(provider가 list/문자열/숫자를 반환하는 등) `.get()` 호출이
     `AttributeError`로 죽어 1단계 LLM 호출 비용만 쓰고 평가 전체가 예외로
-    끝나는 것을 막기 위해 먼저 빈 dict로 정규화한다(5차 리뷰 반영).
+    끝나는 것을 막기 위해 먼저 빈 dict로 정규화한다.
     사용자 지정 기준(custom_criteria)은 criteria_lines의 줄마다 하나씩 맞춘다
     (`_reconcile_custom_criteria`)."""
     if not isinstance(decision_factors, dict):
@@ -373,13 +369,12 @@ def render_decision_factors_summary(decision_factors: dict) -> str:
 
     2단계 보고서 프롬프트는 gaps 위주라 문제없는 판정은 종합
     의견 산문에 거의 안 나타난다 — 판정 자체를 안 한 게 아니라 결과가 괜찮아서
-    언급을 안 하는 것뿐인데, 사용자 입장에선 이게 구분이 안 된다(2026-09-02,
-    그래비티랩스 실사례로 LLM Judge 비교 실험 중 발견 — 잡플래닛·사용자 지정
-    기준이 실제로는 정확히 판정됐는데 산문에서 빠져 있었음). LLM에게 "언급하라"고
+    언급을 안 하는 것뿐인데, 사용자 입장에선 이게 구분이 안 된다.
+    LLM에게 "언급하라"고
     시키는 대신 이미 계산된 값을 코드가 그대로 이어붙인다 — 추가 LLM 호출이나
     입력 토큰 증가 없이(decision_factors는 이미 2단계 프롬프트에 통째로 들어가
     있음) 판정 여부가 매번 똑같은 형식으로 노출되게 한다. 비기술 요인은 gaps에
-    올리지 않으므로(2026-11-11 결정) 이 한 줄이 화면에서 비기술 요인이 나오는 유일한 곳이다."""
+    올리지 않으므로 이 한 줄이 화면에서 비기술 요인이 나오는 유일한 곳이다."""
     parts = []
     for key, label in _DECISION_FACTOR_LABELS.items():
         factor = decision_factors.get(key)
@@ -400,10 +395,9 @@ def render_decision_factors_summary(decision_factors: dict) -> str:
 def derive_decision_factor_gaps(decision_factors: dict) -> list[str]:
     """판정에 실패한(status가 `_FALLBACK_STATUS`) 비기술 요인만 "(확인필요)" gap으로 노출한다.
     판정 실패와 "정상이라 문제없음"이 구분 안 돼 리포트에서 조용히 사라지는 걸 막기 위해
-    (2026-09-02, 실제 refit 결과에서 stability 판정 실패가 리포트에 전혀 안 보이는 문제를
-    Codex 교차검증으로 발견) 남겨 둔 것이다. 조건부·미달·낮음 판정은 gaps로 올리지 않는다 —
-    비기술 요인은 고정 요약 한 줄(render_decision_factors_summary)에만 나온다(2026-11-11
-    결정; 이전엔 요인마다 gap 한 줄씩 올라와 필수·우대 요건 갭과 섞였다). 사용자 지정 기준은
+    남겨 둔 것이다. 조건부·미달·낮음 판정은 gaps로 올리지 않는다 —
+    비기술 요인은 고정 요약 한 줄(render_decision_factors_summary)에만 나온다
+    (요인마다 gap 한 줄씩 올리면 필수·우대 요건 갭과 섞인다). 사용자 지정 기준은
     줄마다 하나씩 노출한다."""
     gaps = []
     for key, label in _DECISION_FACTOR_LABELS.items():
@@ -434,7 +428,7 @@ def fallback_factor_keys(decision_factors: dict) -> list[str]:
 def render_custom_criteria_for_score(entries) -> str:
     """점수 호출 입력의 `### 사용자 지정 평가 기준(사용자의 지시)` 구역 본문. 줄마다
     `- 줄 문구: 상태 — note`, 줄이 없으면 `(없음)`. 사용자 기준을 비기술 요인 JSON(기존 분석 결과로
-    취급돼 지시로 안 읽힘)과 분리해 사용자의 지시로 보여주기 위한 것이다(2026-11-11)."""
+    취급돼 지시로 안 읽힘)과 분리해 사용자의 지시로 보여주기 위한 것이다."""
     rows = [f"- {e.get('source_item', '')}: {e.get('status')} — {e.get('note', '')}"
             for e in (entries if isinstance(entries, list) else []) if isinstance(e, dict)]
     return "\n".join(rows) if rows else "(없음)"
@@ -442,13 +436,13 @@ def render_custom_criteria_for_score(entries) -> str:
 
 def derive_legacy_checks(decision_factors: dict) -> dict:
     """decision_factors → 구 CompanyFrontmatter 필드(stability_check/location_check) 매핑.
-    salary_check는 연봉 요인을 평가에서 뺀 뒤(2026-11-12) 항상 None으로 비운다 — 재평가가
-    `model_copy(update=…)`로 필드를 덮어쓰므로 옛 값이 남지 않게 키는 유지한다. CSV 내보내기·MCP 계약 하위 호환용(4번 열린 질문, 결정:
-    B — decision_factors로 대체하지 않고 계속 채운다). status는 프롬프트가 이미
+    salary_check는 연봉 요인이 평가에서 빠져 항상 None으로 비운다 — 재평가가
+    `model_copy(update=…)`로 필드를 덮어쓰므로 옛 값이 남지 않게 키는 유지한다. CSV 내보내기·MCP 계약 하위 호환용이라
+    decision_factors로 대체하지 않고 계속 채운다. status는 프롬프트가 이미
     이 구 필드들과 같은 어휘로 채우도록 지시돼 있으므로(EVALUATE_FIT_JUDGE_SYSTEM
     [decision_factors 판정]) 그대로 옮기되, enum을 벗어나면 버린다(salary_check/
     stability_check는 Pydantic Literal이라 임의 문자열을 넣으면 저장이 깨진다).
-    validate_decision_factors()가 status를 문자열로 보장하지만(4차 리뷰 반영),
+    validate_decision_factors()가 status를 문자열로 보장하지만,
     이 함수 자체도 비문자열 status가 들어와도 안전하도록 isinstance로 한 번 더
     막는다(set 멤버십 검사에 dict 등 unhashable 값이 들어오면 TypeError)."""
     stability_status = (decision_factors.get("stability") or {}).get("status")
@@ -463,9 +457,8 @@ def derive_legacy_checks(decision_factors: dict) -> dict:
 def _escape_cell(text: str) -> str:
     """마크다운 표 셀 이스케이프 — '|'와 줄바꿈이 표 구조를 깨는 것을 방지한다. '~'도
     이스케이프한다 — LLM이 "A~B~C" 같은 구분 기호로 흔히 쓰는데, 프론트(marked.js)가
-    단일 '~'로도 취소선(strikethrough)을 적용해 글자가 깨져 보인다(2026-09-02, prod
-    실사례 그래비티랩스 건에서 확인 — "문제 정의~학습 파이프라인~평가"가 "학습"만
-    취소선으로 렌더링됨). '\\~'는 CommonMark 표준 이스케이프라 화면엔 그대로 '~'로
+    단일 '~'로도 취소선(strikethrough)을 적용해 글자가 깨져 보인다("문제 정의~학습 파이프라인~평가"가 "학습"만
+    취소선으로 렌더링된다). '\\~'는 CommonMark 표준 이스케이프라 화면엔 그대로 '~'로
     보이고 문법으로만 해석 안 된다."""
     return (text or "").replace("|", "\\|").replace("~", "\\~").replace("\n", " ").strip()
 
@@ -474,8 +467,7 @@ _VERDICT_SYMBOL = {"met": "✅ 충족", "unmet": "❌ 미충족", "unclear": "�
 
 # 자격요건/우대사항은 "충족 여부"가 자연스럽지만, 주요 업무(responsibility)는 통과·탈락
 # 기준이 아니라 후보자 경험이 그 업무와 얼마나 맞닿아 있는지를 보는 항목이라 같은 단어를
-# 쓰면 어색하다(2026-09-02, 실제 화면 비교 중 사용자 지적 — 세 표가 전부 자격요건 표의
-# 컬럼명을 그대로 재사용하고 있었음). 판정 구조(met/unmet/unclear + 기호)는 내부 일관성
+# 쓰면 어색하다. 판정 구조(met/unmet/unclear + 기호)는 내부 일관성
 # 검증을 위해 그대로 유지하고, 표시되는 컬럼명만 표 종류별로 분리한다.
 _TABLE_COLUMNS = {
     "default": ("항목", "충족 여부"),
@@ -528,7 +520,7 @@ def normalize_and_render(judge_result: dict, company_data: dict, criteria_lines:
 
     REST(`company_analysis.evaluate_fit_structured()`)와 MCP(신규 구조화
     계약)가 이 함수 하나를 공유한다 — 순서를 두 곳에 각각 복제하면 서서히
-    달라질 위험이 있어(2026-09-03 Codex 리뷰 반영), 정규화 로직은 여기
+    달라질 위험이 있어 정규화 로직은 여기
     한 곳에만 존재한다.
 
     반환값의 report_user는 EVALUATE_FIT_REPORT_USER_TEMPLATE을 이미 채운
@@ -609,7 +601,7 @@ if __name__ == "__main__":
         {"id": "preferred:0", "source_item": "문제 정의 및 해결 의지"},
     ], inputs
 
-    # 1-1. 연차 행(2026-11-14) — 필수 요건에 연차 줄이 없고 experience_required에 숫자가 있으면 필수 행 추가
+    # 1-1. 연차 행 — 필수 요건에 연차 줄이 없고 experience_required에 숫자가 있으면 필수 행 추가
     with_exp = build_input_items({**company_data, "experience_required": "5년 이상"})
     assert with_exp[2] == {"id": "required:2", "source_item": "경력 5년 이상"} and with_exp[3]["id"] == "preferred:0", with_exp
     assert build_input_items({**company_data, "experience_required": "경력 3~7년"})[2]["source_item"] == "경력 3~7년"
@@ -649,8 +641,7 @@ if __name__ == "__main__":
         "순서는 LLM 반환 순서가 아니라 입력 순서"
 
     # 2-1. llm_items 자체가 list가 아니거나 원소가 dict가 아니면 AttributeError 없이
-    # 전부 fallback으로 안전 처리(2026-09-02 브랜치 전체 리뷰 반영 — provider가
-    # tool schema를 심하게 어겨도 예외로 죽지 않아야 함)
+    # 전부 fallback으로 안전 처리(provider가 tool schema를 심하게 어겨도 예외로 죽지 않아야 함)
     result_not_list, incomplete_not_list = reconcile_judgments(inputs, {"id": "required:0"})
     assert incomplete_not_list is True
     assert all(r["filled_by"] == "code_fallback" for r in result_not_list), result_not_list
@@ -672,7 +663,7 @@ if __name__ == "__main__":
     assert result_bad_desc[0]["filled_by"] == "code_fallback", result_bad_desc
 
     # 2-3. id가 list/dict 등 unhashable이면 dict key로 쓰다 TypeError로 죽을 수 있음 —
-    # 타입 확인이 dict key 사용보다 먼저 와야 함(2026-09-02 6차 리뷰 반영)
+    # 타입 확인이 dict key 사용보다 먼저 와야 함
     result_bad_id, incomplete_bad_id = reconcile_judgments(
         [{"id": "required:0", "source_item": "A"}],
         [{"id": ["required:0"], "verdict": "met"}, {"id": {"x": 1}, "verdict": "met"}],
@@ -682,7 +673,7 @@ if __name__ == "__main__":
 
     # 2-4. 서술 필드가 dict/list가 아니라 아예 누락된 경우도 스키마 위반(required)이라
     # fallback돼야 함 — raw.get(k, "")처럼 기본값을 주면 "누락"이 "빈 문자열이라
-    # 유효함"으로 둔갑해서 놓쳤던 경계(2026-09-02 6차 리뷰 반영)
+    # 유효함"으로 둔갑하는 경계
     result_missing_desc, incomplete_missing_desc = reconcile_judgments(
         [{"id": "required:0", "source_item": "A"}],
         [{"id": "required:0", "verdict": "met", "evidence_basis": "explicit"}],  # 서술 필드 전부 누락
@@ -691,7 +682,7 @@ if __name__ == "__main__":
     assert result_missing_desc[0]["filled_by"] == "code_fallback", result_missing_desc
 
     # 2-5. verdict가 list/dict 등 unhashable이면 _VALID_VERDICTS가 set이었을 때 `in` 체크에서
-    # TypeError로 죽었다 — tuple로 바꿔 방지(2026-09-02 7차 리뷰 준비 중 자체 발견 + 8차 리뷰 반영).
+    # TypeError로 죽는다 — tuple로 바꿔 방지.
     # 서술 필드는 전부 채워서 그 경계가 아니라 verdict 타입 때문에 fallback되는지 확인.
     inputs_type_check = [{"id": "required:0", "source_item": "A"}]
     full_desc = {"evidence_summary": "근거", "evidence_source": "", "evidence_excerpt": "", "reason": ""}
@@ -710,7 +701,7 @@ if __name__ == "__main__":
     assert incomplete2 is False
     assert "severity" not in result2[0], "severity는 결과에 남지 않아야 함"
 
-    # 3-2. 조건부 불변조건 위반은 필드가 다 채워져 있어도 무효 → fallback (Codex 리뷰 2026-09-01 지적)
+    # 3-2. 조건부 불변조건 위반은 필드가 다 채워져 있어도 무효 → fallback
     # met인데 evidence_basis가 "해당없음"(met에는 explicit/assumed만 허용)
     llm4 = [{"id": "required:0", "verdict": "met", "evidence_basis": "해당없음", "evidence_summary": "근거 없음",
              "evidence_source": "", "evidence_excerpt": "", "reason": ""}]
@@ -753,8 +744,7 @@ if __name__ == "__main__":
     assert incomplete9 is True, "unmet에 evidence_basis=assumed는 무효(fallback)여야 함"
 
     # 3-5-1. unclear인데 evidence_basis가 enum 밖 빈 문자열이면 "해당없음"으로 자동 보정
-    # (2026-09-02, 그래비티랩스 재분석 재현 + Codex 의견 반영 — 정답이 하나뿐인 필드는
-    # 항목 전체를 버리지 않고 코드가 직접 확정한다)
+    # (정답이 하나뿐인 필드는 항목 전체를 버리지 않고 코드가 직접 확정한다)
     llm11 = [{"id": "required:0", "verdict": "unclear", "evidence_basis": "",
               "evidence_summary": "", "evidence_source": "", "evidence_excerpt": "", "reason": "이유"}]
     result11, incomplete11 = reconcile_judgments(inputs2, llm11)
@@ -768,8 +758,7 @@ if __name__ == "__main__":
     assert safe_fit_score(150) == (100, False), "범위 밖 점수는 clamp"
     assert safe_fit_score(-5) == (0, False)
     # bool은 int의 서브클래스라 int(True)==1이 조용히 통과하므로 명시적으로 막아야 함.
-    # 소수점 float(예: 72.9)도 스키마가 요구하는 정수 타입이 아니므로 실패 처리(2026-09-02
-    # 브랜치 전체 리뷰 반영).
+    # 소수점 float(예: 72.9)도 스키마가 요구하는 정수 타입이 아니므로 실패 처리.
     assert safe_fit_score(True) == (None, True), "bool은 fit_score로 허용 안 됨"
     assert safe_fit_score(72.9) == (None, True), "소수점 float은 fit_score로 허용 안 됨"
 
@@ -782,8 +771,7 @@ if __name__ == "__main__":
     assert result_ok == valid_factors
 
     # 3-7-2. 최상위 decision_factors 자체가 dict가 아니면 AttributeError 없이
-    # 전부 fallback+incomplete로 정규화(5차 리뷰 반영 — provider가 list/문자열/
-    # 숫자를 반환해도 죽지 않아야 함)
+    # 전부 fallback+incomplete로 정규화(provider가 list/문자열/숫자를 반환해도 죽지 않아야 함)
     for bad_top in ([], "bad", 1, None):
         result_bad_top, incomplete_bad_top = validate_decision_factors(bad_top)
         assert incomplete_bad_top is True, bad_top
@@ -792,13 +780,13 @@ if __name__ == "__main__":
 
     # 3-7-3. stability는 status가 구 필드 enum 밖이면 무효
     # (schema상 허용되는 임의 문자열이 evaluation_incomplete=false로 통과해 legacy
-    # 필드만 조용히 None이 되는 정보 유실 방지, 5차 리뷰 반영)
+    # 필드만 조용히 None이 되는 정보 유실 방지)
     enum_violation = dict(valid_factors)
     enum_violation["stability"] = {"status": "강", "note": ""}
     result_enum, incomplete_enum = validate_decision_factors(enum_violation)
     assert incomplete_enum is True
     assert result_enum["stability"]["status"] == "확인필요"
-    # 3-7-3-1. 안정성은 정보가 없을 때 "미확인"을 쓸 수 있다(2026-11-11)
+    # 3-7-3-1. 안정성은 정보가 없을 때 "미확인"을 쓸 수 있다
     stab_unknown = dict(valid_factors)
     stab_unknown["stability"] = {"status": "미확인", "note": "투자·매출 정보 없음"}
     result_su, incomplete_su = validate_decision_factors(stab_unknown)
@@ -839,11 +827,10 @@ if __name__ == "__main__":
     assert result_broken["stability"]["status"] == _FALLBACK_STATUS, "비문자열 status는 그대로 노출되면 안 됨"
     assert "jobplanet" not in result_broken, "잡플래닛 요인은 정규화 결과에 없다"
     assert result_broken["location"]["status"] == _FALLBACK_STATUS, "누락된 요인은 안전한 기본값으로 채워져야 함"
-    # 연봉 요인은 평가에서 뺐다(2026-11-12) — 입력에 있어도 정규화 결과에 나오지 않는다
+    # 연봉 요인은 평가에서 제외 — 입력에 있어도 정규화 결과에 나오지 않는다
     assert "salary" not in validate_decision_factors({**valid_factors, "salary": {"status": "양호", "note": ""}})[0]
 
-    # 3-7-1. status가 dict 등 비문자열이면 무효 처리(4차 리뷰 반영 —
-    # 안 걸러지면 derive_legacy_checks()가 그대로 옮겨 location_check(str) 저장이 깨짐)
+    # 3-7-1. status가 dict 등 비문자열이면 무효 처리(안 걸러지면 derive_legacy_checks()가 그대로 옮겨 location_check(str) 저장이 깨짐)
     bad_status_factors = dict(valid_factors)
     bad_status_factors["location"] = {"status": {"nested": "dict"}, "note": ""}
     result_bad_status, incomplete_bad_status = validate_decision_factors(bad_status_factors)
@@ -871,8 +858,8 @@ if __name__ == "__main__":
     table_items = [
         {"id": "required:0", "source_item": "RDB/Mongo | 위험문자", "verdict": "unmet",
          "evidence_summary": "근거\n줄바꿈 포함"},
-        # "~"를 구분 기호로 쓴 실사례(그래비티랩스, 2026-09-02) — marked.js가 단일 '~'도
-        # 취소선으로 렌더링해 글자가 깨져 보이던 문제 재현·회귀 방지
+        # "~"를 구분 기호로 쓴 실사례 — marked.js가 단일 '~'도
+        # 취소선으로 렌더링해 글자가 깨지는 문제의 회귀 방지
         {"id": "required:1", "source_item": "문제 정의~학습 파이프라인~평가", "verdict": "met",
          "evidence_basis": "explicit", "evidence_summary": "데이터 수집~전처리~적재 경험"},
     ]
@@ -884,13 +871,12 @@ if __name__ == "__main__":
     assert "데이터 수집\\~전처리\\~적재 경험" in table, table
     assert "~" not in table.replace("\\~", ""), "이스케이프 안 된 '~'가 남아있으면 안 됨"
 
-    # 5-1. table_kind="responsibility"는 컬럼명이 달라야 함(2026-09-02, 실제 화면
-    # 비교 중 사용자 지적 — 세 표가 전부 같은 컬럼명을 재사용하고 있었음)
+    # 5-1. table_kind="responsibility"는 컬럼명이 달라야 함
     resp_table = render_requirement_table(table_items, "직무 적합도 분석", table_kind="responsibility")
     assert "| 주요 업무 | 관련 경험 여부 | 근거 |" in resp_table, resp_table
 
-    # 6. derive_decision_factor_gaps — 조건부·미달·낮음도 gap으로 올리지 않는다(2026-11-11:
-    # 비기술 요인은 고정 요약 한 줄에만 나온다). 판정 실패(확인필요)만 gap
+    # 6. derive_decision_factor_gaps — 조건부·미달·낮음도 gap으로 올리지 않는다
+    # (비기술 요인은 고정 요약 한 줄에만 나온다). 판정 실패(확인필요)만 gap
     decision_factors = {
         "location": {"status": "충족", "note": "서울 일치"},
         "stability": {"status": "낮음", "note": "소규모"},
@@ -899,8 +885,7 @@ if __name__ == "__main__":
     assert df_gaps == [], f"조건부·미달·낮음은 gap으로 올라가면 안 됨: {df_gaps}"
 
     # 6-0. render_decision_factors_summary — 문제없는 정상 판정도 항상 노출돼야
-    # 함(2026-09-02, LLM Judge 비교 실험에서 잡플래닛 정상 판정이 산문에서 빠지는
-    # 문제 발견 반영). 없는 키는 "확인필요"로 표시.
+    # 함. 없는 키는 "확인필요"로 표시.
     summary_line = render_decision_factors_summary(decision_factors)
     assert "기업 안정성 낮음" in summary_line, summary_line
     assert "잡플래닛" not in summary_line, "잡플래닛은 비기술 요인 항목이 아니라 사용자 지정 기준 줄로만 나온다"
@@ -920,7 +905,7 @@ if __name__ == "__main__":
     assert "사용자 지정 평가 기준" not in sl_lines, "기준 줄이 있으면 요인 이름 대신 줄 문구가 나옴"
 
     # 6-1. fallback(status=_FALLBACK_STATUS)은 "(확인필요)" gap으로
-    # 노출돼야 함 — 안 그러면 판정 실패가 리포트에서 조용히 사라짐(2026-09-02 실사례로 발견)
+    # 노출돼야 함 — 안 그러면 판정 실패가 리포트에서 조용히 사라짐
     decision_factors_with_fallback = dict(decision_factors)
     decision_factors_with_fallback["stability"] = {
         "status": _FALLBACK_STATUS, "note": "시스템이 이 요인을 판정하지 못함",
@@ -928,12 +913,10 @@ if __name__ == "__main__":
     df_gaps_fb = derive_decision_factor_gaps(decision_factors_with_fallback)
     assert any(g.startswith("(확인필요) 기업 안정성") for g in df_gaps_fb), df_gaps_fb
 
-    # 6-2. 연봉 요인은 평가에서 뺐으므로(2026-11-12) 입력에 있어도 gap·요약 줄에 안 나온다
+    # 6-2. 연봉 요인은 평가에서 제외 — 입력에 있어도 gap·요약 줄에 안 나온다
     assert derive_decision_factor_gaps({"salary": {"status": _FALLBACK_STATUS, "note": "x"}}) == []
 
-    # 6-3. 잡플래닛 점수(3.0 미만)로 gap을 보정하던 로직은 비기술 요인을 gaps에서 뺀 2026-11-11
-    # 결정으로 없앴다 — 판정 실패만 노출하고, 정상 판정은 점수와 무관하게 gap이 아니다.
-    # 잡플래닛은 비기술 요인 항목에서 뺐다(2026-11-12) — 입력에 있어도 gap·요약 줄에 안 나온다
+    # 6-3. 잡플래닛은 비기술 요인 항목이 아니다 — 점수와 무관하게 입력에 있어도 gap·요약 줄에 안 나온다
     assert derive_decision_factor_gaps({"jobplanet": {"status": _FALLBACK_STATUS, "note": "x"}}) == []
     assert derive_decision_factor_gaps({"location": {"status": "조건부", "note": "재택 불가"}}) == []
     # 6-4. 사용자 지정 기준은 판정 실패한 줄만 줄마다 노출, fallback_factor_keys가 줄 id까지 돌려줌
@@ -973,8 +956,7 @@ if __name__ == "__main__":
     assert "## 추가 평가 기준 (사용자 지정)" in sec and prompts.CUSTOM_CRITERIA_BOUNDARY_NOTICE in sec, sec
 
     # 8. normalize_and_render — REST/MCP 공유 정규화 함수 통합 테스트
-    # (2026-09-03, MCP 구조화 계약 전환 1단계). company_analysis.evaluate_fit_structured()가
-    # 하던 걸 그대로 이 함수 하나로 옮긴 것이라, 여기서의 정상/이상 케이스가 두 경로 모두를 검증한다.
+    # company_analysis.evaluate_fit_structured()가 하던 걸 그대로 이 함수 하나로 옮긴 것이라, 여기서의 정상/이상 케이스가 두 경로 모두를 검증한다.
     nr_company_data = {
         "required_skills": ["Python 3년 이상"],
         "preferred_skills": ["AWS 경험"],

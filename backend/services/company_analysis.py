@@ -58,8 +58,7 @@ async def evaluate_fit(
             operation=operation,
             reasoning_effort=snap.reasoning_effort,
         )
-        # Gemini 전용: location_check → gaps 자동 브릿지. 예전엔 최초 평가에만 있고 재평가엔
-        # 빠져 있던 버그를 이 통합 과정에서 발견 — 이제 두 경로 모두 동일하게 보정된다.
+        # Gemini 전용: location_check → gaps 자동 브릿지(최초 평가·재평가 두 경로 모두 동일하게 보정).
         loc = fit_result.get("location_check", "")
         gaps = fit_result.get("gaps", [])
         if loc and ("조건부" in loc or "미달" in loc):
@@ -96,10 +95,10 @@ async def evaluate_fit_structured(
     raw_text: str,
     operation: str,
 ) -> tuple[dict, str]:
-    """적합도 평가 구조 개편(docs/fit-eval-structural-redesign/PLAN.md) 파이프라인.
+    """적합도 평가 파이프라인(설계: docs/fit-eval-structural-redesign/PLAN.md).
     `_process_company()`/`refit_company()`(backend/routers/companies.py)가 실제로
     호출하는 현재 활성 경로다 — `evaluate_fit()`은 비교·롤백용으로 코드에 남아있을
-    뿐 런타임 호출자가 없다(2026-09-02, 실호출부 연결 커밋 반영).
+    뿐 런타임 호출자가 없다.
 
     1단계(판정 전용) 호출 → 코드가 완결성 검증·jobplanet/location 등급 강제·표
     렌더링·gaps/strengths 파생 → 2단계(판정 표 전체를 보고 점수를 정하고 보고서 산문까지 쓰는) 호출, LLM 호출 2회.
@@ -136,7 +135,7 @@ async def evaluate_fit_structured(
     )
     # judge_result 자체가 dict가 아니어도(provider가 tool 인자를 배열 등으로 잘못
     # 반환) normalize_and_render()가 내부에서 빈 dict로 정규화해 fallback+incomplete
-    # 계약을 그대로 지킨다(2026-09-02 7차 리뷰 반영, 2026-09-03 공유 함수로 이관).
+    # 계약을 그대로 지킨다.
     normalized = fit_normalization.normalize_and_render(judge_result, company_data, criteria_lines)
 
     # 보고서 호출이 정리된 판정 표 전체를 보고 점수를 정하고(점수 → 산문 순서) 산문까지
@@ -165,8 +164,8 @@ async def evaluate_fit_structured(
     fit_label = fit_normalization.label_from_score(fit_score)
 
     # 비기술 요인 6개를 코드가 고정된 한 줄로 항상 노출 — LLM 종합 의견은 gap 위주라
-    # 문제없는 판정은 산문에서 거의 빠지는데, 그게 "판정 안 함"과
-    # 구분이 안 됐다(2026-09-02, LLM Judge 비교 실험 발견). LLM 재호출 없음(입력
+    # 문제없는 판정은 산문에서 거의 빠져 "판정 안 함"과
+    # 구분이 안 된다. LLM 재호출 없음(입력
     # 토큰도 안 늘어남 — decision_factors는 이미 report_user에 통째로 들어가 있음).
     fit_report = f"{normalized['tables']}\n\n{report_prose.strip()}\n\n{normalized['factors_summary']}"
     fit_result = {
@@ -178,8 +177,8 @@ async def evaluate_fit_structured(
         "item_judgments": normalized["item_judgments"],
         "decision_factors": normalized["decision_factors"],
         # 구 salary_check/stability_check/location_check 필드 하위 호환(CSV 내보내기·
-        # MCP 계약, 4번 열린 질문 결정: B). decision_factors로 대체하지 않고 계속 채운다.
-        "salary_check": normalized["salary_check"],  # 연봉 요인을 평가에서 뺀 뒤(2026-11-12) 항상 None — 재평가가 옛 값을 남기지 않게 키는 유지
+        # MCP 계약). decision_factors로 대체하지 않고 계속 채운다.
+        "salary_check": normalized["salary_check"],  # 연봉 요인은 평가에서 빠져 항상 None — 재평가가 옛 값을 남기지 않게 키는 유지
         "stability_check": normalized["stability_check"],
         "location_check": normalized["location_check"],
     }
@@ -245,8 +244,7 @@ if __name__ == "__main__":
         assert len(fit_data["gaps"]) == 1, fit_data["gaps"]
 
         # 4. evaluate_fit_structured() — 실제 활성 경로(_process_company/refit_company가
-        # 호출하는 함수)를 검증. 위 1~3번은 전부 호출자 없는 evaluate_fit()만 exercise
-        # 했었음(2026-09-02 브랜치 전체 리뷰 지적). 1단계 판정 mock에 jobplanet 낮은
+        # 호출하는 함수)를 검증. 1단계 판정 mock에 jobplanet 낮은
         # 점수인데 LLM이 status를 "양호"로 놓친 상황을 넣어 점수 기반 gap 파생
         # 연결까지 같이 확인한다.
         company_data_structured = {
@@ -265,7 +263,7 @@ if __name__ == "__main__":
                 "decision_factors": {
                     "location": {"status": "충족", "note": ""},
                     "stability": {"status": "충족", "note": ""},
-                    # 비기술 요인은 gap으로 올라가지 않는다(2026-11-11) — 낮은 점수도 요약 줄에만 나온다
+                    # 비기술 요인은 gap으로 올라가지 않는다 — 낮은 점수도 요약 줄에만 나온다
                     "custom_criteria": [],
                 },
             }, {"fit_score": 65, "report": "종합의견 텍스트"}]),
@@ -287,7 +285,7 @@ if __name__ == "__main__":
         assert "- [필수] Python 경험: 충족" in report_call["user"], report_call["user"]
 
         # 4-1. 사용자 지정 기준이 있으면 번호 목록(criteria:N)이 판정 호출 입력에 들어가고, 판정이 줄과
-        # 맞춰져 저장되며, 요약 줄에 줄마다 나온다(2026-11-11)
+        # 맞춰져 저장되며, 요약 줄에 줄마다 나온다
         fake_high_custom = SimpleNamespace(
             extract_structured=AsyncMock(side_effect=[{
                 "item_judgments": [
@@ -318,9 +316,8 @@ if __name__ == "__main__":
         assert fit_custom["stability_check"] == "미확인", fit_custom
 
         # 5. judge_result(1단계 응답) 자체가 dict가 아니면(provider가 tool 인자를 배열
-        # 등으로 잘못 반환) 예외 없이 fallback+incomplete=true로 넘어가야 함(2026-09-02
-        # 7차 리뷰 반영 — 전에는 바로 다음 줄 judge_result.get()에서 AttributeError로
-        # 평가 전체가 죽었음).
+        # 등으로 잘못 반환) 예외 없이 fallback+incomplete=true로 넘어가야 함
+        # (바로 다음 줄 judge_result.get()에서 AttributeError로 평가 전체가 죽으면 안 된다).
         fake_high_bad_toplevel = SimpleNamespace(
             extract_structured=AsyncMock(side_effect=[["이건 배열임 — dict가 아님"], {"fit_score": 50, "report": "종합의견"}]),
         )

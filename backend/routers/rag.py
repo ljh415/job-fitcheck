@@ -1,15 +1,12 @@
 """RAG(대화형 근거 기반 검색) — main SPA `/rag` 뷰가 쓰는 API.
 
-원래 `rag/main` 브랜치의 독립 테스트 화면(`rag-test.html`)용이었으나, main 반영
-(`feat/rag-integration-plan`) 작업으로 main SPA(`frontend/index.html`의 `tpl-rag`)에
-정식 통합됐다 — `rag-test.html`은 이제 안 씀. `rag/postgres/gap.py`·`answer.py`·`agent.py`를
-그대로 호출하는 얇은 wrapper이고, 로직은 전부 `rag/` 안에 있다. 저장소는 PostgreSQL+pgvector
-전용(SQLite `rag/gap.py`는 Plan A 기준선 재현용으로만 남아있고 이 서비스 경로에선 더 이상
-안 씀 — Stage 6에서 전환).
+`rag/postgres/gap.py`·`answer.py`·`agent.py`를 그대로 호출하는 얇은 wrapper이고
+(프론트는 `frontend/index.html`의 `tpl-rag`), 로직은 전부 `rag/` 안에 있다. 저장소는
+PostgreSQL+pgvector 전용이다(SQLite `rag/gap.py`는 Plan A 기준선 재현용으로만 남아 있고
+이 서비스 경로에선 안 쓴다).
 
 RAG는 opt-in 기능이다 — `settings.rag_postgres_host`가 비어 있으면 `/status` 외 나머지
-엔드포인트는 503을 반환한다(main 이식 시 opt-in 설계, `docs/rag-integration/STATUS.md` 2번
-참고). 라우터 자체는 항상 등록한다 — import 시점에 DB 연결을 시도하지 않으므로 등록 자체는
+엔드포인트는 503을 반환한다(설계: `docs/rag-integration/STATUS.md` 2번). 라우터 자체는 항상 등록한다 — import 시점에 DB 연결을 시도하지 않으므로 등록 자체는
 안전하고, `/status`가 항상 응답 가능해야 프론트가 신뢰성 있게 활성화 여부를 조회할 수 있다.
 
 임베딩 provider는 요청마다 고르지 않는다 — `resolve_rag_embedding_provider()`(`config.py`)가
@@ -98,9 +95,8 @@ class RagSettingsUpdateRequest(BaseModel):
 
 @router.get("/settings", dependencies=[Depends(_require_rag_enabled)])
 async def get_rag_settings():
-    """RAG 전용 설정 — 메인 설정 화면과 분리된, `/rag` 페이지 안의 별도 팝업에서 쓴다(쿼리마다
-    provider를 고르던 드롭다운을 없애고 하나로 통일한 결정 — 이유는 `docs/rag-integration/
-    STATUS.md` 4번 참고)."""
+    """RAG 전용 설정 — 메인 설정 화면과 분리된, `/rag` 페이지 안의 별도 팝업에서 쓴다(provider는 쿼리마다
+    고르지 않고 하나로 통일한다 — 이유는 `docs/rag-integration/STATUS.md` 4번 참고)."""
     # resolve_rag_embedding_provider()를 먼저 불러야 한다 — 이 함수가 유효하지 않은 override를
     # 자동으로 정리(None)하는 부수효과가 있어서, override를 먼저 읽으면 이번 응답에서만
     # override="local"인데 resolved="google"인 모순된 스냅샷이 나간다.
@@ -388,9 +384,9 @@ async def migrate_chats(req: RagChatMigrationRequest):
 
 @router.post("/ask", dependencies=[Depends(_require_rag_enabled), Depends(_require_app_db_healthy)])
 async def ask(req: AskRequest):
-    """대화형 근거 기반 RAG 진입점 — 자연어 질문을 Agent(tool-use)로 답한다(Phase 1~4의
-    "질문 분류→고정 함수 실행" 구조를 대체 — 질문이 애매하거나 여러 능력을 조합해야 답할 수
-    있을 때 완전히 무관한 답을 내놓는 구조적 결함이 있었다. 상세는
+    """대화형 근거 기반 RAG 진입점 — 자연어 질문을 Agent(tool-use)로 답한다("질문
+    분류→고정 함수 실행" 구조는 질문이 애매하거나 여러 능력을 조합해야 답할 수 있을 때
+    완전히 무관한 답을 내놓는 한계가 있어 쓰지 않는다. 상세는
     `docs/rag-project-plans/00_meta/HISTORY.md` 참고). 실제 생성은 _run_rag_generation()에
     위임 — 독립 태스크로 돌려서 클라이언트 연결 끊김과 무관하게 끝까지 실행되게 한다(위 "LLM
     호출을 HTTP 요청 생명주기와 분리" 참고). 이 함수는 pending 삽입 → 태스크 생성 → 결과 대기

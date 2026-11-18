@@ -4,7 +4,7 @@ SQLite판은 벡터를 BLOB으로 저장해두고 파이썬에서 직접 코사�
 pgvector는 `<=>`(코사인 거리) 연산자로 정렬·상위 top_k 추출까지 SQL 안에서 끝낼 수
 있어 `_vector_from_blob`/`_cosine` 같은 헬퍼가 필요 없다.
 
-`chunk_embedding`은 차원별 컬럼(`vector_1536`/`vector_1024`)으로 나뉘어 있다(Stage 4, HNSW
+`chunk_embedding`은 차원별 컬럼(`vector_1536`/`vector_1024`)으로 나뉘어 있다(HNSW
 인덱싱을 위해 고정 차원이 필요해서) — `_VECTOR_COLUMN`으로 provider에 맞는 컬럼을 고른다.
 """
 import psycopg

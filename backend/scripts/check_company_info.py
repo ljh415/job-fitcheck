@@ -18,7 +18,6 @@ from services.jobplanet import JobplanetResult
 
 WANTED_URL = "https://www.wanted.co.kr/wd/395754"
 REMEMBER_URL = "https://career.rememberapp.co.kr/job/posting/328761"
-EVAL_COLUMNS = ("employee_count", "revenue_won", "revenue_as_of", "listing_status", "funding_stage", "funding_total")
 WANTED_QUERIES = {"companyInfo", "companySummary", "companyHire", "companyBanner"}
 
 _fake_name = {"value": ""}  # 시나리오마다 추출 결과의 회사명을 바꿔 slug가 겹치지 않게 한다

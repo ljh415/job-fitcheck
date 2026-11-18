@@ -19,8 +19,7 @@ logger = logging.getLogger(__name__)
 # 빈 목록/일반 500 대신 명확한 503으로 구분한다.
 _DB_UNAVAILABLE_DETAIL = "QnA 대화 기록 기능을 일시적으로 사용할 수 없습니다."
 
-# 적합도 평가 구조 개편(docs/fit-eval-structural-redesign/PLAN.md)의 1단계 중간
-# 판정 결과 — gaps/strengths가 이미 같은 내용을 읽기 좋게 담고 있어 QnA 컨텍스트에는
+# 중간 판정 결과 — gaps/strengths가 이미 같은 내용을 읽기 좋게 담고 있어 QnA 컨텍스트에는
 # 원본 판정 배열까지 중복으로 넣지 않는다.
 _QA_FRONTMATTER_EXCLUDE = {"item_judgments", "decision_factors", "evaluation_incomplete"}
 

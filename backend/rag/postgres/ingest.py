@@ -1,4 +1,4 @@
-"""Plan B 2단계 — 공고 데이터 정규화, PostgreSQL판.
+"""공고 데이터 정규화, PostgreSQL판.
 
 `rag/ingest.py`(SQLite, Plan A)의 포팅 — 로직은 동일하고 SQL 방언만 바꿨다(`?`→`%s`,
 `INSERT OR IGNORE`→`ON CONFLICT DO NOTHING`). `rag/ingest.py`는 gap.py/answer.py가 계속
@@ -31,7 +31,7 @@ def build_db() -> psycopg.Connection:
 
 def ingest_postings(conn: psycopg.Connection) -> int:
     """`.raw.txt`를 원본으로 순회하며 posting + posting_skill을 채운다.
-    재실행 가능하도록 매번 전체 삭제 후 다시 적재한다(증분 색인은 Plan B 5단계 범위)."""
+    재실행 가능하도록 매번 전체 삭제 후 다시 적재한다(증분 색인은 하지 않는다)."""
     conn.execute("DELETE FROM posting_skill")
     conn.execute("DELETE FROM posting")
     count = 0
@@ -58,7 +58,7 @@ def ingest_postings(conn: psycopg.Connection) -> int:
                 fm.get("created_at", ""),
                 str(raw_path),
                 _raw_hash(raw_text),
-                # 공고 비교(대화형 근거 기반 RAG Phase 1)용 — 이미 메모리에 있는 frontmatter에서
+                # 공고 비교(대화형 근거 기반 RAG)용 — 이미 메모리에 있는 frontmatter에서
                 # 그대로 뽑아온다(새로 파싱하지 않음). 없으면 NULL(스칼라)/빈 배열 취급은 조회
                 # 쪽에서 처리.
                 fm.get("tech_stack"),

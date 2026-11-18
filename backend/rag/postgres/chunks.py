@@ -1,8 +1,7 @@
-"""Plan B 2단계 — 공고/프로필 청킹, PostgreSQL판.
+"""공고/프로필 청킹, PostgreSQL판.
 
-`rag/chunks.py`(SQLite, Plan A)의 포팅. FTS5에 해당하는 전문검색 재구축 호출은 이번
-범위(저장까지)에서 뺐다 — Postgres tsvector 기반 전문검색은 Plan B 4단계(하이브리드 검색)에서
-다시 설계한다.
+`rag/chunks.py`(SQLite, Plan A)의 포팅. FTS5에 해당하는 전문검색 재구축 호출은 두지 않는다 —
+Postgres tsvector 기반 전문검색은 `fts.py`가 맡는다.
 """
 import hashlib
 import tempfile
@@ -120,7 +119,7 @@ def populate_posting_chunks(conn: psycopg.Connection) -> tuple[int, int]:
 def prune_deleted_postings(conn: psycopg.Connection) -> int:
     """공고 원문(.raw.txt)이 삭제돼 `posting`에서 없어진 slug의 document_chunk/chunk_embedding을
     지운다. `ingest_postings()`는 posting/posting_skill을 매번 전체 삭제 후 재적재하지만, 청크는
-    이 posting을 더 이상 순회 대상에 넣지 않아 고아로 남는 문제(Plan B 5단계에서 발견)를 해결한다.
+    이 posting을 더 이상 순회 대상에 넣지 않아 고아로 남는 문제를 해결한다.
     `posting` 테이블이 최신 상태로 재적재된 뒤에 호출해야 한다."""
     rows = conn.execute(
         "SELECT DISTINCT source_id FROM document_chunk"

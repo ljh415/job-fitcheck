@@ -676,9 +676,9 @@ def migrate_rag_chat(chat_id: str, title: str | None, created_at: str, entries: 
     방 생성과 메시지(entries: (질문, data JSON 문자열) 튜플 목록) 전부 삽입을 **한
     트랜잭션**으로 커밋하고 삽입 건수를 반환한다.
 
-    예전엔 방 생성(create_rag_chat)과 메시지 삽입(insert_pending_rag_message+
-    mark_rag_message_done)이 각각 별도 커밋이라, 방만 만들어진 직후나 메시지 일부만 들어간
-    뒤 서버가 죽으면 재시도해도 "이미 있는 방"으로 판정돼 나머지가 영구 누락됐다. 한
+    방 생성(create_rag_chat)과 메시지 삽입(insert_pending_rag_message+
+    mark_rag_message_done)을 각각 별도 커밋하면, 방만 만들어진 직후나 메시지 일부만 들어간
+    뒤 서버가 죽을 때 재시도해도 "이미 있는 방"으로 판정돼 나머지가 영구 누락된다. 한
     트랜잭션으로 묶으면 중간에 실패해도 전부 롤백되어 재시도 시 처음부터 다시 시도할 수 있다.
 
     방 생성은 SELECT로 먼저 존재를 확인하지 않고 INSERT ... ON CONFLICT(id) DO NOTHING으로

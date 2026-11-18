@@ -7,9 +7,8 @@ function parseMarkdown(text) {
   // 경우가 있어(한국어 LLM 응답에서 자주 발생), marked 파싱 전에 **쌍을 직접 <strong>으로 치환한다.
   // 마찬가지로 marked는 GFM 표준(~~이중~~)과 달리 단일 ~ 쌍도 취소선으로 해석한다 — "2~3개...
   // 5~10점"처럼 문장에 ~가 두 번 나오면 그 사이 전체가 취소선으로 렌더링되고 ~ 문자 자체도
-  // 사라지는 버그가 있었다(2026-09-03, QnA 답변에서 실제 재현). 이미 이스케이프(\~)된 것은
-  // 건너뛰어 이중 이스케이프를 막는다(백엔드 fit_normalization._escape_cell()이 표 셀은
-  // 이미 이스케이프함).
+  // 사라진다. 이미 이스케이프(\~)된 것은 건너뛰어 이중 이스케이프를 막는다(백엔드
+  // fit_normalization._escape_cell()이 표 셀은 이미 이스케이프함).
   const normalized = (text || '')
     .replace(/(?<!\\)~/g, '\\~')
     .replace(/\*\*([^*\n]+?)\*\*/g, '<strong>$1</strong>');
@@ -533,9 +532,6 @@ function applyFilters() {
   }
 }
 
-function filterTable() { applyFilters(); }
-function sortTable() { applyFilters(); }
-
 function onCheckChange(changedEl) {
   selectedSlugs = new Set(
     [...document.querySelectorAll('.row-check:checked')].map(el => el.dataset.slug)
@@ -705,8 +701,7 @@ async function initDetail(slug) {
     // 충족 현황 테이블(자격요건·우대사항) + 직무 적합도 분석 표(주요 업무) 열 너비 고정 +
     // 2번째 칸(이모지+라벨) 이모지 뒤 줄바꿈, 라벨은 줄바꿈 없이 — 세 표 모두 backend
     // render_requirement_table()이 만드는 동일한 3열 구조(항목/충족 여부/근거 계열)라
-    // 같은 레이아웃을 써야 한다(2026-09-03, "직무 적합도 분석" 표만 열 너비가 안 고정돼
-    // 있다는 지적 반영).
+    // 같은 레이아웃을 써야 한다.
     for (const h3 of bodyEl.querySelectorAll('h3')) {
       if (h3.textContent.includes('충족 현황') || h3.textContent.includes('직무 적합도 분석')) {
         let el = h3.nextElementSibling;
@@ -1005,9 +1000,8 @@ async function refillCompany() {
   try {
     await api(`/companies/${encodeURIComponent(slug)}/refill`, { method: 'POST', body: '{}' });
     showToast('전체 재분석 완료!');
-    // initDetail은 await 안 함 — 여기서 실패해도(존재하지 않는 loadDetail을 부르던
-    // 버그가 있었음) 재분석 자체는 이미 성공했으니 아래 catch에서 "재분석 실패"로
-    // 잘못 표시되면 안 됨(refitCompany()와 동일 패턴)
+    // initDetail은 await 안 함 — 여기서 실패해도 재분석 자체는 이미 성공했으니
+    // 아래 catch에서 "재분석 실패"로 잘못 표시되면 안 됨(refitCompany()와 동일 패턴)
     if (currentSlug === slug) initDetail(slug);
   } catch (e) {
     showToast('재분석 실패: ' + e.message, 'error');
@@ -1127,8 +1121,8 @@ function appendBubble(containerId, text, role, timestamp) {
 }
 
 async function streamQA(fetchFn, bubble) {
-  // 예전엔 연결이 끊기면 같은 질문으로 POST를 최대 2번 자동 재시도했는데, 서버 저장 전환
-  // 이후엔 POST 한 번마다 새 행+새 LLM 호출이 생겨서 재시도가 이력·비용 중복을 만든다.
+  // POST 한 번마다 새 행+새 LLM 호출이 생겨서, 연결이 끊겼을 때 같은 질문으로 자동 재시도하면
+  // 이력·비용이 중복된다.
   // 서버가 pending 상태를 이미 들고 있어서(연결이 끊겨도 독립 태스크가 계속 처리) 재시도
   // 없이 한 번만 시도하고, 실패하면 호출부가 서버 상태를 다시 조회하도록 한다 — sendQA()의
   // history 재조회 참고.

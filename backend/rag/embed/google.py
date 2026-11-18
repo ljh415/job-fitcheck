@@ -3,8 +3,8 @@
 `gemini-embedding-2`는 `gemini-embedding-001`과 달리 `task_type` config 파라미터를
 지원하지 않는다(공식 문서: "You cannot use the task_type field for the
 gemini-embedding-2 model. Instead, include the task as an instruction in your
-prompt"). API가 이 파라미터를 조용히 무시해서 에러 없이 성공했었지만 실제로는
-문서/질의 구분 없이 임베딩되고 있었다.
+prompt"). 이 파라미터를 넘겨도 API가 조용히 무시해 에러 없이 성공하지만 실제로는
+문서/질의 구분 없이 임베딩된다.
 대신 텍스트 앞에 prefix를 붙이는 방식을 쓴다:
   - 문서(저장용): "title: {title} | text: {content}" (제목 없으면 title: none)
   - 질의(검색용): "task: search result | query: {content}"

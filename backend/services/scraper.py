@@ -183,8 +183,8 @@ async def fetch_url(url: str) -> tuple[str, dict | None]:
         # 개별 공고(/wd/)가 아니라 회사 채용정보 목록(/company/) 등 다른 페이지면
         # __NEXT_DATA__에 job/initialData가 없어 _parse_wanted()가 None을 반환하는데,
         # 이때 아래 범용 스크래핑으로 넘어가면 회사 소개문 등을 공고 원문으로 오인해
-        # 실제 요건과 무관한 분석·적합도 평가가 생성된다(2026-09-06 실사용 중 발견 —
-        # /company/{id} URL로 등록 시 회사 소개 텍스트가 공고인 것처럼 분석됨). 원티드
+        # 실제 요건과 무관한 분석·적합도 평가가 생성된다(/company/{id} URL로 등록하면
+        # 회사 소개 텍스트가 공고인 것처럼 분석된다). 원티드
         # 도메인이 확인되면 구조화 파싱 실패 시 바로 명확히 거부한다.
         if is_wanted_host(url):
             text, company_id = _parse_wanted(html)

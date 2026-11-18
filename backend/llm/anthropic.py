@@ -278,8 +278,7 @@ class AnthropicProvider(LLMProvider):
                 )
             # adaptive thinking(Sonnet 5 등)이 켜진 모델은 content 맨 앞에 type="thinking"
             # 블록이 먼저 오는데, 이것도 hasattr(block, "text")가 True이면서 .text는 None이라
-            # 예전 방식(hasattr만 확인)으로는 실제 답변 대신 None을 그대로 반환해버렸다
-            # (2026-09-02, LLM Judge 스크립트 작성 중 실제로 재현해 발견). type이 정확히
+            # hasattr만 확인하면 실제 답변 대신 None이 반환된다. type이 정확히
             # "text"인 블록만 골라야 한다.
             for block in response.content:
                 if getattr(block, "type", None) == "text":
@@ -338,7 +337,7 @@ class AnthropicProvider(LLMProvider):
             tool_use_blocks = [b for b in response.content if b.type == "tool_use"]
             if not tool_use_blocks:
                 # complete()와 같은 이유 — thinking 블록도 hasattr(b, "text")가 True이면서
-                # .text는 None이라 "".join()이 TypeError로 죽는다(2026-09-02 발견).
+                # .text는 None이라 "".join()이 TypeError로 죽는다.
                 text = "".join(b.text for b in response.content if b.type == "text")
                 return {"text": text, "tool_calls": tool_calls_trace}
 
