@@ -434,7 +434,6 @@ async def update_company(slug: str, req: CompanyUpdateRequest):
     fm = existing.frontmatter.model_copy(
         update={k: v for k, v in req.frontmatter.model_dump().items() if k in _EDIT_FORM_FIELDS}
     )
-    fm.created_at = existing.frontmatter.created_at
     record = storage.write_company(slug, fm, req.body)
     logger.info("공고 수동 편집: %s", slug)
     # 원문(.raw.txt)은 안 바뀌지만 RAG의 posting 테이블이 tech_stack/stability/employee_count
@@ -982,7 +981,7 @@ async def refit_company(slug: str):
     # 다음 평가에 섞여 들어간다. salary_check/stability_check/location_check도 같은 부류(평가
     # 결과)라 같이 뺀다.
     _REFIT_EXCLUDE = {
-        "strengths", "gaps", "fit_score", "fit_label", "fit_report_body",
+        "strengths", "gaps", "fit_score", "fit_label",
         "item_judgments", "decision_factors", "evaluation_incomplete",
         "salary_check", "stability_check", "location_check",
     }

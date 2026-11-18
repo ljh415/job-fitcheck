@@ -84,8 +84,8 @@ def calc_cost(model: str, input_tokens: int, output_tokens: int) -> float:
 
 def append_usage(
     operation: str, model: str, input_tokens: int, output_tokens: int, duration_ms: int | None = None,
-) -> float:
-    """사용 기록을 JSONL 파일에 추가하고 비용을 반환한다. duration_ms는 API 호출
+) -> None:
+    """사용 기록을 JSONL 파일에 추가한다. duration_ms는 API 호출
     자체(요청 전송~응답 수신)의 소요시간 — 재시도·에러 처리 등 부가 로직은 제외하고
     호출부가 직접 측정해서 넘긴다."""
     cost = calc_cost(model, input_tokens, output_tokens)
@@ -109,7 +109,6 @@ def append_usage(
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
     except Exception as e:
         logger.warning("사용량 기록 실패: %s", e)
-    return cost
 
 
 def read_usage(limit: int = 200) -> dict:

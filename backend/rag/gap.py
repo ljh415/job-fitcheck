@@ -142,7 +142,7 @@ def _candidate_postings(conn: sqlite3.Connection, skill: str, embed_provider: Em
         ).fetchone()
         if not row or row[0] in candidates:
             return
-        candidates[row[0]] = {"posting_id": row[0], "company_name": row[1], "job_title": row[2], "excerpt": text}
+        candidates[row[0]] = {"company_name": row[1], "job_title": row[2], "excerpt": text}
 
     # 임베딩 채널이 먼저 상한을 다 채워버리면 FTS5 결과가 하나도 안 섞일 수 있다 — 두 채널을
     # 번갈아 채워서 한쪽이 상한을 독점하지 않게 한다.

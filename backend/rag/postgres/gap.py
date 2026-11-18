@@ -74,7 +74,7 @@ def _candidate_postings(conn: psycopg.Connection, skill: str, embed_provider: Em
         ).fetchone()
         if not row or row[0] in candidates:
             return
-        candidates[row[0]] = {"posting_id": row[0], "company_name": row[1], "job_title": row[2], "excerpt": text}
+        candidates[row[0]] = {"company_name": row[1], "job_title": row[2], "excerpt": text}
 
     # 임베딩 채널이 먼저 상한을 다 채우면 전문검색 결과가 하나도 안 섞이는 걸 막기 위해 인터리브
     for embed_item, fts_item in itertools.zip_longest(embed_queue, fts_queue):

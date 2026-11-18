@@ -511,10 +511,10 @@ def record_raw_version(slug: str, raw_text: str, company_info_id: int | None = N
 
 
 def latest_raw_version(slug: str) -> dict | None:
-    """공고(slug)의 가장 최근 원문 버전 행(id, content_hash, company_info_id). 없으면 None."""
+    """공고(slug)의 가장 최근 원문 버전 행(company_info_id만). 없으면 None."""
     with get_connection() as conn:
         row = conn.execute(
-            "SELECT id, content_hash, company_info_id FROM posting_raw_versions "
+            "SELECT company_info_id FROM posting_raw_versions "
             "WHERE slug = ? ORDER BY id DESC LIMIT 1",
             (slug,),
         ).fetchone()

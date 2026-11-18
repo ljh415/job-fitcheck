@@ -355,7 +355,7 @@ class AnthropicProvider(LLMProvider):
                     # 그대로 전달한다(예: "이 provider로 프로필이 아직 임베딩되지 않았습니다").
                     is_error = True
                     result = {"error": str(e)}
-                except Exception as e:
+                except Exception:
                     # 예상 못 한 예외(SQL 오류 등)는 원문에 테이블명·쿼리 같은 내부 정보가 담길 수
                     # 있어 Claude/프론트 도구 트레이스에 그대로 노출하지 않는다 — 서버 로그에만
                     # 전체를 남기고 도구에는 일반화된 메시지만 준다.

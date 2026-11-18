@@ -222,7 +222,7 @@ async def gap_check(req: GapCheckRequest):
         # ClientError/ServerError 둘 다 APIError의 하위 클래스라, 공통 상위 클래스 APIError로
         # 잡아야 4xx·5xx 둘 다 커버된다. 이것도 서버 버그가 아니라 외부 API 오류이므로 503.
         raise HTTPException(503, f"Google 임베딩 API 오류: {e}")
-    except psycopg.OperationalError as e:
+    except psycopg.OperationalError:
         # get_connection() 실패(Postgres 다운·인증 오류 등)만 좁게 잡는다 — psycopg.Error
         # 전체를 잡으면, assess_gap() 안의 SQL 문법·제약조건 위반 같은 실제 버그
         # (ProgrammingError/IntegrityError 등도 psycopg.Error 하위)까지 "일시적 DB 연결 오류"로
@@ -255,7 +255,7 @@ async def _run_reindex_or_503(provider: str) -> None:
         raise HTTPException(503, f"임베딩 서버 통신 오류: {e}")
     except genai_errors.APIError as e:
         raise HTTPException(503, f"Google 임베딩 API 오류: {e}")
-    except psycopg.OperationalError as e:
+    except psycopg.OperationalError:
         raise HTTPException(503, "DB 연결 오류 — 잠시 후 다시 시도하세요")
 
 
@@ -414,5 +414,5 @@ async def ask(req: AskRequest):
         raise HTTPException(503, f"임베딩 서버 통신 오류: {e}")
     except genai_errors.APIError as e:
         raise HTTPException(503, f"Google 임베딩 API 오류: {e}")
-    except psycopg.OperationalError as e:
+    except psycopg.OperationalError:
         raise HTTPException(503, "DB 연결 오류 — 잠시 후 다시 시도하세요")
