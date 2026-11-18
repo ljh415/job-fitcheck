@@ -47,21 +47,3 @@ def search_chunks(
     return rows
 
 
-def ranked_postings_by_score(conn: psycopg.Connection, scored_chunks: list[tuple[float, int]]) -> list[int]:
-    """(score, chunk_id) 목록을 점수 내림차순으로 받아, posting_id 중복을 제거하며 순위 리스트를 만든다."""
-    scored_chunks = sorted(scored_chunks, key=lambda x: x[0], reverse=True)
-    seen: set[int] = set()
-    ranked: list[int] = []
-    for _, chunk_id in scored_chunks:
-        row = conn.execute(
-            "SELECT po.id FROM document_chunk dc JOIN posting po ON po.slug = dc.source_id WHERE dc.id = %s",
-            (chunk_id,),
-        ).fetchone()
-        if not row:
-            continue
-        posting_id = row[0]
-        if posting_id in seen:
-            continue
-        seen.add(posting_id)
-        ranked.append(posting_id)
-    return ranked

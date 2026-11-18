@@ -88,40 +88,6 @@ async def generate_action_plan(gap_result: dict, llm: tuple[LLMProvider, str, st
     )
 
 
-def format_report(gap_result: dict, action_plan: dict | None) -> str:
-    demand = gap_result["market_demand"]
-    # 13개 고정 기술은 posting_skill 정확 매칭(method=exact), 그 외 자유 키워드는 후보를 LLM이
-    # 개별 판정한 추정치(method=estimated) — 정밀도가 다르므로 표시도 구분한다.
-    demand_label = (
-        f"전체 {demand['total']}건 중 {demand['matched']}건({demand['ratio']*100:.1f}%) 요구"
-        if demand.get("method") == "exact"
-        else f"약 {demand['matched']}건/{demand['total']}건({demand['ratio']*100:.1f}%) 추정"
-        f"(임베딩+키워드 검색으로 모은 후보 {demand.get('candidate_count', '?')}건 중 LLM이 판정한 결과 — 참고용, 정확한 전수 집계 아님)"
-    )
-    lines = [
-        f"## {gap_result['skill']}",
-        f"- 시장 수요: {demand_label}",
-        f"- 근거 판정: **{gap_result['evidence_level']}**",
-        f"- 판정 근거: {gap_result['reasoning']}",
-    ]
-    if action_plan:
-        lines += [
-            "",
-            f"**행동 계획**: {action_plan['activity']}",
-            f"**남길 증거**: {action_plan['evidence_to_produce']}",
-            f"**완료 조건**: {action_plan['completion_criteria']}",
-        ]
-    return "\n".join(lines)
-
-
-async def full_report(conn: sqlite3.Connection, skill: str, embed_provider) -> str:
-    gap_result = await assess_gap(conn, skill, embed_provider)
-    action_plan = None
-    if gap_result["evidence_level"] != "직접 근거":
-        action_plan = await generate_action_plan(gap_result)
-    return format_report(gap_result, action_plan)
-
-
 # "부분 근거"는 gap.py의 validate()에서도 이미 "직접 근거"와 같은 방향(증거 있음)으로 취급했다
 # (LLM이 같은 근거를 두고도 직접/부분을 오갈 만큼 그 경계가 미세해서). 여기서도 같은 관용도를
 # 적용 — 안 그러면 실제로는 강점인 기술(예: Kubernetes)이 LLM의 그날그날 판정 편차로 "gap"에

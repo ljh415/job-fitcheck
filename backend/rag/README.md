@@ -69,7 +69,6 @@ backend/rag/postgres/
 ├── pipeline.py         — 임베딩 파이프라인(provider 차원별 컬럼에 저장)
 ├── retrieval.py        — pgvector `<=>` 검색
 ├── fts.py              — Postgres 전문검색(`websearch_to_tsquery`)
-├── hybrid.py           — RRF(관계형 정확매칭+벡터 검색 결합)
 ├── query_router.py     — `judge_topic_postings()`(자유 텍스트 주제 검색, 전체원문 LLM 판정) +
 │                        옛 분류 기반 `classify_query`/`answer_query`(미사용, 삭제는 보류)
 ├── agent.py            — ★ Agentic RAG 핵심. `AGENT_SYSTEM`+`TOOL_DEFS`(도구 7개)+
