@@ -153,7 +153,7 @@ async def qa_history(slug: str):
 async def company_qa(slug: str, req: QARequest):
     """단일 회사 Q&A — 회사 정보 + 후보자 프로필을 컨텍스트로 High 티어 스트리밍.
     history는 클라이언트가 안 보낸다 — qa_messages에서 서버가 직접 조회(최근 20턴,
-    status='done'만)해서 조립한다(docs/chat-history-server-storage/PLAN.md 참고)."""
+    status='done'만)해서 조립한다."""
     record = storage.read_company(slug)
     if not record:
         raise HTTPException(status_code=404, detail="회사를 찾을 수 없습니다.")

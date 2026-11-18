@@ -95,7 +95,7 @@ async def evaluate_fit_structured(
     raw_text: str,
     operation: str,
 ) -> tuple[dict, str]:
-    """적합도 평가 파이프라인(설계: docs/fit-eval-structural-redesign/PLAN.md).
+    """적합도 평가 파이프라인.
     `_process_company()`/`refit_company()`(backend/routers/companies.py)가 실제로
     호출하는 현재 활성 경로다 — `evaluate_fit()`은 비교·롤백용으로 코드에 남아있을
     뿐 런타임 호출자가 없다.

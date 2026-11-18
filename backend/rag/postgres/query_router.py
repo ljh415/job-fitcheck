@@ -1,6 +1,4 @@
 """자유 텍스트 주제 검색 + 공고 목록/비교 — Agent(agent.py)가 실제로 쓰는 조회 함수들.
-
-설계 결정 상세는 `docs/rag-project-plans/conversational-rag/00_design.md` 참고.
 """
 import asyncio
 
@@ -95,8 +93,7 @@ async def _judge_topic_postings_llm(
     """자유 텍스트 주제(TRACKED_SKILLS 밖)를 corpus 전체 원문으로 LLM이 직접 판정한다.
 
     벡터 코사인 유사도로 후보를 미리 추려서 넘기면(_candidate_postings 패턴) 이 corpus에서는
-    1차 검색 단계 자체가 진짜 정답을 통째로 놓치는 사례가 실측으로 확인됐다(상세는
-    docs/rag-project-plans/00_meta/HISTORY.md 해당 항목). corpus 규모가 작아(공고 수십~백 건)
+    1차 검색 단계 자체가 진짜 정답을 통째로 놓치는 사례가 실측으로 확인됐다. corpus 규모가 작아(공고 수십~백 건)
     점수로 거르지 않고 전체를 LLM에 넘기는 쪽이 비용 대비 recall이 훨씬 낫다.
 
     `job_role`을 주면 LLM 판정 전에 SQL로 직무를 먼저 좁힌다 — 이 파라미터가 없으면 "백엔드
@@ -162,8 +159,7 @@ def _judge_topic_postings_local(
 
     지금 아무 진입점에서도 안 불리는 코드다(judge_topic_postings의 유일한 실제 호출부인 agent.py가
     method="llm"을 하드코딩해서 부름) — 공고 데이터가 늘어나 벡터 방식을 다시 비교 테스트할 때
-    쓰려고 의도적으로 남겨뒀다(상세는 `docs/rag-project-plans/00_meta/STATUS.md` "향후 탐색
-    아이디어" 참고). 그때는 이 함수를 evaluate_hybrid.py/hnsw_eval.py처럼 직접 호출해서 쓰면 된다."""
+    쓰려고 의도적으로 남겨뒀다. 그때는 이 함수를 evaluate_hybrid.py/hnsw_eval.py처럼 직접 호출해서 쓰면 된다."""
     # top_k=None(전체 청크) — job_role 필터가 순위 컷오프 뒤에 걸리면, 그 상한 밖에 있는 관련
     # 공고를 원천적으로 놓칠 수 있다. 이 corpus는 청크가 수백 개 수준이라 전체를 도는 비용이
     # 무시할 만하다.

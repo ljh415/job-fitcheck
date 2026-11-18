@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 # Sonnet 5.5는 thinking을 끌 수 없어(disabled 400) 최저값 between_tools(도구가 없으면
 # 0토큰)를 쓰고, Haiku 5.5는 between_tools가 400이라 disabled(effort high 이하에서 허용)를 쓴다 —
 # 필드를 생략하면 adaptive thinking으로 출력이 2~3배 늘고 판정이 max_tokens에 걸려 재시도한다.
-# None이면 thinking 필드를 생략한다. 시험 결과는 docs/sonnet-5-5-migration/PLAN.md.
+# None이면 thinking 필드를 생략한다.
 _JSON_THINKING: dict[str, dict | None] = {
     "claude-sonnet-5-5": {"type": "between_tools"},
     "claude-haiku-5-5": {"type": "disabled"},

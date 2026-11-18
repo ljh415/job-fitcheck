@@ -6,7 +6,6 @@ Lightweight 티어: 마크다운 본문 생성
 
 High 티어: 공고 구조화 추출, PDF 프로필 추출, 적합도 평가, Q&A
     — 원문 항목 보존과 후보자 맥락 통합 추론이 필요하므로 고성능 모델 사용
-    (공고 구조화 추출도 High — docs/extract-line-items)
 
 Claude는 llm/anthropic.py의 ALLOWED_CLAUDE_MODELS에 있는 모델만 쓴다(설정 화면 목록·저장값 검증).
 """

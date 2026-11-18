@@ -1,4 +1,4 @@
-"""정규화 판정 배열 처리 — 적합도 평가 1단계 산출물(설계: docs/fit-eval-structural-redesign/PLAN.md)을
+"""정규화 판정 배열 처리 — 적합도 평가 1단계 산출물을
 다룬다. 완결성 검증·코드 fallback·gaps/strengths 파생·표 렌더링을
 provider(Claude/OpenAI/Gemini) 공통으로 담당해, 각 provider가 같은 규칙을 따로
 구현하지 않게 한다."""

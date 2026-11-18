@@ -6,7 +6,7 @@ PostgreSQL+pgvector 전용이다(SQLite `rag/gap.py`는 Plan A 기준선 재현�
 이 서비스 경로에선 안 쓴다).
 
 RAG는 opt-in 기능이다 — `settings.rag_postgres_host`가 비어 있으면 `/status` 외 나머지
-엔드포인트는 503을 반환한다(설계: `docs/rag-integration/STATUS.md` 2번). 라우터 자체는 항상 등록한다 — import 시점에 DB 연결을 시도하지 않으므로 등록 자체는
+엔드포인트는 503을 반환한다. 라우터 자체는 항상 등록한다 — import 시점에 DB 연결을 시도하지 않으므로 등록 자체는
 안전하고, `/status`가 항상 응답 가능해야 프론트가 신뢰성 있게 활성화 여부를 조회할 수 있다.
 
 임베딩 provider는 요청마다 고르지 않는다 — `resolve_rag_embedding_provider()`(`config.py`)가
@@ -96,7 +96,7 @@ class RagSettingsUpdateRequest(BaseModel):
 @router.get("/settings", dependencies=[Depends(_require_rag_enabled)])
 async def get_rag_settings():
     """RAG 전용 설정 — 메인 설정 화면과 분리된, `/rag` 페이지 안의 별도 팝업에서 쓴다(provider는 쿼리마다
-    고르지 않고 하나로 통일한다 — 이유는 `docs/rag-integration/STATUS.md` 4번 참고)."""
+    고르지 않고 하나로 통일한다)."""
     # resolve_rag_embedding_provider()를 먼저 불러야 한다 — 이 함수가 유효하지 않은 override를
     # 자동으로 정리(None)하는 부수효과가 있어서, override를 먼저 읽으면 이번 응답에서만
     # override="local"인데 resolved="google"인 모순된 스냅샷이 나간다.
@@ -140,8 +140,7 @@ class GapCheckRequest(BaseModel):
 
 class AskRequest(BaseModel):
     """chat_id 채팅방에 질문을 추가한다. history는 클라이언트가 안 보낸다 — 서버가
-    rag_messages에서 직접 조회(최근 20턴, status='done'만)해서 조립한다(QnA와 동일한 이유,
-    docs/chat-history-server-storage/PLAN.md 참고)."""
+    rag_messages에서 직접 조회(최근 20턴, status='done'만)해서 조립한다(QnA와 동일한 이유)."""
     question: str = Field(max_length=2_000)
     chat_id: str
 
@@ -292,8 +291,8 @@ def _history_from_rag_rows(rows: list[dict]) -> list[dict]:
 
 async def _run_rag_generation(message_id: int, chat_id: str, question: str) -> dict:
     """대화형 근거 기반 RAG 실행 — 요청/응답 코루틴과 분리된 독립 태스크로 돌린다. QnA의
-    _run_qa_generation()과 같은 이유(docs/chat-history-server-storage/PLAN.md "LLM 호출을
-    HTTP 요청 생명주기와 분리" 참고) — 클라이언트가 연결을 끊어도 이 태스크는 계속 실행되어
+    _run_qa_generation()과 같은 이유(LLM 호출을
+    HTTP 요청 생명주기와 분리) — 클라이언트가 연결을 끊어도 이 태스크는 계속 실행되어
     DB에 결과를 남긴다. conn/embed_provider 생성·정리·예외 처리는 기존 ask()/gap_check()와
     동일한 패턴을 그대로 유지한다."""
     provider = resolve_rag_embedding_provider()
@@ -386,8 +385,7 @@ async def migrate_chats(req: RagChatMigrationRequest):
 async def ask(req: AskRequest):
     """대화형 근거 기반 RAG 진입점 — 자연어 질문을 Agent(tool-use)로 답한다("질문
     분류→고정 함수 실행" 구조는 질문이 애매하거나 여러 능력을 조합해야 답할 수 있을 때
-    완전히 무관한 답을 내놓는 한계가 있어 쓰지 않는다. 상세는
-    `docs/rag-project-plans/00_meta/HISTORY.md` 참고). 실제 생성은 _run_rag_generation()에
+    완전히 무관한 답을 내놓는 한계가 있어 쓰지 않는다). 실제 생성은 _run_rag_generation()에
     위임 — 독립 태스크로 돌려서 클라이언트 연결 끊김과 무관하게 끝까지 실행되게 한다(위 "LLM
     호출을 HTTP 요청 생명주기와 분리" 참고). 이 함수는 pending 삽입 → 태스크 생성 → 결과 대기
     → 예외를 기존과 동일한 HTTPException으로 변환하는 역할만 한다."""

@@ -2,7 +2,6 @@
 
 단일 파일(data/app.db)로 관리한다. RAG의 Postgres(opt-in)와는 무관 — 프로필 히스토리는
 RAG를 안 쓰는 사용자도 써야 하는 핵심 기능이라 선택 기능의 DB에 의존하지 않는다.
-세부 설계는 docs/profile-history/PLAN.md 참고.
 """
 import hashlib
 import json
@@ -258,7 +257,7 @@ def _fail_stale_qa_pending() -> None:
     """서버 시작 시점에 남아있는 status='pending' 행은 예외 없이 이전 프로세스가 죽으며
     (컨테이너 재시작 등) 못 끝낸 요청이다 — 지금 이 프로세스가 막 시작했는데 pending인
     행이 있다는 것 자체가 증거라서, "몇 분 지났으면"같은 시간 기반 추측이 필요 없다.
-    좀비 pending을 다루는 확정적 방법(docs/chat-history-server-storage/PLAN.md 참고)."""
+    좀비 pending을 다루는 확정적 방법이다."""
     with get_connection() as conn:
         conn.execute(
             "UPDATE qa_messages SET status = 'failed', "
@@ -555,8 +554,7 @@ def migrate_qa_slug_history(device_id: str, company_slug: str, pairs: list[tuple
     옮겼는지"로 판단해야 한다 — 안 그러면 기기 A가 먼저 마이그레이션한 회사는 기기 B의
     (서로 다른) 이력이 영영 안 옮겨진다. 메시지 삽입과 마이그레이션 기록을 분리된 커밋으로
     하면, 중간에 실패했을 때 "메시지는 없는데 기록은 남아 영구 스킵"되거나 반대로 "재시도
-    때마다 중복 삽입"될 수 있어 하나의 트랜잭션으로 묶는다(docs/chat-history-server-storage/
-    PLAN.md 참고).
+    때마다 중복 삽입"될 수 있어 하나의 트랜잭션으로 묶는다.
 
     쌍(question, answer)의 occurrence 개수 기준으로 서버에 이미 있던 만큼만 건너뛴다 —
     v1.5.1 당시(기기 추적 테이블이 없던 시절) 이미 성공적으로 옮겨진 기기가 복구 경로로

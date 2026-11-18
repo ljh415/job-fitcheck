@@ -3,9 +3,7 @@
 미들웨어를 그대로 재사용한다(`/api/mcp` 아래 마운트해서 별도 인증 코드를 만들지 않음).
 
 도구는 기존 REST 핸들러·내부 함수를 얇게 감싸는 정도로만 구현한다 — MCP를 위해 앱 내부
-함수를 새로 쪼개지 않는다(docs/planning/mcp_plan_notes.md "기존 회사 분석 로직 재사용 방향").
-
-설계 배경: docs/planning/mcp_plan_notes.md(로컬 전용), 진행 기록: docs/mcp-server/(로컬 전용).
+함수를 새로 쪼개지 않는다.
 """
 import asyncio
 import logging
@@ -47,7 +45,7 @@ _LIST_COMPANIES_EXCLUDED_FIELDS = {
 
 # 웹 경로(REST)는 이 분석 하나만을 위한 격리된 단발성 API 호출이라 애초에 문제가 안 되지만,
 # MCP는 이미 진행 중인 대화(다른 주제·톤·이전 논의)의 연장선에서 호출된다 — 그 맥락이 평가에
-# 섞여 웹과 다른 결과가 나올 수 있다(docs/planning/mcp_analysis_consistency.md 참고). REST와
+# 섞여 웹과 다른 결과가 나올 수 있다. REST와
 # 공유하는 prompts.py의 SYSTEM 상수엔 안 넣고, MCP 전용으로 여기서만 덧붙인다 — REST엔 애초에
 # 해당 없는 지시라 원본 프롬프트를 불필요하게 늘릴 이유가 없다.
 _MCP_ISOLATION_NOTICE = """
@@ -538,7 +536,7 @@ async def create_company(
             if not (report_prose or "").strip():
                 raise ToolError("judge_result가 있으면 report_prose(prepare_fit_report로 작성한 종합 의견)도 필요합니다.")
             # 클라이언트가 prepare_fit_report를 실제로 거쳤는지 서버는 신뢰할 수 없다 —
-            # 저장 직전 같은 함수로 다시 정규화한다(멱등, PLAN.md §6.2/§5.3).
+            # 저장 직전 같은 함수로 다시 정규화한다(멱등).
             normalized = fit_normalization.normalize_and_render(
                 judge_result, effective_company_data,
                 fit_normalization.split_criteria_lines(storage.read_eval_criteria()),

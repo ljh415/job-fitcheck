@@ -1,4 +1,4 @@
-"""Plan A SQLite 최소 스키마 (`01_lean_evidence_first_rag.md`의 "최소 데이터 모델" 참고).
+"""Plan A SQLite 최소 스키마.
 
 requirement_level(필수/우대 구분)은 두지 않는다 — 검색·집계에서 그 구분이
 실제로 필요해지면 추가한다.

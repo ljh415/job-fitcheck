@@ -532,7 +532,7 @@ EVALUATE_FIT_TOOL_SCHEMA = {
 }
 
 # ── 적합도 평가 — 1단계(판정 전용) 스키마 ──────────────────────────
-# 설계: docs/fit-eval-structural-redesign/PLAN.md. 이 스키마는 2단계 파이프라인 전용이고,
+# 이 스키마는 2단계 파이프라인 전용이고,
 # 기존 EVALUATE_FIT_TOOL_SCHEMA(비교·롤백용)와는 별개다.
 
 EVALUATE_FIT_JUDGE_TOOL_NAME = "submit_fit_judgments"

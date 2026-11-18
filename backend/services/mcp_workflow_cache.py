@@ -1,6 +1,6 @@
 """MCP 회사 등록 워크플로(raw_text → company_data → judge_result)를 짧은 TTL로
 메모리에 보관 — create_company까지 클라이언트가 이 값들을 다시 통째로
-재전송하지 않도록 하기 위함(docs/mcp-structured-contract/PLAN.md §8 참고).
+재전송하지 않도록 하기 위함.
 
 uvicorn 단일 워커 전제(backend/main.py, workers 인자 없음) — 다중 워커로
 확장하면 프로세스마다 메모리가 분리돼 이 캐시가 깨진다. 그때는 Redis 등
