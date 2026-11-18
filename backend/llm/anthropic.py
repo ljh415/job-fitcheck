@@ -220,7 +220,6 @@ class AnthropicProvider(LLMProvider):
                     f"JSON outputs 응답을 파싱하지 못했습니다 (stop_reason={response.stop_reason}, 출력 {response.usage.output_tokens}토큰)"
                 )
             return result
-        raise RuntimeError("JSON outputs 응답을 얻지 못했습니다")
 
     async def complete(
         self,
@@ -284,7 +283,6 @@ class AnthropicProvider(LLMProvider):
                 if getattr(block, "type", None) == "text":
                     return block.text  # type: ignore[union-attr]
             return ""
-        return ""
 
     async def run_agent(
         self,

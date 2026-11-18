@@ -186,7 +186,6 @@ class OpenAIProvider(LLMProvider):
                     operation, current_max_tokens, response.usage.completion_tokens if response.usage else -1,
                 )
             return response.choices[0].message.content or ""
-        return ""
 
     async def run_agent(
         self,
