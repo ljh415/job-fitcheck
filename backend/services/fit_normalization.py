@@ -295,7 +295,7 @@ def _reconcile_custom_criteria(llm_entries, criteria_lines: list[str]) -> tuple[
 
 
 def validate_decision_factors(decision_factors: dict, criteria_lines: list[str] | None = None) -> tuple[dict, bool]:
-    """decision_factors의 5개 단일 요인이 전부 존재하고 `status`/`note`가 문자열인지,
+    """decision_factors의 단일 요인(location·stability)이 전부 존재하고 `status`/`note`가 문자열인지,
     stability는 status가 구 필드와 같은 enum인지 검증한다. 위반 시 안전한 기본값(확인 필요 status·note)
     으로 교체한 뒤 incomplete로 표시한다. 최상위 `decision_factors` 자체가
     dict가 아니면(provider가 list/문자열/숫자를 반환하는 등) `.get()` 호출이
@@ -365,7 +365,7 @@ _DECISION_FACTOR_LABELS = {
 
 
 def render_decision_factors_summary(decision_factors: dict) -> str:
-    """비기술 요인(decision_factors) 6개 전부를 코드가 고정된 한 줄로 요약한다.
+    """비기술 요인(decision_factors) 전부를 코드가 고정된 한 줄로 요약한다.
 
     2단계 보고서 프롬프트는 gaps 위주라 문제없는 판정은 종합
     의견 산문에 거의 안 나타난다 — 판정 자체를 안 한 게 아니라 결과가 괜찮아서

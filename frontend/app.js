@@ -285,10 +285,9 @@ function startInProgressPolling() {
 
 /* ── RAG 활성화 여부(opt-in) ──────────────────────────────────────── */
 async function checkRagStatus() {
-  // RAG는 opt-in 기능이라 대부분의 배포에서 꺼져 있다 — 실패해도(네트워크 오류 등)
-  // 조용히 넘어가고 버튼은 숨김 상태 그대로 둔다(로그인 리다이렉트를 유발하면 안 되므로
-  // api() 대신 직접 fetch — /rag/status는 인증 없이도 404가 아니라 정상 응답해야 하지만,
-  // 그래도 이 체크 자체가 로그인 흐름을 방해하지 않게 방어적으로 처리).
+  // RAG는 opt-in 기능이라 대부분의 배포에서 꺼져 있다 — 실패해도(네트워크 오류, 로그인 전 401 등)
+  // 조용히 넘어가고 버튼은 숨김 상태 그대로 둔다. api()를 쓰면 401이 로그인 리다이렉트를
+  // 유발하므로 이 체크는 직접 fetch한다.
   try {
     const token = localStorage.getItem(TOKEN_KEY);
     const res = await fetch('/api/rag/status', {
@@ -672,7 +671,7 @@ async function initDetail(slug) {
       </select>`;
   }
 
-  // 기업 현황 행 (Wanted 동기화 데이터)
+  // 기업 현황 행(투자 단계·매출 등)
   const companyFacts = document.getElementById('company-facts');
   if (companyFacts) {
     const facts = [];
@@ -784,7 +783,7 @@ function renderFitHistoryPanel() {
 function toggleFitHistory() {
   if (!_fitHistoryCache.length) return;  // 로딩 실패(⚠) 상태 — 클릭해도 아무 반응 없게
   // 버튼은 상단(점수 배지 옆)인데 패널은 본문 아래라, 클릭해도 스크롤 안 하면
-  // 화면엔 아무 변화가 안 보인다 — 패널은 이제 항상 열려있으므로 이 함수는 그 자리로
+  // 화면엔 아무 변화가 안 보인다 — 패널은 항상 열려 있으므로 이 함수는 그 자리로
   // 스크롤만 이동시킨다.
   document.getElementById('fit-history-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
@@ -951,7 +950,7 @@ async function saveCompany(event) {
   // 요청 시점의 slug를 고정 — API 호출이 끝나기 전에 사용자가 다른 화면으로 이동하면
   // currentSlug가 null이나 다른 값으로 바뀌어, 뒤늦게 도착한 응답이 initDetail(null) 등
   // 엉뚱한 slug로 화면 갱신을 시도해 가짜 "로딩 실패" 에러가 뜬다. 저장/재분석/재평가/
-  // 동기화 4곳 전부 같은 패턴.
+  // Q&A 전송 4곳 전부 같은 패턴.
   const slug = currentSlug;
   try {
     await api(`/companies/${encodeURIComponent(slug)}`, {
@@ -1077,7 +1076,7 @@ async function sendCompareQA() {
   try {
     const fullText = await streamQA(makeFetch, assistantBubble);
     if (fullText) compareQaHistory.push({ role: 'assistant', text: fullText });
-    else compareQaHistory.pop(); // 응답 실패 시 방금 넣은 질문 롤백(sendQA()와 동일 이유)
+    else compareQaHistory.pop(); // 응답 실패 시 방금 넣은 질문을 되돌린다(이력을 클라이언트 배열로만 들고 있는 경로)
   } catch (e) {
     assistantBubble.textContent = `오류: ${e.message}`;
     compareQaHistory.pop();
@@ -1121,18 +1120,15 @@ function appendBubble(containerId, text, role, timestamp) {
 }
 
 async function streamQA(fetchFn, bubble) {
-  // POST 한 번마다 새 행+새 LLM 호출이 생겨서, 연결이 끊겼을 때 같은 질문으로 자동 재시도하면
-  // 이력·비용이 중복된다. 그래서 재시도 없이 한 번만 시도하고, 끊김(null 반환)은 호출부가 처리한다.
-  // 단일 회사 Q&A는 서버가 pending 상태를 들고 독립 태스크로 계속 처리하므로 sendQA()가 서버
-  // 이력을 다시 조회한다.
+  // 연결이 끊겨도 같은 질문으로 자동 재시도하지 않는다 — 재시도하면 LLM 호출이 중복된다.
+  // 반환값: 전체 텍스트 / null(연결 끊김) / undefined(서버가 요청을 거부해 오류를 이미 표시함).
+  // 단일 회사 Q&A는 서버가 독립 태스크로 계속 처리하므로, null이면 sendQA()가 서버 이력을 다시 조회한다.
   try {
     const res = await fetchFn();
     if (!res.ok) {
-      // non-OK(예: DB 장애로 503)는 서버가 요청을 아예 안 받아준 것 — 이미 말풍선에 오류를
-      // 표시했으니 호출부가 history를 다시 조회할 필요가 없다. undefined를 반환해 연결
-      // 단절(null, 서버가 독립 태스크로 처리 중일 수 있어 재조회가 의미 있음)과 구분한다 —
-      // 재조회가 컨테이너를 비웠다가 같은 장애로 실패하면 방금 표시한 오류까지 같이
-      // 사라진다.
+      // non-OK(예: DB 장애로 503)는 서버가 요청을 아예 받지 않은 것 — 오류를 이미 말풍선에
+      // 표시했으니 undefined를 반환해 연결 단절(null)과 구분한다. sendQA()가 null일 때만
+      // 이력을 재조회하는 이유: 같은 장애로 재조회가 실패하면 방금 표시한 오류까지 같이 사라진다.
       const err = await res.json().catch(() => ({ detail: '서버 오류' }));
       bubble.textContent = `오류: ${err.detail || '응답 실패'}`;
       return undefined;

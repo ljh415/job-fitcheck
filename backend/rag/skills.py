@@ -1,27 +1,24 @@
-"""정확 기술명·동의어 그룹 정의.
-
-평가셋의 EX/SY/AG/GP 기대값과 실제 원문(`.raw.txt`)을
-grep으로 직접 대조해 검증된 패턴만 담는다. 패턴은 원문 소문자 검색 기준이며
+"""정확 기술명·동의어 그룹 정의. 패턴은 원문 소문자 검색 기준이며
 `re.IGNORECASE`로 매칭한다.
 """
 
 TRACKED_SKILLS: dict[str, list[str]] = {
-    # 정확 기술명 (평가셋 EX-01~06) — 기대값과 정확히 일치 검증됨
+    # 정확 기술명
     "FastAPI": [r"fastapi"],
     "Python": [r"\bpython\b"],
     "Docker": [r"docker"],
     "Airflow": [r"airflow"],
     "Terraform": [r"terraform"],
     "Redis": [r"redis"],
-    # 동의어 그룹 (평가셋 SY-01~06)
+    # 동의어 그룹
     "Kubernetes": [r"k8s", r"kubernetes"],
     "PostgreSQL": [r"postgres"],  # "postgres"가 "postgresql"의 부분 문자열이라 패턴 하나로 둘 다 커버
     "AWS": [r"aws", r"amazon web services"],
     "GCP": [r"gcp", r"google cloud"],
     "CI/CD": [r"ci/cd", r"jenkins", r"github actions", r"argocd", r"배포 자동화"],
     "Observability": [r"observability", r"모니터링", r"메트릭", r"트레이싱", r"prometheus", r"grafana", r"elasticsearch"],
-    # 평가셋 GP-01/GP-04(개인 gap)에서만 쓰는 별도 그룹.
-    # Terraform 단독(정확 기술명, 6건)과는 다른 개념 — "IaC"라는 포괄적 표현만 쓴 공고 1건이 더 있어 7건.
+    # 개인 gap 판정에서만 쓰는 별도 그룹 — Terraform 단독(정확 기술명)과 달리
+    # "IaC"라는 포괄적 표현만 쓴 공고도 포함한다.
     "IaC": [r"terraform", r"iac"],
 }
 
@@ -38,6 +35,5 @@ def normalize_skill(skill: str) -> str:
     stripped = skill.strip()
     return _SKILL_LOOKUP.get(stripped.lower(), stripped)
 
-# CI/CD의 "배포 자동화" 항목은 평가셋 SY-05 기대값(20건)과 AG-05 교집합(11건)을 동시에 만족하는
-# 유일한 후보가 아니다 — "배포 파이프라인"도 독립적으로 20건을 만족한다. 정확한 원 용어는
-# 미확정이다.
+# CI/CD의 "배포 자동화" 항목은 정확한 원 용어가 확정되지 않았다 — "배포 파이프라인"도
+# 같은 범위를 잡는 후보다.

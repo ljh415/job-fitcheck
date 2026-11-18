@@ -680,7 +680,7 @@ async def _process_company(
     log_lines.append(f"- {date.today().isoformat()}: {'재분석 완료' if is_refill else '분석 완료'}")
     log_body = "\n".join(log_lines)
 
-    # 섹션 추가: 적합도 있으면 4(리포트)+5(종합의견) → 6(로그), 없으면 4(로그)
+    # 섹션 추가: 적합도 있으면 4(리포트, 종합 의견 포함) → 6(로그), 없으면 4(로그)
     if fit_report:
         body += f"\n\n## 4. 적합도 리포트 — {fit_data.get('fit_score', '?')} / 100\n\n{fit_report}"
         body += f"\n\n## 6. 지원 상태 로그\n{log_body}"
@@ -950,8 +950,9 @@ async def toggle_pin(slug: str):
 @router.post("/api/companies/{slug}/refit")
 async def refit_company(slug: str):
     """적합도 점수만 재산정한다.
-    기존 frontmatter(구조화 데이터)와 본문을 그대로 두고 High 티어 LLM만 호출한다
-    (evaluate_fit_structured() 내부에서 1단계 판정 + 2단계 보고서, 총 2회)."""
+    공고 정보(frontmatter의 구조화 데이터)는 그대로 두고 High 티어 LLM으로 다시 평가해, 평가
+    필드와 본문의 적합도 리포트 섹션만 교체한다(evaluate_fit_structured() 내부에서 판정 호출
+    + 보고서 호출, 기본 2회). 상태 로그에는 "적합도 재평가 완료"를 추가한다."""
     record = storage.read_company(slug)
     if not record:
         raise HTTPException(status_code=404, detail="회사를 찾을 수 없습니다.")

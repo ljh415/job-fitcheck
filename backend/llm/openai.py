@@ -36,7 +36,7 @@ _NO_TEMPERATURE_MODELS = frozenset({
 def _reasoning_effort_kwarg(model: str, reasoning_effort: str | None = None) -> dict:
     """gpt-5 계열(하이픈/점 모두) 및 o-series 모델에 reasoning_effort를 적용한다.
     gpt-5-mini/nano는 low/medium에서 reasoning_tokens=0 (파라미터 수용, 추론 미작동),
-    high에서는 실제 추론이 활성화된다 (D-3 실험 확인).
+    high에서는 실제 추론이 활성화된다.
     gpt-4o 계열은 400 오류가 발생하므로 제외.
     reasoning_effort가 주어지면(파이프라인 스냅샷) 그 값을 쓰고, 없으면 현재 설정을 조회한다."""
     if not (model.startswith("gpt-5") or model.startswith("o1") or model.startswith("o3") or model.startswith("o4")):

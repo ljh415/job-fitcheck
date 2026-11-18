@@ -64,8 +64,8 @@ def ensure_fts5(conn: sqlite3.Connection) -> None:
 
 
 def rebuild_fts5(conn: sqlite3.Connection) -> None:
-    """document_chunk_fts를 document_chunk의 현재 내용으로 무조건 다시 만든다. 청크를 실제로
-    추가·삭제·수정하는 코드(`chunks.py`)에서만 호출해야 한다 — 검색 경로에서 매번 부르면 동시
+    """document_chunk_fts를 document_chunk의 현재 내용으로 무조건 다시 만든다. 청크를
+    바꾼 코드가 직접 호출해야 한다 — 검색 경로에서 매번 부르면 동시
     요청 간 락이 걸린다(위 `ensure_fts5()` 설명 참고)."""
     conn.execute("DROP TABLE IF EXISTS document_chunk_fts")
     conn.execute(

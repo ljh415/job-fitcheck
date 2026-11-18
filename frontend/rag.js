@@ -1,10 +1,10 @@
-/* ── RAG (opt-in, 6번 항목) ───────────────────────────────────────── */
+/* ── RAG (opt-in) ───────────────────────────────────────── */
 const RAG_LEVEL_CLASS = { '직접 근거': 'score-high', '부분 근거': 'score-mid', '인접 경험': 'score-mid', '근거 없음': 'score-none' };
 const RAG_CHATS_KEY = 'job-fitcheck-rag-chats';
 const RAG_CURRENT_CHAT_KEY = 'job-fitcheck-rag-current-chat';
 
 function ragSettingsProviderOptionsHtml(current) {
-  // rag_configured_providers 기반 — local 미설정 배포에는 Local 선택지 자체가 안 보인다(3번 결정).
+  // rag_configured_providers 기반 — local 미설정 배포에는 Local 선택지 자체가 안 보인다.
   // "자동"은 메인 LLM provider를 따라간다(config.py의 resolve_rag_embedding_provider()).
   const auto = `<option value=""${current ? '' : ' selected'}>자동 (메인 provider 따름)</option>`;
   const opts = ragConfiguredProviders

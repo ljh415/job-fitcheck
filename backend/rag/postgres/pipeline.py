@@ -1,5 +1,5 @@
 """임베딩 provider 구현체 하나를 받아 아직 그 provider로 임베딩 안 된 청크를 채우는
-공통 파이프라인, PostgreSQL판. `rag/embed/pipeline.py`의 포팅 — pgvector는 파이썬
+공통 파이프라인, PostgreSQL판. pgvector는 파이썬
 list[float]을 그대로 저장/조회하므로 BLOB pack/unpack이 필요 없다(`register_vector()`가
 `rag/postgres/db.py`에서 등록됨).
 

@@ -49,12 +49,11 @@ def _run_with_conn(conn, provider_name: str, include_profile: bool) -> None:
     n_pruned = prune_deleted_postings(conn)  # 원문이 삭제된 posting의 고아 청크/임베딩 정리
     if n_pruned:
         print(f"삭제된 공고 {n_pruned}건의 청크/임베딩 정리 완료")
-    # populate_posting_chunks()도, 뒤이은 run_embedding_pipeline()도 이제 commit을 안 한다 —
+    # populate_posting_chunks()도, 뒤이은 run_embedding_pipeline()도 commit하지 않는다 —
     # 청크 삭제+재생성과 공고 임베딩, (옵션인) 프로필 청크+임베딩까지 전부 성공해야만 아래에서
-    # 한 번에 commit된다. run_embedding_pipeline()이 공고 단계 성공 시 자체적으로 commit하면,
-    # 프로필 단계가 나중에 실패했을 때 공고 단계만 이미 확정된 채 남는다 — provider 전환 중
-    # 이전 provider 색인이 훼손되는 문제가 이 경로에서도 성립한다. 이제 실패하면 아래 except가
-    # 청크 삭제까지 전부 롤백한다.
+    # 한 번에 commit한다. 공고 단계 성공 시 자체적으로 commit하면, 프로필 단계가 나중에
+    # 실패했을 때 공고 단계만 이미 확정된 채 남아 provider 전환 중 이전 provider 색인이
+    # 훼손된다. 실패하면 아래 except가 청크 삭제까지 전부 롤백한다.
     n_touched, n_chunks = populate_posting_chunks(conn)
     provider = None
     try:

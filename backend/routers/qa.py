@@ -77,10 +77,9 @@ async def _run_qa_generation(message_id: int, system: str, messages: list[dict],
     """LLM 호출을 요청/응답 코루틴과 분리된 독립 태스크로 돌린다. `frontend/app.js`의
     `navigate()`/`popstate`가 화면 전환 시 SSE reader를 cancel()하면 브라우저 fetch
     연결이 끊기는데, 이 함수가 그 요청 코루틴의 자식이면 같이 취소돼 LLM 호출이 중간에
-    멈춘다 — 그러면 "떠났다 돌아오면 답변이 채워져 있다"는 이번 마이그레이션의 목적 자체가
-    깨진다. `asyncio.create_task()`로 독립시켜서 클라이언트 연결과 무관하게 끝까지 실행하고
-    DB에 결과를 남긴다(backend/routers/rag.py의 trigger_reindex_background()와 같은 원리 —
-    그 함수 주석 참고: 요청 코루틴의 취소가 실제 작업까지 취소시키면 안 된다)."""
+    멈춘다 — 그러면 "떠났다 돌아오면 답변이 채워져 있다"가 깨진다. `asyncio.create_task()`로
+    독립시켜서 클라이언트 연결과 무관하게 끝까지 실행하고 DB에 결과를 남긴다(요청 코루틴의
+    취소가 실제 작업까지 취소시키면 안 된다)."""
     logger.info("QnA 생성 태스크 시작 (message_id=%s)", message_id)
     full_text = ""
     try:

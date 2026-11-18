@@ -42,7 +42,7 @@ data/companies/*.raw.txt (공고 원문 70건) + data/candidate_profile.md (후�
         ▼  정확한 기술명 집계 + 문단 단위 청킹 → Google/로컬 임베딩
    posting, posting_skill, document_chunk, chunk_embedding (PostgreSQL)
         │
-        ▼  검색(pgvector exact/HNSW + 관계형 정확매칭 RRF 결합)
+        ▼  검색(pgvector exact/HNSW 벡터 검색 + Postgres 전문검색 후보를 번갈아 결합, 13개 고정 기술은 SQL 정확 매칭)
    검색 품질 평가 — Precision@5/Recall@10 (수치는 위 "핵심 수치")
         │
         ▼  검색 근거 + 프로필을 놓고 "직접근거/부분근거/인접경험/근거없음" 판정
@@ -78,7 +78,7 @@ backend/rag/postgres/
 └── gap.py              — Gap 판정
 
 backend/routers/rag.py     — API(POST /api/rag/gap-check, /api/rag/ask, /api/rag/reindex)
-frontend/index.html·app.js — main SPA `/rag` 뷰(기술 확인 + 자연어 채팅 + 재색인·provider 설정)
+frontend/index.html·app.js·rag.js — main SPA `/rag` 뷰(기술 확인 + 자연어 채팅 + 재색인·provider 설정)
 ```
 
 **Plan A 기준선 재현용(동결 스크립트) — `backend/rag/*.py`(SQLite)**
@@ -93,7 +93,7 @@ python3 -m rag.postgres.reindex --provider google --include-profile   # 전체 �
 python3 -m rag.postgres.reindex --provider local --include-profile    # 로컬(3050Ti)도 — SSH 연결 필요
 ```
 
-`reindex.py`는 **내용이 안 바뀐 공고는 건드리지 않습니다**(문서 해시 비교). 스키마 자체를 바꿨다면(`schema.py` 수정 후) `--rebuild-schema` 플래그로 테이블을 지우고 다시 만들어야 합니다(`CREATE TABLE IF NOT EXISTS`는 컬럼 추가를 안 해주기 때문). 브라우저로 확인하려면 위 "한눈에 보기"의 안내대로 메인 앱을 띄우고 `/rag`로 들어간다.
+`reindex.py`는 공고 행(`posting`)을 매번 전체 다시 적재하지만, **내용이 안 바뀐 공고의 청크·임베딩은 다시 만들지 않습니다**(청크 해시 비교). 스키마 자체를 바꿨다면(`schema.py` 수정 후) `--rebuild-schema` 플래그로 테이블을 지우고 다시 만들어야 합니다(`CREATE TABLE IF NOT EXISTS`는 컬럼 추가를 안 해주기 때문). 브라우저로 확인하려면 위 "한눈에 보기"의 안내대로 메인 앱을 띄우고 `/rag`로 들어간다.
 
 CLI 대신 웹에서 재색인하려면 `/rag` 페이지의 `🔄 재색인` 버튼 또는 `POST /api/rag/reindex`를
 직접 호출한다 — **현재 활성 embedding provider 하나만** 재색인한다(google+local을 항상 같이
@@ -120,7 +120,7 @@ provider를 바꾸려면 설정 화면(`/api/rag/settings`)에서 전환 — 전
 
 ## 4. 현재 상태
 
-Plan A(1~8단계)·Plan B(1~6단계) 전체 완료 + Codex 코드 리뷰 5차 재검토 반영까지 끝났습니다. "대화형 근거 기반 RAG" Phase 1~4(질문 이해와 라우팅~멀티턴 대화)를 거쳐, 애매한 질문에 무관한 답을 내던 구조적 결함이 실사용 중 발견돼 **Agentic RAG(tool-use)로 아키텍처 전환**했고(개발 당시엔 Claude 전용, main 반영 과정에서 Claude/OpenAI/Gemini 전부 지원으로 확장됨), Phase 5(평가, 21문항)까지 포함해 대화형 근거 기반 RAG 전체가 완료됐습니다(2026-07-29). 이어서 진행한 "RAG 모듈 안정화"도 Phase 1(모듈 경계)·Phase 2(운영 검증) 완료, Phase 3(Qdrant·reranker·GraphRAG·3090Ti+Triton)는 전부 조건부라 현재 트리거 없음(착수 안 함 = 정상)입니다. 상세 이력은 전부 `CHANGELOG.md`(이 폴더)에 버전별로 정리돼 있습니다 — 특히 `rag-v0.19.x`(재색인 웹 트리거), `rag-v0.18.x`(Agentic RAG 전환+provider 일관성 수정+병렬화+전수 검증), `rag-v0.17.0`(Phase 4, 멀티턴+채팅 UI), `rag-v0.16.x`(Phase 3, 근거·표본 범위 노출), `rag-v0.15.0`(Phase 2, 서술형 주제 검색 전체원문 LLM 판정), `rag-v0.14.0`(대화형 RAG Phase 1), `rag-v0.13.1`~`0.13.5`(Plan B Codex 재검토 5회차)를 보면 무슨 문제가 발견되고 어떻게 고쳤는지 다 나옵니다.
+Plan A(1~8단계)·Plan B(1~6단계) 전체 완료 + Codex 코드 리뷰 5차 재검토 반영까지 끝났습니다. "대화형 근거 기반 RAG" Phase 1~4(질문 이해와 라우팅~멀티턴 대화)를 거쳐, 애매한 질문에 무관한 답을 내던 구조적 결함이 실사용 중 발견돼 **Agentic RAG(tool-use)로 아키텍처 전환**했고(개발 당시엔 Claude 전용, main 반영 과정에서 Claude/OpenAI/Gemini 전부 지원으로 확장됨), Phase 5(평가, 21문항)까지 포함해 대화형 근거 기반 RAG 전체가 완료됐습니다(2026-07-29). 이어서 진행한 "RAG 모듈 안정화"도 Phase 1(모듈 경계)·Phase 2(운영 검증) 완료, Phase 3(Qdrant·reranker·GraphRAG·3090Ti+Triton)는 전부 조건부라 현재 트리거 없음(착수 안 함 = 정상)입니다. 상세 개발 이력은 로컬 전용 `docs/rag-integration/`(git 미추적)에 있습니다.
 
 Phase 2(하이브리드 근거 검색)에서는 화이트닝(naive mean-centering·완전 SVD covariance whitening)과 cross-encoder reranker(bge-reranker-v2-m3)를 자연어 평가셋(5문항)으로 실측했으나 둘 다 이 corpus 규모·균질성에서는 순위 품질을 개선하지 못해 기각했고, corpus가 작다는 점에 착안해 후보를 점수로 미리 거르지 않고 전체 원문을 LLM 판정에 넘기는 쪽을 채택했습니다(위 "자유 텍스트 주제 검색" 참고). Phase 3(근거 기반 답변)는 답변에 판정 근거(어떤 발췌문을 보고 포함시켰는지)와 표본 범위(정확매칭인지 LLM 추정인지)를 노출하는 작업이었는데, 조사해보니 `single_skill_gap`은 이미 근거를 반환하고 있었고 `all_gaps`/`action_plan`은 **백엔드엔 근거가 있는데 프론트 렌더링에서만 빠뜨리고 있던** 순수 버그였습니다 — 실제 신규 구현은 `posting_list`/`market_aggregate`뿐이었습니다.
 
@@ -140,7 +140,6 @@ Phase 2(하이브리드 근거 검색)에서는 화이트닝(naive mean-centerin
 | `docs/rag-integration/HISTORY.md` | 로컬 전용 | main 반영 작업의 날짜별 진행 히스토리 | ❌ |
 | `docs/rag-integration/KNOWN-ISSUES.md` | 로컬 전용 | 우리 코드 버그가 아닌 외부 API/SDK 이슈 기록 | ❌ |
 | **이 README** | `backend/rag/` | 코드가 뭐고 왜 이렇게 짰는지, 처음 보는 사람 기준 | ✅ |
-| `CHANGELOG.md` | `backend/rag/` | 버전별(`rag-v0.x.y`) 변경 이력(main 반영 전까지) | ✅ |
 
 **`rag/main` 브랜치 전용(이 브랜치엔 없음) — RAG 자체 개발 당시 계획 문서**, 코드가 왜 이런
 과정을 거쳐 지금 모습이 됐는지 궁금할 때만 그 브랜치에서 참고:

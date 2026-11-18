@@ -9,14 +9,14 @@ llm/openai.py에서 처리하므로 이 파일은 내용(What)에만 집중한�
   EXTRACT_COMPANY_*  — High 티어: 공고 텍스트 → 구조화 JSON
   GENERATE_BODY_*    — Lightweight 티어: 구조화 데이터 → 마크다운 본문 (섹션 1~3)
   EVALUATE_FIT_*     — High 티어: 후보자 프로필 + 공고 → 적합도 점수/리포트 (섹션 4)
-  QA_*               — High 티어: 회사 정보 기반 Q&A 스트리밍 (시스템 프롬프트만; 유저 메시지는 main.py에서 content block으로 구성)
+  QA_*               — High 티어: 회사 정보 기반 Q&A 스트리밍 (시스템 프롬프트만; 유저 메시지는 routers/qa.py에서 content block으로 구성)
 
 마크다운 본문 섹션 번호 규칙:
   1. 기본정보  2. 회사 규모/안정성  3. 공고 내용        (GENERATE_BODY가 생성)
-  4. 적합도 리포트  5. 종합 의견                        (프로필 있을 때, EVALUATE_FIT의 fit_report_body에 통째로 포함;
-                                                          main.py는 섹션 4 헤더 줄만 점수를 넣어 재작성한다)
-  6. 지원 상태 로그                                      (프로필 있을 때, main.py가 직접 추가)
-  프로필 없을 때: 4. 지원 상태 로그                      (main.py가 직접 추가)
+  4. 적합도 리포트                                      (프로필 있을 때, services/company_analysis.py가 만든 판정 표·종합 의견·요인 요약을
+                                                          routers/companies.py가 "## 4. 적합도 리포트 — N / 100" 헤더 아래에 붙인다)
+  6. 지원 상태 로그                                      (프로필 있을 때, routers/companies.py가 직접 추가)
+  프로필 없을 때: 4. 지원 상태 로그                      (routers/companies.py가 직접 추가)
 """
 
 # 외부 원문(공고, 이력서, 저장된 회사 정보 등)을 받는 모든 system prompt에 공통으로 덧붙이는 신뢰 경계 문구.

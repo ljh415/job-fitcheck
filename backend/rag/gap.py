@@ -127,8 +127,7 @@ def _candidate_postings(conn: sqlite3.Connection, skill: str, embed_provider: Em
     fts_queue = []
     for (chunk_id,) in fts_rows:
         row = conn.execute("SELECT text FROM document_chunk WHERE id = ?", (chunk_id,)).fetchone()
-        if row:  # 청크가 실제로 바뀌면 chunks.py가 FTS를 재생성하므로 정상 경로에선 항상 있어야
-                 # 하지만, 타이밍 이슈에 대비해 방어적으로 확인
+        if row:  # FTS 테이블이 청크 변경 뒤 재생성되지 않았으면 청크가 없을 수 있어 방어적으로 확인
             fts_queue.append((chunk_id, row[0]))
 
     candidates: dict[int, dict] = {}

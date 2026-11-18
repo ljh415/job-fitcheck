@@ -101,7 +101,9 @@ async def evaluate_fit_structured(
     뿐 런타임 호출자가 없다.
 
     1단계(판정 전용) 호출 → 코드가 완결성 검증·jobplanet/location 등급 강제·표
-    렌더링·gaps/strengths 파생 → 2단계(판정 표 전체를 보고 점수를 정하고 보고서 산문까지 쓰는) 호출, LLM 호출 2회.
+    렌더링·gaps/strengths 파생 → 2단계(판정 표 전체를 보고 점수를 정하고 보고서 산문까지 쓰는)
+    호출. 기본 LLM 호출 2회이고, 2단계는 점수나 산문을 못 읽으면 1번 더 요청한다. 그래도 점수를
+    못 읽으면 0점, 점수나 산문 중 하나라도 못 읽으면 평가 불완전으로 표시한다.
 
     반환값은 `evaluate_fit()`과 필드 이름이 다르다(`decision_factors`에 중첩된
     값에서 `salary_check`/`stability_check`/`location_check`를
@@ -139,7 +141,7 @@ async def evaluate_fit_structured(
     normalized = fit_normalization.normalize_and_render(judge_result, company_data, criteria_lines)
 
     # 보고서 호출이 정리된 판정 표 전체를 보고 점수를 정하고(점수 → 산문 순서) 산문까지
-    # 쓴다. 점수나 산문을 못 읽으면 1번만 다시 요청하고, 그래도 안 되면 점수 0 + 불완전.
+    # 쓴다. 점수나 산문을 못 읽으면 1번만 다시 요청한다(그래도 못 읽으면 아래에서 0점·불완전 처리).
     fit_score, report_prose = None, ""
     for _ in range(2):
         report_result = await high.extract_structured(
@@ -163,7 +165,7 @@ async def evaluate_fit_structured(
     fit_score = fit_score if fit_score is not None else 0
     fit_label = fit_normalization.label_from_score(fit_score)
 
-    # 비기술 요인 6개를 코드가 고정된 한 줄로 항상 노출 — LLM 종합 의견은 gap 위주라
+    # 비기술 요인을 코드가 고정된 한 줄로 항상 노출 — LLM 종합 의견은 gap 위주라
     # 문제없는 판정은 산문에서 거의 빠져 "판정 안 함"과
     # 구분이 안 된다. LLM 재호출 없음(입력
     # 토큰도 안 늘어남 — decision_factors는 이미 report_user에 통째로 들어가 있음).

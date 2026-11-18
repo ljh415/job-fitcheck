@@ -731,9 +731,7 @@ def get_rag_chat(chat_id: str) -> dict | None:
 
 
 def set_rag_chat_title_if_empty(chat_id: str, title: str) -> None:
-    """제목이 아직 없는 채팅방에만 첫 질문 앞부분으로 제목을 채운다(기존 프론트
-    `frontend/app.js`의 `if (!chat.title) chat.title = question.slice(0, 24) + ...`와
-    동일 규칙, 서버로 이전)."""
+    """제목이 아직 없는 채팅방에만 첫 질문 앞부분으로 제목을 채운다."""
     with get_connection() as conn:
         conn.execute(
             "UPDATE rag_chats SET title = ? WHERE id = ? AND (title IS NULL OR title = '')",

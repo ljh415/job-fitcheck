@@ -87,9 +87,8 @@ async def generate_action_plan(gap_result: dict, llm: tuple[LLMProvider, str, st
     )
 
 
-# "부분 근거"는 gap.py의 validate()에서도 이미 "직접 근거"와 같은 방향(증거 있음)으로 취급했다
-# (LLM이 같은 근거를 두고도 직접/부분을 오갈 만큼 그 경계가 미세해서). 여기서도 같은 관용도를
-# 적용 — 안 그러면 실제로는 강점인 기술(예: Kubernetes)이 LLM의 그날그날 판정 편차로 "gap"에
+# "부분 근거"도 "직접 근거"와 같은 방향(증거 있음)으로 취급한다 — LLM이 같은 근거를 두고도
+# 직접/부분을 오갈 만큼 그 경계가 미세해서다. 안 그러면 실제로는 강점인 기술(예: Kubernetes)이 LLM의 그날그날 판정 편차로 "gap"에
 # 잘못 끼어드는 문제가 생긴다.
 _HAS_EVIDENCE = ("직접 근거", "부분 근거")
 _TRUE_GAP = ("인접 경험", "근거 없음")

@@ -1,9 +1,8 @@
 """임베딩 provider 공통 인터페이스.
 
-`backend/llm/base.py`(`LLMProvider`)와 같은 패턴이지만, RAG 임베딩은 "런타임에 하나만
-활성화"가 아니라 **여러 provider를 나란히 비교**하는 게 목적이라
-`llm/router.py` 같은 "활성 provider 선택" 로직은 두지 않는다 — 비교하고 싶은 provider를
-그때그때 명시적으로 만들어서 파이프라인에 넘긴다.
+`backend/llm/base.py`(`LLMProvider`)와 같은 패턴이다. 활성 provider를 고르는 로직은 이 모듈이
+아니라 `config.resolve_rag_embedding_provider()`가 맡고, 파이프라인에는 provider 구현체를
+명시적으로 만들어서 넘긴다.
 """
 from abc import ABC, abstractmethod
 

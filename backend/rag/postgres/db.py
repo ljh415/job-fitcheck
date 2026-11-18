@@ -1,5 +1,4 @@
-"""PostgreSQL 연결 헬퍼. `rag/ingest.py` 등이 매번 `sqlite3.connect(DB_PATH)`를 부르던
-자리를 대신한다. `register_vector()`로 pgvector 타입을 등록해두면 이후 코드는 파이썬
+"""PostgreSQL 연결 헬퍼. `register_vector()`로 pgvector 타입을 등록해두면 이후 코드는 파이썬
 `list[float]`을 그대로 INSERT/조회할 수 있다(BLOB pack/unpack 불필요).
 """
 import psycopg
