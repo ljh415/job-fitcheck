@@ -39,5 +39,5 @@ def normalize_skill(skill: str) -> str:
     return _SKILL_LOOKUP.get(stripped.lower(), stripped)
 
 # CI/CD의 "배포 자동화" 항목은 평가셋 SY-05 기대값(20건)과 AG-05 교집합(11건)을 동시에 만족하는
-# 유일한 후보는 아니다 — "배포 파이프라인"도 독립적으로 20건을 만족한다. 정확한 원 용어는
+# 유일한 후보가 아니다 — "배포 파이프라인"도 독립적으로 20건을 만족한다. 정확한 원 용어는
 # 미확정이다.

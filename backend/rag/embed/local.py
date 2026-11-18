@@ -32,8 +32,7 @@ _port_lock = threading.Lock()
 class LocalEmbeddingProvider(EmbeddingProvider):
     provider_name = "local"
 
-    # 01c 실험 1~4 참고: gte-multilingual-base(토크나이저 버그) → e5-base(채택) →
-    # BGE-M3(e5-base보다 낮은 점수) → Jina v5-text-small(e5-base·Google보다 높은 점수로 최종 채택).
+    # Jina v5-text-small은 e5-base·BGE-M3·Google 임베딩보다 높은 점수를 내서 채택했다.
     # Qwen3 기반 decoder+LoRA라 4GB VRAM에서 배치 크기를 작게(4) 잡아야 함 —
     # inference_server.py를 --batch-size 4로 띄워야 한다.
     EXPECTED_MODEL = "jinaai/jina-embeddings-v5-text-small"

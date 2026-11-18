@@ -95,8 +95,8 @@ function randomIdFallback() {
   return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
 }
 
-// job-fitcheck-qa-migrated-v2: v1.5.1(슬러그 단위 스킵) 시절 이미 완료 플래그가 찍혀 다시
-// 호출되지 않던 기기를 위한 1회성 복구 트리거. 기존 완료 키는 그대로 두고 별도로 둔다 —
+// job-fitcheck-qa-migrated-v2: 완료 플래그만 찍혀 있고 이력은 서버로 다 옮겨지지 않은 기기를
+// 위한 1회성 복구 트리거. 기존 완료 키는 그대로 두고 별도로 둔다 —
 // 서버(migrate_qa_slug_history)가 내용 기반으로 중복을 걸러주므로 이미 성공한 기기가 다시
 // 호출해도 안전하다.
 async function migrateQAHistoryIfNeeded() {
@@ -883,8 +883,8 @@ async function renderQAHistory(slug) {
     console.error('QnA 히스토리 로딩 실패:', e);
     return;
   }
-  // 응답 오는 동안 다른 회사로 이동했으면 그리지 않는다(오늘 다른 곳에서도 고친 것과
-  // 같은 레이스 가드 — currentSlug를 다시 읽어 비교).
+  // 응답 오는 동안 다른 회사로 이동했으면 그리지 않는다(레이스 가드 —
+  // currentSlug를 다시 읽어 비교).
   if (currentSlug !== slug) return;
   container.innerHTML = '';
   messages.forEach(m => {
@@ -1122,10 +1122,9 @@ function appendBubble(containerId, text, role, timestamp) {
 
 async function streamQA(fetchFn, bubble) {
   // POST 한 번마다 새 행+새 LLM 호출이 생겨서, 연결이 끊겼을 때 같은 질문으로 자동 재시도하면
-  // 이력·비용이 중복된다.
-  // 서버가 pending 상태를 이미 들고 있어서(연결이 끊겨도 독립 태스크가 계속 처리) 재시도
-  // 없이 한 번만 시도하고, 실패하면 호출부가 서버 상태를 다시 조회하도록 한다 — sendQA()의
-  // history 재조회 참고.
+  // 이력·비용이 중복된다. 그래서 재시도 없이 한 번만 시도하고, 끊김(null 반환)은 호출부가 처리한다.
+  // 단일 회사 Q&A는 서버가 pending 상태를 들고 독립 태스크로 계속 처리하므로 sendQA()가 서버
+  // 이력을 다시 조회한다.
   try {
     const res = await fetchFn();
     if (!res.ok) {
@@ -1922,7 +1921,7 @@ function applyModelListToDropdowns(models, provider, currentHigh, currentLight) 
 
 function loadModelCache(provider) {
   try {
-    // v2: Claude 허용 목록 도입 전에 저장된 13개짜리 캐시를 버리기 위해 키를 바꿨다
+    // v2: Claude 허용 목록 도입 전에 저장된 캐시(13개짜리)와 섞이지 않도록 키를 구분한다
     const raw = localStorage.getItem(`model-cache-v2-${provider}`);
     return raw ? JSON.parse(raw) : null;
   } catch { return null; }

@@ -1,14 +1,13 @@
-"""답변 생성·검증.
+"""행동 계획·집계 리포트 생성.
 
-`gap.py`의 판정 결과를 사람이 읽는 답변으로 만든다:
-  - 근거 설명: `assess_gap()`의 reasoning을 그대로 인용(추가 LLM 호출 없음 — 이미 자연어).
-  - 행동 계획: evidence_level이 "직접 근거"가 아닌 실제 gap에 대해서만 생성.
+`gap.py`의 판정 결과를 받아 행동 계획을 만든다:
+  - `generate_action_plan()`: evidence_level이 "직접 근거"가 아닌 실제 gap에 대해서만 생성.
     평가셋의 AC 카테고리 기준을 그대로 프롬프트에 반영 — 막연한 "토이 프로젝트 만들기"가 아니라 gap 유형에 맞는 구체적 활동 + 완료 조건.
 
-`evaluate.py`·`gap.py`와 달리 "정답"이 숫자로 고정되지 않는 열린 문제라, 정량 검증 대신 평가셋이 정의한
+"정답"이 숫자로 고정되지 않는 열린 문제라 `gap.py`와 달리 정량 검증 대신, 평가셋이 정의한
 실패 조건(완료 조건 없음, 근거 없는 성과 생성 등)에 걸리는지를 사람이 확인한다.
 
-위 함수들은 기술 하나짜리 질문(AC-01~03 스타일)만 다룬다. 평가셋의 GP-01(우선순위 gap 랭킹)·
+`generate_action_plan()`은 기술 하나짜리 질문(AC-01~03 스타일)만 다룬다. 평가셋의 GP-01(우선순위 gap 랭킹)·
 GP-06(전체 강점 요약)·AC-06(여러 gap 순서 정하기)처럼 여러 기술을 종합해야 하는 질문은
 아래 `rank_priority_gaps()`/`summarize_strengths()`/`generate_sequenced_plan()`이 담당한다.
 
@@ -22,7 +21,7 @@ from llm.base import LLMProvider
 from llm.router import capture_snapshot, high_from_snapshot
 from prompts import TRUST_BOUNDARY_NOTICE
 from rag.embed.local import LocalEmbeddingProvider
-from rag.gap import assess_all_gaps, assess_gap
+from rag.gap import assess_all_gaps
 from rag.ingest import DB_PATH
 
 ACTION_PLAN_SYSTEM = f"""당신은 후보자의 기술 gap을 보완할 구체적인 행동 계획을 세우는 커리어 코치입니다.

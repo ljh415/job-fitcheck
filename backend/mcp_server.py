@@ -196,8 +196,7 @@ async def update_company(
 
 def _chunk_source(conn, chunk_id: int) -> dict:
     """청크가 어느 공고/프로필에서 왔는지 조회 — 근거 출처를 명확히 표시해 서로 다른
-    회사·프로젝트의 근거가 뒤섞이지 않도록 한다(RAG 에이전트 근거 섞임 버그, v1.5.4와
-    같은 이유)."""
+    회사·프로젝트의 근거가 뒤섞이지 않도록 한다."""
     row = conn.execute(
         "SELECT source_type, source_id FROM document_chunk WHERE id = %s", (chunk_id,)
     ).fetchone()

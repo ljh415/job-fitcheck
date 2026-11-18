@@ -45,5 +45,3 @@ def search_chunks(
         params,
     ).fetchall()
     return rows
-
-

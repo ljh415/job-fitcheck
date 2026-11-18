@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS posting (
     collected_at TEXT,
     raw_path TEXT NOT NULL,
     raw_hash TEXT NOT NULL,
-    -- 공고 비교(대화형 근거 기반 RAG Phase 1)용 구조화 필드. data/companies/{slug}.md의
+    -- 공고 비교용 구조화 필드. data/companies/{slug}.md의
     -- frontmatter(CompanyFrontmatter)에 이미 있는 값을 ingest_postings()가 그대로 복제해온다.
     tech_stack TEXT[],
     benefits TEXT[],

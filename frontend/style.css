@@ -246,9 +246,8 @@ tr.company-row:hover { background: var(--table-row-hover); }
 .markdown-body table.fit-check-table td:first-child { width: 220px; }
 .markdown-body table.fit-check-table th:nth-child(2),
 .markdown-body table.fit-check-table td:nth-child(2) { width: 130px; text-align: center; }
-/* "관련 경험 여부"(7자, 직무 적합도 분석 표 헤더)가 기존 90px에서 옆 칸을 침범하던 문제
-   (2026-09-03 실사용 중 발견) — 항목 칸(1번째)은 그대로 두고 이 칸만 오른쪽으로 넓혀서
-   해결. 혹시 모를 더 긴 라벨에 대비해 줄바꿈도 같이 허용. */
+/* "관련 경험 여부"(7자, 직무 적합도 분석 표 헤더)가 옆 칸을 침범하지 않도록 항목 칸(1번째)은
+   그대로 두고 이 칸만 줄바꿈을 허용한다(더 긴 라벨 대비). */
 .markdown-body table.fit-check-table th:nth-child(2) { white-space: normal; }
 
 /* ── 폼 ──────────────────────────────────────────────────────────── */
@@ -406,7 +405,6 @@ label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-w
 .toast-close:hover { color: var(--text-inverse); }
 @keyframes toast-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
 
-.export-checklist { display: flex; flex-direction: column; gap: 8px; }
 .export-check-item { display: flex; flex-direction: row; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
 .export-check-item input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--primary); flex-shrink: 0; }
 .export-check-required { color: var(--text-muted); cursor: default; }
@@ -492,16 +490,16 @@ label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-w
 .rag-excerpt { font-size: 13px; color: var(--text-muted); border-left: 3px solid var(--border); padding-left: 10px; margin: 6px 0; }
 .rag-tool-trace summary { cursor: pointer; font-size: 13px; }
 .rag-tool-result { font-size: 12px; overflow-x: auto; white-space: pre-wrap; word-break: break-word; background: var(--bg-muted); padding: 8px; border-radius: 4px; margin-top: 4px; }
-.rag-chat-panel { height: 480px; display: flex; flex-direction: column; }
+.rag-chat-panel { display: flex; flex-direction: column; }
 .rag-chat-panel .qa-messages { border: 1px solid var(--border); border-radius: 8px; padding: 8px; min-height: 0; }
 .rag-chat-panel .qa-input-row button { flex: 0 0 auto; white-space: nowrap; }
 #rag-chat-select { flex: 0 0 auto; width: auto; }
 
-/* 채팅 패널이 고정 480px에 갇히지 않고 창 하단까지 늘어나도록(RAG 화면 전용). --rag-nav-h는
+/* 채팅 패널이 창 하단까지 늘어나도록(RAG 화면 전용). --rag-nav-h는
    app.js가 nav의 실제 렌더링 높이를 측정해서 넣어준다(모바일에서 nav가 줄바꿈돼도 대응) */
 .rag-view { display: flex; flex-direction: column; height: calc(100vh - var(--rag-nav-h, 52px)); min-height: 0; }
 .rag-view > .rag-section-card:last-child { flex: 1; display: flex; flex-direction: column; min-height: 0; }
-.rag-view .rag-chat-panel { height: auto; flex: 1; min-height: 300px; }
+.rag-view .rag-chat-panel { flex: 1; min-height: 300px; }
 
 /* ── 모바일 반응형 ───────────────────────────────────────────────── */
 @media (max-width: 768px) {
@@ -547,8 +545,8 @@ label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-w
   .profile-upload-footer { flex-direction: column; align-items: flex-start; }
 
   /* 마크다운 본문 테이블: 데스크톱 고정폭이 좁은 화면에서 근거/내용 칸을 과도하게 압박하지 않도록
-     비율로 조정. "충족 여부" 칸이 "관련 경험 여부"(7자) 헤더를 못 담아 옆 칸을 침범하던 문제
-     (2026-09-03)를 항목 칸은 그대로 두고 이 칸만 오른쪽으로(근거 칸 쪽에서) 넓혀서 해결. */
+     비율로 조정. "충족 여부" 칸이 "관련 경험 여부"(7자) 헤더를 담도록 항목 칸은 그대로 두고
+     이 칸만 근거 칸 쪽에서 넓힌다. */
   .markdown-body table.fit-check-table th:first-child,
   .markdown-body table.fit-check-table td:first-child { width: 33.3%; }
   .markdown-body table.fit-check-table th:nth-child(2),

@@ -461,8 +461,7 @@ async def delete_company(slug: str):
     except Exception as e:
         logger.warning("삭제된 회사의 평가 이력 정리 실패 (slug=%s): %s", slug, e)
     try:
-        # QnA 대화 기록도 같은 이유로 정리 — fit_history엔 있던 이 정리 로직이 QnA
-        # 서버 저장 전환(v1.5.0) 당시 빠져 있었다.
+        # QnA 대화 기록도 fit_history와 같은 이유로 회사 삭제 때 함께 정리한다.
         delete_qa_history_for_slug(slug)
     except Exception as e:
         logger.warning("삭제된 회사의 QnA 대화 기록 정리 실패 (slug=%s): %s", slug, e)

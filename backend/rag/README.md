@@ -6,7 +6,7 @@ Job FitCheck가 이미 모아둔 채용공고 데이터와 본인 프로필을 �
 
 - **지금 상태**: Plan A·B 전체 완료 + "대화형 근거 기반 RAG" Phase 1~4 구현·검증 완료 + **Agentic RAG 아키텍처 전환·전수 검증 완료(2026-07-29)**. Phase 1의 "질문 분류→고정 함수 실행" 방식이 애매한 질문에 무관한 답을 내는 구조적 결함이 실사용 중 발견돼, Agent(tool-use, 개발 당시엔 Claude 전용·현재는 Claude/OpenAI/Gemini 전부 지원)가 RAG 도구들을 스스로 선택·조합하는 구조로 전환. 5개 카테고리(단일 도구/복합 도구/멀티턴/답변 불가/함정형) 15문항 전수 검증 완료(14/15 명확 통과) — 상세는 `conversational-rag/00_design.md`의 "아키텍처 전환"/"Provider 일관성 수정" 섹션.
 - **정체성 — Agentic RAG**: `POST /api/rag/ask`는 질문을 고정 분류하지 않는다. `assess_skill_gap`/`list_matching_postings`/`get_market_demand` 등 RAG 동작(검색 후 LLM 판정) 하나하나를 도구로 노출하고, LLM이 질문마다 무엇을 몇 개나 쓸지 스스로 판단해 답을 종합한다(`rag/postgres/agent.py`, `llm/*.py`의 `run_agent()`). 도구 선택은 코드 분기가 아니라 각 provider API의 tool-use 기본 동작에 위임돼 있다. Agent는 Claude 전용이었으나(2026-07-29) main 반영 작업으로 Claude/OpenAI/Gemini 전부 지원하도록 확장됨(2026-07-30) — 임베딩만 빼고 오케스트레이션·도구 내부 판정 LLM 둘 다 `llm.router.high_provider()`, 즉 메인 앱의 현재 provider 설정을 그대로 따른다(설정 화면에서 provider를 바꾸면 Agent도 같이 바뀜).
-- **실제 서비스 경로**: `POST /api/rag/gap-check`(기술명 직접 지정) + `POST /api/rag/ask`(자연어 질문 → Agent가 도구 자유 선택) + `POST /api/rag/reindex`(공고/프로필 변경사항을 현재 활성 embedding provider 하나로 반영) → `backend/rag/postgres/` (PostgreSQL+pgvector). embedding provider는 메인 LLM provider에서 자동 매핑되며(`resolve_rag_embedding_provider()`) 설정 화면에서 override 가능 — "여러 provider를 요청마다 선택"하던 이전 구조는 main 반영 과정에서 단일 활성 provider로 재설계됨(아래 3번 설계 결정 표 참고). UI는 main SPA(`frontend/index.html`의 `/rag` 뷰)에 통합돼 있고, 독립 테스트 화면이던 `rag-test.html`은 이 브랜치(main 반영용)엔 없다. SQLite 코드(`backend/rag/*.py`)는 삭제 안 하고 Plan A 검증 결과 재현용으로만 남아있음 — 지금 웹 UI는 이 코드를 안 씀. 옛 분류 기반 `query_router.py`의 `classify_query`/`answer_query`도 `/api/rag/ask`가 더 이상 안 쓰지만 도구 실행부 일부를 재사용 중이라 아직 삭제 안 함.
+- **실제 서비스 경로**: `POST /api/rag/gap-check`(기술명 직접 지정) + `POST /api/rag/ask`(자연어 질문 → Agent가 도구 자유 선택) + `POST /api/rag/reindex`(공고/프로필 변경사항을 현재 활성 embedding provider 하나로 반영) → `backend/rag/postgres/` (PostgreSQL+pgvector). embedding provider는 메인 LLM provider에서 자동 매핑되며(`resolve_rag_embedding_provider()`) 설정 화면에서 override 가능 — "여러 provider를 요청마다 선택"하던 이전 구조는 main 반영 과정에서 단일 활성 provider로 재설계됨(아래 3번 설계 결정 표 참고). UI는 main SPA(`frontend/index.html`의 `/rag` 뷰)에 통합돼 있고, 독립 테스트 화면이던 `rag-test.html`은 이 브랜치(main 반영용)엔 없다. SQLite 코드(`backend/rag/*.py`)는 삭제 안 하고 Plan A 검증 결과 재현용으로만 남아있음 — 지금 웹 UI는 이 코드를 안 씀. `query_router.py`에는 Agent 도구가 쓰는 주제 검색·공고 목록·비교 함수만 남아 있다.
 - **자유 텍스트 주제 검색(Phase 2 신규)**: `posting_list`에서 `TRACKED_SKILLS` 밖 자유 텍스트 주제는 임베딩/FTS로 후보를 미리 거르지 않고 `judge_topic_postings()`가 공고 전체 원문을 LLM에 판정시킨다(`method="llm"` 기본값) — 이 corpus 규모(공고 수십~백 건)에서는 코사인 유사도·reranker 절대점수 모두 관련/무관을 못 가른다는 게 실측으로 확인돼(`docs/rag-project-plans/00_meta/HISTORY.md` 2026-07-28 항목), 점수 필터링 자체를 없애는 쪽을 택함. `method="local"`(벡터 검색만, LLM 호출 없음)은 비교·실험용으로 병존.
 - **핵심 수치**: 검색 품질(Precision@5/Recall@10) — FTS5 0.75/0.41, Google 임베딩 0.68/0.33, 로컬 임베딩(Jina v5-text-small) 0.65/0.42. Gap 판정 정확도 10/10(정답지 기준).
 - **한번 써보려면**: `RAG_POSTGRES_HOST` 등 opt-in 환경변수를 채운 뒤(`.env.example` 참고) `docker compose --profile rag up --build -d`로 `rag-postgres`까지 같이 띄우고, 메인 앱(`http://localhost:8000`)에 로그인해 navbar의 RAG 진입 버튼(`RAG_POSTGRES_HOST` 설정 시에만 노출)을 누른다. **새로 띄운 Postgres는 비어있으므로 `/rag` 뷰의 "🔄 재색인" 버튼을 먼저 눌러 완료를 기다려야 한다** — 이 단계 없이 질문하면 검색 대상이 없어 오류가 난다(Codex 리뷰로 발견, 2026-08-12). 재색인이 끝나면 기술/개념(또는 자연어 질문)을 입력할 수 있다. RAG가 꺼져 있으면(환경변수 미설정) 버튼 자체가 안 보이고 메인 앱의 나머지 기능은 지금과 동일하게 동작한다.
@@ -43,7 +43,7 @@ data/companies/*.raw.txt (공고 원문 70건) + data/candidate_profile.md (후�
    posting, posting_skill, document_chunk, chunk_embedding (PostgreSQL)
         │
         ▼  검색(pgvector exact/HNSW + 관계형 정확매칭 RRF 결합)
-   evaluate.py 계열 — Precision@5/Recall@10 정식 평가
+   검색 품질 평가 — Precision@5/Recall@10 (수치는 위 "핵심 수치")
         │
         ▼  검색 근거 + 프로필을 놓고 "직접근거/부분근거/인접경험/근거없음" 판정
    gap.py — 시장 수요(SQL)·근거 검색(임베딩)·판정(LLM) 3단 분리
@@ -70,14 +70,12 @@ backend/rag/postgres/
 ├── retrieval.py        — pgvector `<=>` 검색
 ├── fts.py              — Postgres 전문검색(`websearch_to_tsquery`)
 ├── query_router.py     — `judge_topic_postings()`(자유 텍스트 주제 검색, 전체원문 LLM 판정) +
-│                        옛 분류 기반 `classify_query`/`answer_query`(미사용, 삭제는 보류)
+│                        공고 목록·비교(`list_postings`/`compare_postings`) — Agent 도구가 사용
 ├── agent.py            — ★ Agentic RAG 핵심. `AGENT_SYSTEM`+`TOOL_DEFS`(도구 7개)+
 │                        `answer_query_agent()` — LLM(메인 앱 provider 설정을 따름)이 질문마다
 │                        도구를 스스로 선택·조합
 ├── reindex.py          — ★ 전체 재색인 진입점. `python3 -m rag.postgres.reindex --provider google`
-├── evaluate.py / evaluate_hybrid.py / hnsw_eval.py / verify.py — 검색 품질·HNSW·집계 평가
-├── gap.py              — Gap 판정
-└── answer.py           — 답변·행동계획 생성
+└── gap.py              — Gap 판정
 
 backend/routers/rag.py     — API(POST /api/rag/gap-check, /api/rag/ask, /api/rag/reindex)
 frontend/index.html·app.js — main SPA `/rag` 뷰(기술 확인 + 자연어 채팅 + 재색인·provider 설정)
@@ -85,7 +83,7 @@ frontend/index.html·app.js — main SPA `/rag` 뷰(기술 확인 + 자연어 �
 
 **Plan A 기준선 재현용(동결 스크립트) — `backend/rag/*.py`(SQLite)**
 
-Postgres 포팅 이전 SQLite 버전. 삭제하지 않고 남겨둔 이유: Plan A 검증 결과(10/10, P@5/R@10 기준선)를 만들어낸 코드 자체이자 재현 스크립트라서 — `rag/postgres/evaluate.py`가 이 안의 평가 질문·지표 함수를 그대로 재사용하기도 함. `schema.py`/`ingest.py`/`chunking.py`/`chunks.py`/`retrieval.py`/`evaluate.py`/`gap.py`/`answer.py`/`skills.py`(정답지)/`embed/`(provider 구현체, Postgres판과 공유).
+Postgres 포팅 이전 SQLite 버전. 삭제하지 않고 남겨둔 이유: Plan A 검증 결과(10/10, P@5/R@10 기준선)를 만들어낸 코드 자체이자 재현 스크립트라서. `schema.py`/`ingest.py`/`chunking.py`/`retrieval.py`/`gap.py`/`answer.py`(행동 계획 생성은 Postgres 경로도 이걸 씀)/`skills.py`(정답지)/`embed/`(provider 구현체, Postgres판과 공유).
 
 ### 실행 방법
 
@@ -93,9 +91,6 @@ Postgres 포팅 이전 SQLite 버전. 삭제하지 않고 남겨둔 이유: Plan
 cd backend
 python3 -m rag.postgres.reindex --provider google --include-profile   # 전체 재색인(스키마 생성+적재+임베딩)
 python3 -m rag.postgres.reindex --provider local --include-profile    # 로컬(3050Ti)도 — SSH 연결 필요
-python3 -m rag.postgres.verify        # 집계 검증(17개 항목)
-python3 -m rag.postgres.gap           # Gap 판정 검증(정답지 10개 기준)
-python3 -m rag.postgres.answer --aggregate   # 우선순위·강점·순서계획 집계 리포트
 ```
 
 `reindex.py`는 **내용이 안 바뀐 공고는 건드리지 않습니다**(문서 해시 비교). 스키마 자체를 바꿨다면(`schema.py` 수정 후) `--rebuild-schema` 플래그로 테이블을 지우고 다시 만들어야 합니다(`CREATE TABLE IF NOT EXISTS`는 컬럼 추가를 안 해주기 때문). 브라우저로 확인하려면 위 "한눈에 보기"의 안내대로 메인 앱을 띄우고 `/rag`로 들어간다.

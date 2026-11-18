@@ -1,9 +1,9 @@
 """RAG(대화형 근거 기반 검색) — main SPA `/rag` 뷰가 쓰는 API.
 
-`rag/postgres/gap.py`·`answer.py`·`agent.py`를 그대로 호출하는 얇은 wrapper이고
-(프론트는 `frontend/index.html`의 `tpl-rag`), 로직은 전부 `rag/` 안에 있다. 저장소는
-PostgreSQL+pgvector 전용이다(SQLite `rag/gap.py`는 Plan A 기준선 재현용으로만 남아 있고
-이 서비스 경로에선 안 쓴다).
+`rag/postgres/gap.py`·`agent.py`와 `rag/answer.py`를 그대로 호출하는 얇은 wrapper이고
+(프론트는 `frontend/index.html`의 `tpl-rag`), 로직은 전부 `rag/` 안에 있다. 검색 색인(청크·임베딩)은
+PostgreSQL+pgvector 전용이고(SQLite `rag/gap.py`는 이 서비스 경로에서 안 쓴다), `/ask`의 채팅 대화
+기록만 `services/app_db`(SQLite)에 저장한다.
 
 RAG는 opt-in 기능이다 — `settings.rag_postgres_host`가 비어 있으면 `/status` 외 나머지
 엔드포인트는 503을 반환한다. 라우터 자체는 항상 등록한다 — import 시점에 DB 연결을 시도하지 않으므로 등록 자체는
@@ -402,9 +402,8 @@ async def ask(req: AskRequest):
         # asyncio.Task.cancel()은 문서화된 동작상 "지금 await 중인 Future/Task"에도 취소를
         # 전파한다 — 그냥 `await task`면 이 요청 코루틴이 취소될 때(클라이언트 연결 끊김 등)
         # task도 같이 취소돼 pending으로 남을 수 있다. shield로 감싸면 바깥 취소가 이
-        # await 표현식만 끊고 task 자체는 보호돼 끝까지 실행된다 — 실측 curl/Playwright
-        # 테스트에선 재현 안 됐지만, uvicorn이 비-스트리밍 응답에 취소를 안 거는 현재 동작에
-        # 우연히 기댄 것일 수 있어 방어적으로 반영한다.
+        # await 표현식만 끊고 task 자체는 보호돼 끝까지 실행된다 — 현재 uvicorn은
+        # 비-스트리밍 응답에 취소를 안 걸지만 그 동작에 기대지 않으려고 방어적으로 감싼다.
         result = await asyncio.shield(task)
         result["message_id"] = message_id
         return result

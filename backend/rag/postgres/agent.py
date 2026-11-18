@@ -1,11 +1,10 @@
 """대화형 근거 기반 RAG — Agent(tool-use) 구조.
 
-`query_router.py`의 "질문을 7종 중 하나로 분류 → 그 유형에 고정된 함수 하나만 실행"
-방식은, 질문이 애매하거나 여러 능력을 조합해야 답할 수 있을 때 완전히 무관한 답을 내놓는 구조적
-한계가 있다("내가 RAG를 안하면 많이 불리할까?"가 `single_skill_gap`으로 분류돼 원본
-데이터만 던지고 질문 자체엔 답을 안 한다).
+질문을 유형으로 분류해 고정된 함수 하나만 실행하지 않는다 — 질문이 애매하거나 여러 능력을
+조합해야 하면 무관한 답이 나오는 구조적 한계가 있다("내가 RAG를 안하면 많이 불리할까?"를
+단일 기술 gap으로 분류하면 원본 데이터만 던지고 질문 자체엔 답하지 않는다).
 
-이 모듈은 그 대신, 기존 함수들(`market_demand_hybrid`/`assess_gap`/`assess_all_gaps`/
+대신 기존 함수들(`market_demand_hybrid`/`assess_gap`/`assess_all_gaps`/
 `list_postings`/`judge_topic_postings`/`compare_postings`/`generate_action_plan`/
 `generate_sequenced_plan`)을 도구로 노출하고, LLM이 질문마다 어떤 도구를(몇 개든, 안 쓰든) 쓸지
 스스로 판단해 답하게 한다(ReAct 스타일 tool-use 루프, `llm.base.LLMProvider.run_agent()`).

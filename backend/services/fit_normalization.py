@@ -681,8 +681,8 @@ if __name__ == "__main__":
     assert incomplete_missing_desc is True
     assert result_missing_desc[0]["filled_by"] == "code_fallback", result_missing_desc
 
-    # 2-5. verdict가 list/dict 등 unhashable이면 _VALID_VERDICTS가 set이었을 때 `in` 체크에서
-    # TypeError로 죽는다 — tuple로 바꿔 방지.
+    # 2-5. verdict가 list/dict 등 unhashable이어도 `in` 체크에서 TypeError로 죽지 않아야 한다
+    # (_VALID_VERDICTS는 tuple).
     # 서술 필드는 전부 채워서 그 경계가 아니라 verdict 타입 때문에 fallback되는지 확인.
     inputs_type_check = [{"id": "required:0", "source_item": "A"}]
     full_desc = {"evidence_summary": "근거", "evidence_source": "", "evidence_excerpt": "", "reason": ""}
@@ -956,7 +956,7 @@ if __name__ == "__main__":
     assert "## 추가 평가 기준 (사용자 지정)" in sec and prompts.CUSTOM_CRITERIA_BOUNDARY_NOTICE in sec, sec
 
     # 8. normalize_and_render — REST/MCP 공유 정규화 함수 통합 테스트
-    # company_analysis.evaluate_fit_structured()가 하던 걸 그대로 이 함수 하나로 옮긴 것이라, 여기서의 정상/이상 케이스가 두 경로 모두를 검증한다.
+    # 여기서의 정상/이상 케이스가 REST·MCP 두 경로 모두를 검증한다.
     nr_company_data = {
         "required_skills": ["Python 3년 이상"],
         "preferred_skills": ["AWS 경험"],

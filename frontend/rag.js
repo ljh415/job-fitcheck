@@ -70,9 +70,8 @@ async function initRag() {
   document.getElementById('rag-gap-section').classList.toggle('hidden', !ragIncludeProfile);
   document.getElementById('rag-gap-disabled-note').classList.toggle('hidden', ragIncludeProfile);
   document.getElementById('rag-question-input').addEventListener('keydown', handleRagKeydown);
-  // 좀비 pending 정리(ragCleanupPendingMessages)는 더 이상 필요 없다 — 서버가 진실
-  // 공급원이라 pending은 서버 재시작 시점에만 확정적으로 정리되고(app_db.py의
-  // _fail_stale_rag_pending), 클라이언트가 시간 추측으로 지울 이유가 없다.
+  // 서버가 pending의 진실 공급원이라 클라이언트는 pending을 시간 추측으로 지우지 않는다 —
+  // 서버 재시작 시점에만 확정적으로 정리된다(app_db.py의 _fail_stale_rag_pending).
   await ragRenderChatDropdown();
   await ragSwitchChat(ragGetCurrentChatId());
 
@@ -237,8 +236,7 @@ async function ragSwitchChat(chatId) {
   if (!chatId) return;
   try {
     const { messages } = await api(`/rag/chats/${encodeURIComponent(chatId)}`);
-    // 조회하는 동안 사용자가 다른 방으로 옮겨갔으면 엉뚱한 화면에 덮어쓰지 않는다
-    // (오늘 다른 곳에서도 고친 것과 같은 레이스 가드).
+    // 조회하는 동안 사용자가 다른 방으로 옮겨갔으면 엉뚱한 화면에 덮어쓰지 않는다(레이스 가드).
     if (ragGetCurrentChatId() === chatId) ragRenderThread(messages);
   } catch (e) {
     console.error('RAG 채팅 로딩 실패:', e);

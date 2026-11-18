@@ -1,5 +1,4 @@
-"""청크 단위 벡터 검색 공통 유틸 — evaluate.py(posting 단위로 집계)와
-gap.py(청크 텍스트 자체가 필요)가 같이 쓴다.
+"""청크 단위 벡터 검색 공통 유틸 — gap.py(청크 텍스트 자체가 필요)가 쓴다.
 """
 import sqlite3
 import struct
@@ -55,9 +54,8 @@ def ensure_fts5(conn: sqlite3.Connection) -> None:
     count(*)/LIKE는 되는데 MATCH만 안 됨) 독립형 테이블로 우회한다.
 
     검색 경로(읽기)에서 호출하므로 여기서는 "없으면 생성"만 한다 — 매 호출마다 무조건
-    재생성하면 동시 요청에서 SQLite가 `database is locked`를 던진다. 청크가 실제로 바뀌었을 때 테이블을
-    최신화하는 책임은 `rebuild_fts5()`로 옮기고, 그건 청크를 실제로 바꾸는 `chunks.py`의
-    `populate_posting_chunks()`/`populate_candidate_profile_chunks()`에서만 호출한다."""
+    재생성하면 동시 요청에서 SQLite가 `database is locked`를 던진다. 청크가 바뀐 뒤 이미 만들어진
+    테이블을 최신화하려면 `rebuild_fts5()`를 직접 호출해야 한다."""
     (exists,) = conn.execute(
         "SELECT count(*) FROM sqlite_master WHERE name = 'document_chunk_fts'"
     ).fetchone()
@@ -86,5 +84,3 @@ def fts5_literal(text: str) -> str:
     큰따옴표로 감싸면 그 안은 순수 문자열로 취급되고, 내부의 큰따옴표는 `""`로 이스케이프하면
     리터럴 문자 그 자체로 인식된다(FTS5 공식 문법)."""
     return '"' + text.replace('"', '""') + '"'
-
-

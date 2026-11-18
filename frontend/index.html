@@ -98,10 +98,10 @@
     </div>
 
     <div class="table-wrap">
-      <table id="company-table">
+      <table>
         <thead>
           <tr>
-            <th><input type="checkbox" id="check-all" onchange="toggleAll(this)" /></th>
+            <th><input type="checkbox" onchange="toggleAll(this)" /></th>
             <th><button id="pin-header-btn" onclick="toggleFilterPinned()" title="즐겨찾기만 보기" style="background:none;border:none;cursor:pointer;font-size:14px;padding:0;opacity:0.3">📌</button></th>
             <th>회사</th>
             <th>직무</th>
@@ -480,7 +480,7 @@
       <h3>💰 사용 이력</h3>
       <div id="usage-summary" class="usage-summary"></div>
       <div class="table-wrap usage-table-scroll" style="margin-top:12px">
-        <table id="usage-table">
+        <table>
           <thead>
             <tr>
               <th>일시</th>
@@ -563,7 +563,7 @@
     <div class="view-header">
       <button onclick="navigate('dashboard')" class="back-btn">← 목록</button>
       <h2>🤖 RAG</h2>
-      <button id="rag-settings-btn" class="btn-secondary" onclick="toggleRagSettings()" title="RAG 임베딩 provider 설정">⚙️ 설정</button>
+      <button class="btn-secondary" onclick="toggleRagSettings()" title="RAG 임베딩 provider 설정">⚙️ 설정</button>
       <button id="rag-reindex-btn" class="btn-secondary" onclick="runRagReindex()" title="공고/프로필 변경사항을 임베딩에 반영">🔄 재색인</button>
     </div>
     <div id="rag-settings-popup" class="rag-settings-popup hidden">

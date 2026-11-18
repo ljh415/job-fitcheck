@@ -66,8 +66,7 @@ class Settings(BaseSettings):
     rag_local_embed_port: int = 8500
 
     # RAG(Agentic RAG) — PostgreSQL+pgvector 접속 정보. RAG는 opt-in 기능이라 host가 비어
-    # 있으면 비활성으로 간주한다(2번 "DB 없음 원칙" 항목 참고) — rag/main의 기본값
-    # ("rag-postgres")과 달리 main에서는 빈 문자열이 기본값이다.
+    # 있으면 비활성으로 간주한다(CLAUDE.md "아키텍처 결정" 참고) — 그래서 기본값은 빈 문자열이다.
     rag_postgres_host: str = ""
     rag_postgres_port: int = 5432
     rag_postgres_db: str = "rag"

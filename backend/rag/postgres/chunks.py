@@ -1,6 +1,6 @@
 """공고/프로필 청킹, PostgreSQL판.
 
-`rag/chunks.py`(SQLite, Plan A)의 포팅. FTS5에 해당하는 전문검색 재구축 호출은 두지 않는다 —
+FTS5에 해당하는 전문검색 재구축 호출은 두지 않는다 —
 Postgres tsvector 기반 전문검색은 `fts.py`가 맡는다.
 """
 import hashlib
