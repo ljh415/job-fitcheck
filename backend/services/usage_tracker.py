@@ -42,7 +42,7 @@ current_request_id: ContextVar[str | None] = ContextVar("current_request_id", de
 PRICING: dict[str, dict[str, float]] = {
     # Anthropic Claude — llm/anthropic.py의 ALLOWED_CLAUDE_MODELS와 같은 4개만 둔다
     # (과거 사용 기록의 cost_usd는 기록 당시 값이 저장돼 있어 단가표에서 빼도 바뀌지 않는다)
-    "claude-sonnet-5-5":            {"input": 2.00,  "output": 10.00},
+    "claude-sonnet-5-5":            {"input": 2.00,  "output": 10.00, "cache_read": 0.10},  # 캐시 읽기는 입력의 0.05배(다른 모델은 0.1배)
     "claude-sonnet-5":              {"input": 2.00,  "output": 10.00},
     "claude-haiku-5-5":             {"input": 0.10,  "output":  0.50},  # 프롬프트 100k 토큰 이하 단가(초과 시 $0.50/$2.50)
     "claude-haiku-4-5-20251001":    {"input": 1.00,  "output":  5.00},
@@ -52,43 +52,56 @@ PRICING: dict[str, dict[str, float]] = {
     "gpt-4.1":                      {"input": 2.00,  "output":  8.00},
     "gpt-4.1-mini":                 {"input": 0.40,  "output":  1.60},
     "gpt-4.1-nano":                 {"input": 0.10,  "output":  0.40},
-    # OpenAI GPT-5 계열
-    "gpt-5-nano":                   {"input": 0.05,  "output":  0.20},
-    "gpt-5-mini":                   {"input": 0.25,  "output":  1.00},
-    "gpt-5":                        {"input": 1.25,  "output":  5.00},
-    "gpt-5.1":                      {"input": 1.25,  "output":  5.00},
-    "gpt-5.2":                      {"input": 1.75,  "output":  7.00},
-    "gpt-5.4-nano":                 {"input": 0.20,  "output":  0.80},
-    "gpt-5.4-mini":                 {"input": 0.75,  "output":  3.00},
-    "gpt-5.4":                      {"input": 2.50,  "output": 10.00},
-    "gpt-5.5":                      {"input": 5.00,  "output": 20.00},
-    "gpt-5.5-pro":                  {"input": 30.00, "output": 120.00},
+    # OpenAI GPT-5 계열 (공식 가격표 2026-11-19 기준, 장문맥 할증 구간은 반영 안 함)
+    "gpt-5-nano":                   {"input": 0.05,  "output":  0.40},
+    "gpt-5-mini":                   {"input": 0.25,  "output":  2.00},
+    "gpt-5":                        {"input": 1.25,  "output": 10.00},
+    "gpt-5.1":                      {"input": 1.25,  "output": 10.00},
+    "gpt-5.2":                      {"input": 1.75,  "output": 14.00},
+    "gpt-5.4-nano":                 {"input": 0.20,  "output":  1.25},
+    "gpt-5.4-mini":                 {"input": 0.75,  "output":  4.50},
+    "gpt-5.4":                      {"input": 2.50,  "output": 15.00},
+    "gpt-5.5":                      {"input": 5.00,  "output": 30.00},
+    "gpt-5.5-pro":                  {"input": 30.00, "output": 180.00},
     # Google Gemini (유료 티어 근사값 — 무료 티어는 비용 미발생)
     "gemini-2.5-pro":               {"input": 1.25,  "output": 10.00},
     "gemini-2.5-flash":             {"input": 0.30,  "output":  2.50},
     "gemini-2.5-flash-lite":        {"input": 0.10,  "output":  0.40},
     "gemini-2.0-flash":             {"input": 0.10,  "output":  0.40},
     "gemini-2.0-flash-lite":        {"input": 0.075, "output":  0.30},
-    "gemini-3.5-flash":             {"input": 1.50,  "output":  9.00},
+    # gemini-3.5-flash는 deprecated라 요청이 gemini-3.6-flash로 처리된다(응답 model_version으로 확인) —
+    # 3.6 단가를 쓴다. 이 단가는 2026-12-31까지의 가격이고 2027-01-01부터 입력 $1.50 / 출력 $7.50
+    "gemini-3.6-flash":             {"input": 0.75,  "output":  3.75},
+    "gemini-3.5-flash":             {"input": 0.75,  "output":  3.75},
     "gemini-3.1-flash-lite":        {"input": 0.25,  "output":  1.50},
 }
 
 
-def calc_cost(model: str, input_tokens: int, output_tokens: int) -> float:
+def calc_cost(
+    model: str, input_tokens: int, output_tokens: int,
+    cache_write_tokens: int = 0, cache_read_tokens: int = 0,
+) -> float:
+    """Claude는 캐시 쓰기(5분, 입력의 1.25배)·읽기 토큰이 input_tokens와 따로 과금된다."""
     price = PRICING.get(model)
     if not price:
         # 알 수 없는 모델 — 단가 0으로 처리 (비용 미집계)
         return 0.0
-    return (input_tokens * price["input"] + output_tokens * price["output"]) / 1_000_000
+    cache_write_price = price.get("cache_write", price["input"] * 1.25)
+    cache_read_price = price.get("cache_read", price["input"] * 0.1)
+    return (
+        input_tokens * price["input"] + output_tokens * price["output"]
+        + cache_write_tokens * cache_write_price + cache_read_tokens * cache_read_price
+    ) / 1_000_000
 
 
 def append_usage(
     operation: str, model: str, input_tokens: int, output_tokens: int, duration_ms: int | None = None,
+    cache_write_tokens: int = 0, cache_read_tokens: int = 0,
 ) -> None:
     """사용 기록을 JSONL 파일에 추가한다. duration_ms는 API 호출
     자체(요청 전송~응답 수신)의 소요시간 — 재시도·에러 처리 등 부가 로직은 제외하고
     호출부가 직접 측정해서 넘긴다."""
-    cost = calc_cost(model, input_tokens, output_tokens)
+    cost = calc_cost(model, input_tokens, output_tokens, cache_write_tokens, cache_read_tokens)
     entry = {
         "ts": datetime.now().isoformat(timespec="seconds"),
         "operation": operation,
@@ -99,6 +112,10 @@ def append_usage(
     }
     if duration_ms is not None:
         entry["duration_ms"] = duration_ms
+    if cache_write_tokens:
+        entry["cache_write_tokens"] = cache_write_tokens
+    if cache_read_tokens:
+        entry["cache_read_tokens"] = cache_read_tokens
     request_id = current_request_id.get()
     if request_id is not None:
         entry["request_id"] = request_id
