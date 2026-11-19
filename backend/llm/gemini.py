@@ -62,6 +62,11 @@ def _to_gemini_schema(schema: dict) -> dict:
     return result
 
 
+def _output_tokens(usage: Any) -> int:
+    """candidates_token_count에는 사고(thinking) 토큰이 빠져 있지만 출력 단가로 과금되므로 더해서 센다."""
+    return (usage.candidates_token_count or 0) + (usage.thoughts_token_count or 0)
+
+
 class GeminiProvider(LLMProvider):
 
     def __init__(self) -> None:
@@ -191,7 +196,7 @@ class GeminiProvider(LLMProvider):
                 operation=operation,
                 model=model,
                 input_tokens=response.usage_metadata.prompt_token_count or 0,
-                output_tokens=response.usage_metadata.candidates_token_count or 0,
+                output_tokens=_output_tokens(response.usage_metadata),
                 duration_ms=t["ms"],
             )
 
@@ -258,7 +263,7 @@ class GeminiProvider(LLMProvider):
                     operation=operation,
                     model=model,
                     input_tokens=response.usage_metadata.prompt_token_count or 0,
-                    output_tokens=response.usage_metadata.candidates_token_count or 0,
+                    output_tokens=_output_tokens(response.usage_metadata),
                     duration_ms=t["ms"],
                 )
             if was_truncated and truncation_attempt == 0 and current_max_tokens < 32768:
@@ -331,7 +336,7 @@ class GeminiProvider(LLMProvider):
                     operation=operation,
                     model=model,
                     input_tokens=response.usage_metadata.prompt_token_count or 0,
-                    output_tokens=response.usage_metadata.candidates_token_count or 0,
+                    output_tokens=_output_tokens(response.usage_metadata),
                     duration_ms=call_t["ms"],
                 )
 
@@ -437,7 +442,7 @@ class GeminiProvider(LLMProvider):
                     async for chunk in stream_resp:
                         if chunk.usage_metadata:
                             input_tokens = chunk.usage_metadata.prompt_token_count or 0
-                            output_tokens = chunk.usage_metadata.candidates_token_count or 0
+                            output_tokens = _output_tokens(chunk.usage_metadata)
                         if chunk.text:
                             yielded_any = True
                             yield chunk.text

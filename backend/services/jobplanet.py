@@ -262,7 +262,8 @@ async def _search_gemini(company_name: str, known_names: list[str | None] | None
     if usage:
         usage_tracker.append_usage(
             "잡플래닛 조회", _GEMINI_MODEL,
-            usage.prompt_token_count or 0, usage.candidates_token_count or 0, t["ms"],
+            usage.prompt_token_count or 0,
+            (usage.candidates_token_count or 0) + (usage.thoughts_token_count or 0), t["ms"],
         )
     grounding = response.candidates[0].grounding_metadata if response.candidates else None
     searches = len(getattr(grounding, "web_search_queries", None) or [])

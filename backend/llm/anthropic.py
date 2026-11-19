@@ -103,6 +103,14 @@ def _raise_status_error(e: anthropic.APIStatusError) -> None:
     raise LLMAPIError(f"LLM 서비스 오류 ({e.status_code}) — 잠시 후 다시 시도해주세요.", 503)
 
 
+def _cache_usage(usage: Any) -> dict[str, int]:
+    """input_tokens에는 캐시 쓰기·읽기 토큰이 빠져 있고 단가가 달라서 따로 넘긴다."""
+    return {
+        "cache_write_tokens": getattr(usage, "cache_creation_input_tokens", 0) or 0,
+        "cache_read_tokens": getattr(usage, "cache_read_input_tokens", 0) or 0,
+    }
+
+
 class AnthropicProvider(LLMProvider):
 
     def __init__(self) -> None:
@@ -151,6 +159,7 @@ class AnthropicProvider(LLMProvider):
             model=model,
             input_tokens=response.usage.input_tokens,
             output_tokens=response.usage.output_tokens,
+            **_cache_usage(response.usage),
             duration_ms=t["ms"],
         )
         if response.stop_reason == "max_tokens":
@@ -204,6 +213,7 @@ class AnthropicProvider(LLMProvider):
                 model=model,
                 input_tokens=response.usage.input_tokens,
                 output_tokens=response.usage.output_tokens,
+                **_cache_usage(response.usage),
                 duration_ms=t["ms"],
             )
             if response.stop_reason == "max_tokens" and attempt == 0 and current_max_tokens < 32768:
@@ -259,6 +269,7 @@ class AnthropicProvider(LLMProvider):
                 model=model,
                 input_tokens=response.usage.input_tokens,
                 output_tokens=response.usage.output_tokens,
+                **_cache_usage(response.usage),
                 duration_ms=t["ms"],
             )
             stop_reason = response.stop_reason
@@ -329,6 +340,7 @@ class AnthropicProvider(LLMProvider):
                 model=model,
                 input_tokens=response.usage.input_tokens,
                 output_tokens=response.usage.output_tokens,
+                **_cache_usage(response.usage),
                 duration_ms=t["ms"],
             )
 
@@ -398,6 +410,7 @@ class AnthropicProvider(LLMProvider):
                 model=model,
                 input_tokens=msg.usage.input_tokens,
                 output_tokens=msg.usage.output_tokens,
+                **_cache_usage(msg.usage),
                 duration_ms=t["ms"],
             )
         except anthropic.AuthenticationError:
