@@ -1,5 +1,25 @@
 # Changelog
 
+## v1.10.2 — 죽은 코드·경위 주석 정리 (2026-11-19)
+
+`chore/dead-code-cleanup` 한 브랜치를 반영. 동작을 바꾸지 않는 정리라 기능·화면 변화는 없다.
+백엔드 코드가 바뀌어 반영하려면 재빌드가 필요하다(프론트는 새로고침).
+
+- 호출처가 없는 코드 삭제: 옛 프로필 추출 프롬프트(`prompts.py`), `JobplanetResult.to_dict`,
+  `light_provider`, `make_slug_for_update`, `_unique_slug`의 `exclude`, `EVAL_COLUMNS`, 프론트
+  `filterTable`·`sortTable`·빈 `initAdd`, RAG의 `full_report`·`format_report`·`search_fts5`·
+  `ranked_postings_by_score`와 `rag/postgres/hybrid.py` 파일 전체.
+- 읽지 않는 값 삭제: `raw_snippet`, `except ... as e`의 안 쓰는 바인딩, `append_usage` 반환값,
+  `get_provider`의 기본 폴백, `build_message`의 기본 인자, RAG 후보의 `posting_id`, 매칭되지 않는
+  CSS 규칙·HTML ID.
+- provider 재시도 루프(`anthropic`·`openai`·`gemini`) 뒤의 도달 불가 `raise`/`return ""`와
+  Gemini의 `for ... else`·`last_exc` 삭제. 가짜 클라이언트 53개 시나리오로 삭제 전후 동작이 같음을
+  확인했다.
+- 주석·독스트링에서 날짜·리뷰 차수·"예전엔 ~했다" 경위 표기와 `docs/` 경로 참조를 제거하고, 현재
+  동작과 어긋난 설명(RAG README, 평가 독스트링 등)을 바로잡음. `CLAUDE.md`에 주석 규칙 추가.
+- 알려진 후속 과제(이번에 안 건드림): MCP `create_company`가 프로필이 있으면 거부되는 문제, 웹과
+  서버의 상태 로그 삽입 위치 차이로 주간 요약이 최신 날짜를 잘못 잡을 수 있는 문제.
+
 ## v1.10.1 — 로그에 텔레그램 봇 토큰이 찍히던 문제 수정 (긴급 패치, 2026-11-16)
 
 - `httpx`가 요청마다 전체 URL을 INFO 로그에 남겨 알림 전송 때마다 텔레그램 봇 토큰(URL 경로)이 로그에
