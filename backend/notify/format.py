@@ -1,4 +1,4 @@
-def build_message(materials: dict, bold=lambda s: s) -> str:
+def build_message(materials: dict, bold) -> str:
     """알림 재료(dict)를 채널 공통 텍스트로 조립한다. bold()로 채널별 강조 문법만 주입."""
     if materials.get("kind") == "weekly_summary":
         return _build_weekly_summary(materials, bold)

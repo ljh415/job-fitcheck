@@ -6,7 +6,6 @@ Lightweight 티어: 마크다운 본문 생성
 
 High 티어: 공고 구조화 추출, PDF 프로필 추출, 적합도 평가, Q&A
     — 원문 항목 보존과 후보자 맥락 통합 추론이 필요하므로 고성능 모델 사용
-    (공고 구조화 추출은 2026-10-13부터 High — docs/extract-line-items)
 
 Claude는 llm/anthropic.py의 ALLOWED_CLAUDE_MODELS에 있는 모델만 쓴다(설정 화면 목록·저장값 검증).
 """
@@ -58,12 +57,6 @@ def _model(tier: str, provider: str) -> str:
     if provider == "gemini":
         return settings.gemini_high_model if tier == "high" else settings.gemini_light_model
     return settings.openai_high_model if tier == "high" else settings.openai_light_model
-
-
-def light_provider() -> tuple[LLMProvider, str]:
-    """Lightweight 티어 (본문 생성)."""
-    provider_name = get_active_provider()
-    return get_provider(provider_name), _model("light", provider_name)
 
 
 def high_provider() -> tuple[LLMProvider, str]:

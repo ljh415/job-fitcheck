@@ -66,8 +66,7 @@ class Settings(BaseSettings):
     rag_local_embed_port: int = 8500
 
     # RAG(Agentic RAG) — PostgreSQL+pgvector 접속 정보. RAG는 opt-in 기능이라 host가 비어
-    # 있으면 비활성으로 간주한다(2번 "DB 없음 원칙" 항목 참고) — rag/main의 기본값
-    # ("rag-postgres")과 달리 main에서는 빈 문자열이 기본값이다.
+    # 있으면 비활성으로 간주한다(CLAUDE.md "아키텍처 결정" 참고) — 그래서 기본값은 빈 문자열이다.
     rag_postgres_host: str = ""
     rag_postgres_port: int = 5432
     rag_postgres_db: str = "rag"
@@ -78,8 +77,8 @@ class Settings(BaseSettings):
 
     # 후보자 프로필(이력서 내용)을 임베딩 API로 전송할지 여부. 기본값 false(전송 안 함) —
     # 켜면 이력서 텍스트가 임베딩 provider(Google 등)로 나간다는 걸 사용자가 명시적으로
-    # 선택해야 한다. 꺼져 있으면 Agent의 프로필 근거 기반 기능(스킬 갭 분석 등)은 근거를
-    # 못 찾아 "근거 없음"만 반환한다 — 검색/시장수요 같은 공고 기반 기능은 영향 없음.
+    # 선택해야 한다. 꺼져 있으면 Agent는 프로필 도구를 아예 노출하지 않고(agent.py), 기술 확인
+    # API는 400으로 막는다(routers/rag.py) — 검색/시장수요 같은 공고 기반 기능은 영향 없음.
     rag_include_profile: bool = False
 
     @property
@@ -136,7 +135,7 @@ def get_reasoning_effort() -> str:
     return _runtime_models.get("openai_reasoning_effort") or settings.openai_reasoning_effort
 
 
-# RAG 임베딩 provider — 쿼리마다 고르던 드롭다운을 없애고 설정값 하나로 통일했다.
+# RAG 임베딩 provider — 쿼리마다 고르지 않고 설정값 하나로 정한다.
 # None(기본)이면 메인 LLM provider를 따라간다: gemini→google, claude/openai→google
 # (Claude는 임베딩 API 자체가 없고, OpenAI 임베딩 provider는 아직 미구현 — rag/embed/openai.py
 # 추가 전까지는 둘 다 google로 폴백). 명시적으로 값을 설정하면 그 값이 항상 우선한다.

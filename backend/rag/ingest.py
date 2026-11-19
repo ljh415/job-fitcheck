@@ -1,4 +1,4 @@
-"""Plan A 2단계 — 공고 데이터 정규화.
+"""공고 데이터 정규화.
 
 `data/companies/*.raw.txt`(사실 원본)와 대응하는 `.md` frontmatter(구조화 추출값)를 읽어
 `data/rag.db`(SQLite)에 최소 스키마로 적재한다.
@@ -30,7 +30,7 @@ def build_db() -> sqlite3.Connection:
 
 def ingest_postings(conn: sqlite3.Connection) -> int:
     """`.raw.txt`를 원본으로 순회하며 posting + posting_skill을 채운다.
-    재실행 가능하도록 매번 전체 삭제 후 다시 적재한다(증분 색인은 Plan B 이후 범위)."""
+    재실행 가능하도록 매번 전체 삭제 후 다시 적재한다(증분 색인은 하지 않는다)."""
     conn.execute("DELETE FROM posting_skill")
     conn.execute("DELETE FROM posting")
     count = 0

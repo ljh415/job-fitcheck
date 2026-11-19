@@ -18,9 +18,8 @@ from config import settings
 from rag.embed.base import EmbeddingProvider
 
 # TUNNEL_LOCAL_PORT이 클래스 전체에 고정 포트라, 인스턴스 두 개가 동시에 살아있으면 두 번째
-# SSH 터널이 포트 바인딩에 실패해 즉시 죽는다(재색인 웹 트리거 도입으로 동시 요청 가능성이
-# 커지며 실제로 재현됨). 상시 공유 터널(gpu_infra_plan.md)로 바꾸는 게 정석이지만, GPU
-# 서버가 없는 대다수 사용자에겐 아예 안 쓰이는 경로라 지금은 non-blocking 락으로만 완화한다
+# SSH 터널이 포트 바인딩에 실패해 즉시 죽는다(동시 요청이 오면 실제로 재현된다).
+# 상시 공유 터널로 바꾸는 게 정석이지만, GPU 서버가 없는 대다수 사용자에겐 아예 안 쓰이는 경로라 지금은 non-blocking 락으로만 완화한다
 # — **blocking 락은 쓰지 않는다**: 이 provider 생성은 `routers/rag.py`에서
 # `asyncio.to_thread`로 감싸져 있어 blocking `acquire()`가 대기해도 uvicorn 이벤트 루프
 # 자체는 안 막힌다. 그래도 즉시 실패를 쓰는 이유는 고정 포트 하나뿐이라 동시에 최대 하나의
@@ -33,8 +32,7 @@ _port_lock = threading.Lock()
 class LocalEmbeddingProvider(EmbeddingProvider):
     provider_name = "local"
 
-    # 01c 실험 1~4 참고: gte-multilingual-base(토크나이저 버그) → e5-base(채택) →
-    # BGE-M3(e5-base보다 낮은 점수) → Jina v5-text-small(e5-base·Google보다 높은 점수로 최종 채택).
+    # Jina v5-text-small은 e5-base·BGE-M3·Google 임베딩보다 높은 점수를 내서 채택했다.
     # Qwen3 기반 decoder+LoRA라 4GB VRAM에서 배치 크기를 작게(4) 잡아야 함 —
     # inference_server.py를 --batch-size 4로 띄워야 한다.
     EXPECTED_MODEL = "jinaai/jina-embeddings-v5-text-small"

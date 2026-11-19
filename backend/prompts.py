@@ -9,15 +9,14 @@ llm/openai.py에서 처리하므로 이 파일은 내용(What)에만 집중한�
   EXTRACT_COMPANY_*  — High 티어: 공고 텍스트 → 구조화 JSON
   GENERATE_BODY_*    — Lightweight 티어: 구조화 데이터 → 마크다운 본문 (섹션 1~3)
   EVALUATE_FIT_*     — High 티어: 후보자 프로필 + 공고 → 적합도 점수/리포트 (섹션 4)
-  EXTRACT_PROFILE_*  — High 티어: 이력서 PDF → 후보자 프로필
-  QA_*               — High 티어: 회사 정보 기반 Q&A 스트리밍 (시스템 프롬프트만; 유저 메시지는 main.py에서 content block으로 구성)
+  QA_*               — High 티어: 회사 정보 기반 Q&A 스트리밍 (시스템 프롬프트만; 유저 메시지는 routers/qa.py에서 content block으로 구성)
 
 마크다운 본문 섹션 번호 규칙:
   1. 기본정보  2. 회사 규모/안정성  3. 공고 내용        (GENERATE_BODY가 생성)
-  4. 적합도 리포트  5. 종합 의견                        (프로필 있을 때, EVALUATE_FIT의 fit_report_body에 통째로 포함;
-                                                          main.py는 섹션 4 헤더 줄만 점수를 넣어 재작성한다)
-  6. 지원 상태 로그                                      (프로필 있을 때, main.py가 직접 추가)
-  프로필 없을 때: 4. 지원 상태 로그                      (main.py가 직접 추가)
+  4. 적합도 리포트                                      (프로필 있을 때, services/company_analysis.py가 만든 판정 표·종합 의견·요인 요약을
+                                                          routers/companies.py가 "## 4. 적합도 리포트 — N / 100" 헤더 아래에 붙인다)
+  6. 지원 상태 로그                                      (프로필 있을 때, routers/companies.py가 직접 추가)
+  프로필 없을 때: 4. 지원 상태 로그                      (routers/companies.py가 직접 추가)
 """
 
 # 외부 원문(공고, 이력서, 저장된 회사 정보 등)을 받는 모든 system prompt에 공통으로 덧붙이는 신뢰 경계 문구.
@@ -532,10 +531,9 @@ EVALUATE_FIT_TOOL_SCHEMA = {
     "required": ["fit_score", "fit_label", "strengths", "gaps", "fit_report_body"],
 }
 
-# ── 적합도 평가 구조 개편 — 1단계(판정 전용) 스키마 ──────────────────────────
-# docs/fit-eval-structural-redesign/PLAN.md 참고. 기존 EVALUATE_FIT_TOOL_SCHEMA는
-# Claude 경로 연결 전까지 그대로 둔다(하위 호환) — 이 스키마는 새 2단계 파이프라인
-# 전용이며 아직 실제 호출부에 연결되지 않았다.
+# ── 적합도 평가 — 1단계(판정 전용) 스키마 ──────────────────────────
+# 이 스키마는 2단계 파이프라인 전용이고,
+# 기존 EVALUATE_FIT_TOOL_SCHEMA(비교·롤백용)와는 별개다.
 
 EVALUATE_FIT_JUDGE_TOOL_NAME = "submit_fit_judgments"
 EVALUATE_FIT_JUDGE_TOOL_DESCRIPTION = (
@@ -586,7 +584,7 @@ _DECISION_FACTOR_SCHEMA = {
 # stability는 백엔드 검증(fit_normalization.validate_decision_factors)이 status를
 # 구 CompanyFrontmatter stability_check(Literal)와 같은 값으로 엄격히
 # 제한한다. 위 공용 스키마는 status를 자유 서술로 유도해 "불안정" 같은 동의어가 나오면
-# 검증에서 통째로 폐기(판정 실패 fallback)되던 버그가 있었음(2026-09-02) — 이 필드만
+# 검증에서 통째로 폐기(판정 실패 fallback)되므로 이 필드만
 # enum으로 강제해 LLM이 검증 어휘를 벗어나지 않게 한다.
 _DECISION_FACTOR_SCHEMA_STABILITY = {
     **_DECISION_FACTOR_SCHEMA,
@@ -597,7 +595,7 @@ _DECISION_FACTOR_SCHEMA_STABILITY = {
 }
 
 # 사용자 지정 평가 기준은 입력의 번호 목록(criteria:N) 줄마다 판정 하나씩 — 한 요인에 상태 하나로
-# 묶으면 "서울 충족 + 규모 정보 없음" 같은 경우를 표현할 수 없어 조건부로 뭉개졌다(2026-11-11).
+# 묶으면 "서울 충족 + 규모 정보 없음" 같은 경우를 표현할 수 없어 조건부로 뭉개진다.
 _CUSTOM_CRITERION_SCHEMA = {
     "type": "object",
     "properties": {
@@ -801,67 +799,6 @@ EVALUATE_FIT_REPORT_USER_TEMPLATE = """## 확정된 판정 결과
 - **[보완 또는 확인할 항목]**: 대응 방법 또는 면접 전 준비사항
 """
 
-# ── 후보자 프로필 추출 (High 티어) ───────────────────────────────────────────
-
-EXTRACT_PROFILE_SYSTEM = f"""제공된 모든 원문 문서와 후보자 추가 메모(이하 근거 자료)를 검토하고, 확인되는 정보를 지정된 스키마에 맞춰 추출하세요.
-
-- 근거 자료에 없는 사실·관계·상태를 추측하지 마세요. 확인되지 않은 값은 스키마가 허용하는 null·빈 배열·생략으로 처리하고, 확인된 정보는 해당 필드에 보존하세요.
-- 요약해도 주체, 활동의 성격, 소속, 시기, 상태, 규모·정도, 조건·예외·부정과 불확실성을 바꾸지 마세요. 도구·기술·방법의 이름 기재, 사용 사실, 수행 활동, 성과를 구분해 확인된 수준으로만 서술하세요. 이름만 기재된 기술은 경험하거나 활용했다고 쓰지 마세요.
-- 문서의 내용과 명확한 구조로 확인되는 관계만 반영하세요. 단순한 인접성으로 정보를 연결하거나 서로 다른 경험을 합치지 마세요.
-- 자료가 충돌하면 추가 메모의 명시적인 정정만 적용하세요. 정정이 없으면 표현 가능한 필드에는 차이를 보존하고, 하나의 값으로 확정할 수 없으면 미확인 값으로 처리하세요.
-- 희망 조건은 후보자 추가 메모에 희망으로 명시된 경우에만 채우세요.
-- 값과 그 조건·예외를 함께 보존하세요. 스키마가 조건을 표현할 수 없으면 조건을 제거한 값으로 대체하지 말고, 조건을 포함한 내용을 표현 가능한 필드에 보존하거나 허용되는 미확인 표현을 사용하세요.
-{TRUST_BOUNDARY_NOTICE}"""
-
-EXTRACT_PROFILE_USER_TEMPLATE = """다음은 후보자의 이력서/포트폴리오 텍스트입니다. 여러 파일이 포함되어 있을 수 있으며, 모든 내용을 종합하여 판단하세요.
-
-<documents>
-{pdf_text}
-</documents>
-
-{extra_section}핵심 정보를 추출하여 extract_candidate_profile 툴(함수)을 호출하세요."""
-
-EXTRACT_PROFILE_TOOL_NAME = "extract_candidate_profile"
-EXTRACT_PROFILE_TOOL_DESCRIPTION = "이력서/포트폴리오에서 후보자 프로필 정보를 추출하여 저장합니다."
-
-EXTRACT_PROFILE_TOOL_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "name": {"type": "string", "description": "후보자 이름"},
-        "tech_skills": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "근거 자료에 명시된 기술·업무 도구·작업 기법"
-        },
-        "domains": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "실제 수행한 프로젝트·업무 내용에서 확인되는 산업·비즈니스 분야. 회사명만으로 판단하지 마세요"
-        },
-        "soft_skills": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "근거 자료에 명시된 소프트 스킬. 활동에서 성향이나 역량을 추론하지 마세요"
-        },
-        "experience_years": {"type": ["string", "null"], "description": "총 경력 — 원문에 적힌 기간을 개월까지 그대로 (예: 2년 3개월). 합산이 불명확하면 null"},
-        "experience_roles": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "실제 수행한 것으로 확인되는 직무 역할"
-        },
-        "education": {"type": ["string", "null"], "description": "학교·전공·학위·상태를 확인된 대로 쓰세요. 졸업한 최종 학위를 먼저 쓰고 수료·재학 중인 과정은 뒤에 덧붙이세요. 졸업 학위가 확인되지 않으면 확인된 학력만 쓰세요"},
-        "preferred_location": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "선호 근무지"
-        },
-        "preferred_employment_type": {"type": ["string", "null"], "description": "선호 고용형태"},
-        "preferred_min_salary": {"type": ["integer", "null"], "description": "희망 최소 연봉 (만원 단위)"},
-        "summary": {"type": "string", "description": "Q&A 컨텍스트용 한국어 후보자 소개. 고용 형태와 무관하게 역할·주요 활동·도구의 쓰임·성과가 구체적으로 확인되는 경험을 중심으로 쓰세요. 확인된 경력·직무·도구·기술·경험 분야를 2~3문장으로 요약하고, 정보가 적으면 더 짧게 쓰세요"},
-    },
-    "required": ["name", "tech_skills", "summary"],
-}
-
 # ── 후보자 프로필 본문 생성 (profile_body) — tool use와 분리 ─────────────────────
 # tool use는 구조화 추출에 최적화되어 있고, 장문 산문 생성은 complete()가 적합하다.
 
@@ -884,45 +821,6 @@ GENERATE_PROFILE_BODY_SYSTEM = f"""원문 문서와 후보자 추가 메모(이�
 - 학력은 학교·전공·학위·상태를 확인된 대로, 졸업한 최종 학위를 먼저 쓰고 수료·재학 중인 과정은 부가 정보로 뒤에 쓰세요. 경력 기간은 개월을 포함해 근거 자료의 표기 그대로 쓰고 반올림하지 마세요.
 - 내용이 없는 섹션은 만들지 마세요. 지시문의 분류명·규칙 설명을 본문에 옮기지 말고 프로필만 출력하세요.
 {TRUST_BOUNDARY_NOTICE}"""
-
-GENERATE_PROFILE_BODY_USER_TEMPLATE = """아래 소스 중 원문과 추가 메모를 근거로 후보자 프로필 본문을 작성하세요. 구조화 추출 결과는 근거를 확인하기 위한 보조 자료입니다.
-
-## [소스 1] 이력서/포트폴리오 원문
-<documents>
-{pdf_text}
-</documents>
-
-## [소스 2] 구조화 추출 결과 (툴로 추출한 정보)
-<structured_info>
-{extracted_json}
-</structured_info>
-
-## [소스 3] 후보자 추가 메모
-<candidate_note>
-{extra_note}
-</candidate_note>
-
----
-
-위 소스를 바탕으로 아래 형식의 마크다운 본문을 작성하세요.
-추가 메모가 비어있으면 해당 항목은 생략하세요.
-
-## 기본 정보
-(이름, 학력, 총 경력(원문에 개월 단위가 있으면 그대로), 어학 점수와 시험일, 자격·수상·교육 참여 내역, 공개 링크 등 이력서의 사실 정보. 희망 근무지·희망 고용형태·희망 최소 연봉은 추가 메모에 희망으로 명시된 값만 쓰고, 없으면 그 줄을 쓰지 마세요.)
-
-## 경력 요약
-(재직 회사별 기간·직무·한 줄 설명)
-
-## 주요 경험 — 업무·프로젝트·활동
-(회사 업무·프로젝트, 개인 프로젝트, 인턴·교육 과정과 그 프로젝트, 학교 프로젝트, 대외 활동을 소속과 활동 성격이 드러나게 묶어 쓰세요. 이름·기간·역할·수행한 활동·도구의 쓰임·성과가 구체적으로 확인되는 경험에 필요한 분량을 배분하세요.)
-
-## 핵심 역량
-(경험별로 확인된 역량·도구와 해당 경험명을 짧게 정리하세요. 서로 다른 경험의 도구와 활동을 하나의 수행 주장으로 합치지 마세요. 이름만 기재된 항목은 목록으로 구분하세요.)
-
-## 추가 메모 요약
-(후보자가 직접 입력한 추가 정보·맥락·참고사항 — 추가 메모가 있을 때만 작성)
-
-각 섹션의 상세도는 시스템 프롬프트의 구성과 상세도 규칙을 따르세요. 이름·기간·역할·활동·도구·성과·주요 판단·수행 방법은 원문에 있는 항목만 쓰며, 형식을 채우려고 보충하지 마세요. 출력 전에 경험별 역할·활동·도구의 쓰임이 요약 과정에서 빠지거나 달라지지 않았는지, 근거 없는 주장·연결이 생기지 않았는지 확인하세요. 마크다운 본문만 출력하고 다른 설명은 하지 마세요."""
 
 # ── 프로필 생성: 사실 목록 → 본문·요약표 (AI 2회) ───────────────────────────────────
 # 1회차(PROFILE_FACTS_*)가 원문에서 사실 목록을 뽑고, 2회차가 원문과 사실 목록을 대조해

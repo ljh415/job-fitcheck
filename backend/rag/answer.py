@@ -1,15 +1,13 @@
-"""Plan A 7단계 — 답변 생성·검증.
+"""행동 계획·집계 리포트 생성.
 
-6단계(`gap.py`)의 판정 결과를 사람이 읽는 답변으로 만든다:
-  - 근거 설명: `assess_gap()`의 reasoning을 그대로 인용(추가 LLM 호출 없음 — 이미 자연어).
-  - 행동 계획: evidence_level이 "직접 근거"가 아닌 실제 gap에 대해서만 생성.
-    `01_lean_evidence_first_rag.md`/`01b_evaluation_set.md` AC 카테고리 기준을 그대로 프롬프트에
-    반영 — 막연한 "토이 프로젝트 만들기"가 아니라 gap 유형에 맞는 구체적 활동 + 완료 조건.
+`gap.py`의 판정 결과를 받아 행동 계획을 만든다:
+  - `generate_action_plan()`: evidence_level이 "직접 근거"가 아닌 실제 gap에 대해서만 생성.
+    평가셋의 AC 카테고리 기준을 그대로 프롬프트에 반영 — 막연한 "토이 프로젝트 만들기"가 아니라 gap 유형에 맞는 구체적 활동 + 완료 조건.
 
-5~6단계와 달리 "정답"이 숫자로 고정되지 않는 열린 문제라, 정량 검증 대신 01b가 정의한
+"정답"이 숫자로 고정되지 않는 열린 문제라 `gap.py`와 달리 정량 검증 대신, 평가셋이 정의한
 실패 조건(완료 조건 없음, 근거 없는 성과 생성 등)에 걸리는지를 사람이 확인한다.
 
-위 함수들은 기술 하나짜리 질문(AC-01~03 스타일)만 다룬다. 01b의 GP-01(우선순위 gap 랭킹)·
+`generate_action_plan()`은 기술 하나짜리 질문(AC-01~03 스타일)만 다룬다. 평가셋의 GP-01(우선순위 gap 랭킹)·
 GP-06(전체 강점 요약)·AC-06(여러 gap 순서 정하기)처럼 여러 기술을 종합해야 하는 질문은
 아래 `rank_priority_gaps()`/`summarize_strengths()`/`generate_sequenced_plan()`이 담당한다.
 
@@ -23,7 +21,7 @@ from llm.base import LLMProvider
 from llm.router import capture_snapshot, high_from_snapshot
 from prompts import TRUST_BOUNDARY_NOTICE
 from rag.embed.local import LocalEmbeddingProvider
-from rag.gap import assess_all_gaps, assess_gap
+from rag.gap import assess_all_gaps
 from rag.ingest import DB_PATH
 
 ACTION_PLAN_SYSTEM = f"""당신은 후보자의 기술 gap을 보완할 구체적인 행동 계획을 세우는 커리어 코치입니다.
@@ -89,58 +87,23 @@ async def generate_action_plan(gap_result: dict, llm: tuple[LLMProvider, str, st
     )
 
 
-def format_report(gap_result: dict, action_plan: dict | None) -> str:
-    demand = gap_result["market_demand"]
-    # 13개 고정 기술은 posting_skill 정확 매칭(method=exact), 그 외 자유 키워드는 후보를 LLM이
-    # 개별 판정한 추정치(method=estimated) — 정밀도가 다르므로 표시도 구분한다.
-    demand_label = (
-        f"전체 {demand['total']}건 중 {demand['matched']}건({demand['ratio']*100:.1f}%) 요구"
-        if demand.get("method") == "exact"
-        else f"약 {demand['matched']}건/{demand['total']}건({demand['ratio']*100:.1f}%) 추정"
-        f"(임베딩+키워드 검색으로 모은 후보 {demand.get('candidate_count', '?')}건 중 LLM이 판정한 결과 — 참고용, 정확한 전수 집계 아님)"
-    )
-    lines = [
-        f"## {gap_result['skill']}",
-        f"- 시장 수요: {demand_label}",
-        f"- 근거 판정: **{gap_result['evidence_level']}**",
-        f"- 판정 근거: {gap_result['reasoning']}",
-    ]
-    if action_plan:
-        lines += [
-            "",
-            f"**행동 계획**: {action_plan['activity']}",
-            f"**남길 증거**: {action_plan['evidence_to_produce']}",
-            f"**완료 조건**: {action_plan['completion_criteria']}",
-        ]
-    return "\n".join(lines)
-
-
-async def full_report(conn: sqlite3.Connection, skill: str, embed_provider) -> str:
-    gap_result = await assess_gap(conn, skill, embed_provider)
-    action_plan = None
-    if gap_result["evidence_level"] != "직접 근거":
-        action_plan = await generate_action_plan(gap_result)
-    return format_report(gap_result, action_plan)
-
-
-# "부분 근거"는 gap.py의 validate()에서도 이미 "직접 근거"와 같은 방향(증거 있음)으로 취급했다
-# (LLM이 같은 근거를 두고도 직접/부분을 오갈 만큼 그 경계가 미세해서). 여기서도 같은 관용도를
-# 적용 — 안 그러면 실제로는 강점인 기술(예: Kubernetes)이 LLM의 그날그날 판정 편차로 "gap"에
+# "부분 근거"도 "직접 근거"와 같은 방향(증거 있음)으로 취급한다 — LLM이 같은 근거를 두고도
+# 직접/부분을 오갈 만큼 그 경계가 미세해서다. 안 그러면 실제로는 강점인 기술(예: Kubernetes)이 LLM의 그날그날 판정 편차로 "gap"에
 # 잘못 끼어드는 문제가 생긴다.
 _HAS_EVIDENCE = ("직접 근거", "부분 근거")
 _TRUE_GAP = ("인접 경험", "근거 없음")
 
 
 def rank_priority_gaps(results: list[dict], top_n: int = 3) -> list[dict]:
-    """01b GP-01 스타일 — 실질적 증거가 없는(인접 경험/근거 없음) 진짜 gap만 추려 시장 수요 순으로
-    정렬한다. 순위 계산은 코드가 하고 LLM은 관여하지 않는다(01_lean_evidence_first_rag.md 원칙)."""
+    """우선순위 gap 랭킹 — 실질적 증거가 없는(인접 경험/근거 없음) 진짜 gap만 추려 시장 수요 순으로
+    정렬한다. 순위 계산은 코드가 하고 LLM은 관여하지 않는다."""
     gaps = [r for r in results if r["evidence_level"] in _TRUE_GAP]
     gaps.sort(key=lambda r: r["market_demand"]["ratio"], reverse=True)
     return gaps[:top_n]
 
 
 def summarize_strengths(results: list[dict]) -> list[dict]:
-    """01b GP-06 스타일 — 실질적 증거가 있는(직접 근거/부분 근거) 기술만 강점 목록으로 추린다.
+    """평가셋 GP-06 스타일 — 실질적 증거가 있는(직접 근거/부분 근거) 기술만 강점 목록으로 추린다.
     필터링만 하고 LLM이 근거 없는 강점을 새로 만들어내지 않도록 순수 코드로만 처리한다."""
     return [r for r in results if r["evidence_level"] in _HAS_EVIDENCE]
 
@@ -186,7 +149,7 @@ SEQUENCE_PLAN_TOOL_SCHEMA = {
 async def generate_sequenced_plan(
     prioritized_gaps: list[dict], llm: tuple[LLMProvider, str, str | None] | None = None
 ) -> dict:
-    """01b AC-06 스타일 — 여러 gap을 어떤 순서·조합으로 보완할지 하나의 계획으로 만든다."""
+    """평가셋 AC-06 스타일 — 여러 gap을 어떤 순서·조합으로 보완할지 하나의 계획으로 만든다."""
     if llm is not None:
         high, high_model, reasoning_effort = llm
     else:
@@ -215,7 +178,7 @@ async def generate_sequenced_plan(
 
 
 async def run_aggregate_report() -> None:
-    """01b GP-01/GP-06/AC-06처럼 여러 기술을 종합하는 집계형 질문에 대한 리포트를 생성한다.
+    """평가셋 GP-01/GP-06/AC-06처럼 여러 기술을 종합하는 집계형 질문에 대한 리포트를 생성한다.
     TRACKED_SKILLS 전체를 판정한 뒤 우선순위 gap 랭킹, 강점 요약, 순서 계획을 만든다."""
     conn = sqlite3.connect(DB_PATH)
     provider = LocalEmbeddingProvider()
@@ -224,7 +187,7 @@ async def run_aggregate_report() -> None:
 
         print("=" * 60)
         print("GP-01 스타일 — 우선순위 gap 상위 3개 (시장 수요 순)")
-        print("01b 기대값: CI/CD 20건, GCP 13건, IaC 7건을 우선 검토")
+        print("평가셋 기대값: CI/CD 20건, GCP 13건, IaC 7건을 우선 검토")
         print("=" * 60)
         priority_gaps = rank_priority_gaps(results, top_n=3)
         for g in priority_gaps:
@@ -234,7 +197,7 @@ async def run_aggregate_report() -> None:
         print()
         print("=" * 60)
         print("GP-06 스타일 — 입증된 강점(직접 근거) 전체")
-        print("01b 기대값: Python, AWS, Docker, Kubernetes, Airflow, FastAPI와 관측성 근거를 구분해 제시")
+        print("평가셋 기대값: Python, AWS, Docker, Kubernetes, Airflow, FastAPI와 관측성 근거를 구분해 제시")
         print("=" * 60)
         strengths = summarize_strengths(results)
         for s in strengths:
@@ -243,7 +206,7 @@ async def run_aggregate_report() -> None:
         print()
         print("=" * 60)
         print("AC-06 스타일 — 우선순위 gap 순서·완료 기준 계획")
-        print("01b 기대값: CI/CD를 먼저 끝내고 GCP와 IaC를 하나의 제한된 운영 실험으로 연결")
+        print("평가셋 기대값: CI/CD를 먼저 끝내고 GCP와 IaC를 하나의 제한된 운영 실험으로 연결")
         print("=" * 60)
         plan = await generate_sequenced_plan(priority_gaps)
         for phase in plan["phases"]:

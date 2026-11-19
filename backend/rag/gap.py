@@ -1,6 +1,6 @@
-"""Plan A 6단계 — Gap 및 행동 엔진.
+"""Gap 및 행동 엔진.
 
-`01_lean_evidence_first_rag.md`의 원칙을 그대로 구현한다:
+다음 원칙으로 구현한다:
   - 기술 빈도·비율은 SQL/Python이 계산한다(LLM이 숫자를 만들지 않음).
   - 검색기(임베딩)가 후보자 프로필에서 근거 청크를 찾는다.
   - LLM은 검색된 근거를 해석해서 evidence_level을 판정하고, 필요하면 행동 계획을 제시한다.
@@ -127,8 +127,7 @@ def _candidate_postings(conn: sqlite3.Connection, skill: str, embed_provider: Em
     fts_queue = []
     for (chunk_id,) in fts_rows:
         row = conn.execute("SELECT text FROM document_chunk WHERE id = ?", (chunk_id,)).fetchone()
-        if row:  # 청크가 실제로 바뀌면 chunks.py가 FTS를 재생성하므로 정상 경로에선 항상 있어야
-                 # 하지만, 타이밍 이슈에 대비해 방어적으로 확인
+        if row:  # FTS 테이블이 청크 변경 뒤 재생성되지 않았으면 청크가 없을 수 있어 방어적으로 확인
             fts_queue.append((chunk_id, row[0]))
 
     candidates: dict[int, dict] = {}
@@ -143,7 +142,7 @@ def _candidate_postings(conn: sqlite3.Connection, skill: str, embed_provider: Em
         ).fetchone()
         if not row or row[0] in candidates:
             return
-        candidates[row[0]] = {"posting_id": row[0], "company_name": row[1], "job_title": row[2], "excerpt": text}
+        candidates[row[0]] = {"company_name": row[1], "job_title": row[2], "excerpt": text}
 
     # 임베딩 채널이 먼저 상한을 다 채워버리면 FTS5 결과가 하나도 안 섞일 수 있다 — 두 채널을
     # 번갈아 채워서 한쪽이 상한을 독점하지 않게 한다.
@@ -277,7 +276,7 @@ async def assess_gap(conn: sqlite3.Connection, skill: str, embed_provider: Embed
 
 
 async def assess_all_gaps(conn: sqlite3.Connection, embed_provider: EmbeddingProvider) -> list[dict]:
-    """`TRACKED_SKILLS` 전체를 순회하며 판정한다. 01b의 GP-01(우선순위 gap)·GP-06(전체 강점 요약)·
+    """`TRACKED_SKILLS` 전체를 순회하며 판정한다. 평가셋의 GP-01(우선순위 gap)·GP-06(전체 강점 요약)·
     AC-06(여러 gap 순서 정하기)처럼 기술 하나가 아니라 전체를 종합해야 하는 질문에 필요하다 —
     `assess_gap()`은 기술 하나만 보므로 이 함수 없이는 그런 질문에 답할 수 없다."""
     return [await assess_gap(conn, skill, embed_provider) for skill in TRACKED_SKILLS]

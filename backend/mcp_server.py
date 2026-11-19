@@ -3,9 +3,7 @@
 미들웨어를 그대로 재사용한다(`/api/mcp` 아래 마운트해서 별도 인증 코드를 만들지 않음).
 
 도구는 기존 REST 핸들러·내부 함수를 얇게 감싸는 정도로만 구현한다 — MCP를 위해 앱 내부
-함수를 새로 쪼개지 않는다(docs/planning/mcp_plan_notes.md "기존 회사 분석 로직 재사용 방향").
-
-설계 배경: docs/planning/mcp_plan_notes.md(로컬 전용), 진행 기록: docs/mcp-server/(로컬 전용).
+함수를 새로 쪼개지 않는다.
 """
 import asyncio
 import logging
@@ -40,15 +38,14 @@ mcp = MCPServer(name="job-fitcheck")
 _LIST_COMPANIES_EXCLUDED_FIELDS = {
     "strengths", "gaps", "key_responsibilities",
     "required_skills", "preferred_skills", "benefits", "hiring_process",
-    # 적합도 평가 구조 개편(docs/fit-eval-structural-redesign/PLAN.md) 1단계 중간
-    # 판정 결과 — 디버깅·감사용 상세 배열이라 목록 크기만 키운다(4차 리뷰 반영,
-    # 116개 기준 1MB SSE 제한 재초과 재현됨). 상세는 get_company로.
+    # 중간 판정 결과 — 디버깅·감사용 상세 배열이라 목록 크기만 키우고 1MB SSE 제한을
+    # 넘길 수 있다. 상세는 get_company로.
     "item_judgments", "decision_factors",
 }
 
 # 웹 경로(REST)는 이 분석 하나만을 위한 격리된 단발성 API 호출이라 애초에 문제가 안 되지만,
 # MCP는 이미 진행 중인 대화(다른 주제·톤·이전 논의)의 연장선에서 호출된다 — 그 맥락이 평가에
-# 섞여 웹과 다른 결과가 나올 수 있다(docs/planning/mcp_analysis_consistency.md 참고). REST와
+# 섞여 웹과 다른 결과가 나올 수 있다. REST와
 # 공유하는 prompts.py의 SYSTEM 상수엔 안 넣고, MCP 전용으로 여기서만 덧붙인다 — REST엔 애초에
 # 해당 없는 지시라 원본 프롬프트를 불필요하게 늘릴 이유가 없다.
 _MCP_ISOLATION_NOTICE = """
@@ -199,8 +196,7 @@ async def update_company(
 
 def _chunk_source(conn, chunk_id: int) -> dict:
     """청크가 어느 공고/프로필에서 왔는지 조회 — 근거 출처를 명확히 표시해 서로 다른
-    회사·프로젝트의 근거가 뒤섞이지 않도록 한다(RAG 에이전트 근거 섞임 버그, v1.5.4와
-    같은 이유)."""
+    회사·프로젝트의 근거가 뒤섞이지 않도록 한다."""
     row = conn.execute(
         "SELECT source_type, source_id FROM document_chunk WHERE id = %s", (chunk_id,)
     ).fetchone()
@@ -391,7 +387,7 @@ async def prepare_fit_report(workflow_id: str, judge_result: dict, company_data:
     여기서는 반환하지 않는다(중복 방지)."""
     # complete()는 대용량 데이터를 비우므로(has_profile 포함), 완료된 workflow를
     # 먼저 구분하지 않으면 아래 has_profile 체크가 기본값(False)에 걸려 "프로필
-    # 없음"이라는 잘못된 안내가 나간다(Codex 리뷰 2026-09-04 r2 낮음1).
+    # 없음"이라는 잘못된 안내가 나간다.
     if mcp_workflow_cache.get_completed_result(workflow_id) is not None:
         raise ToolError(
             "이 workflow는 이미 저장이 완료됐습니다 — 다시 판정할 필요 없이 "
@@ -404,8 +400,7 @@ async def prepare_fit_report(workflow_id: str, judge_result: dict, company_data:
     if not cached.get("has_profile", False):
         # 프로필 없는 workflow는 애초에 적합도 평가 대상이 아니다 — 여기서 막지 않으면
         # create_company의 has_profile=false 분기(캐시 우선)를 통해 "프로필 없으면
-        # 평가 생략"이라는 경계를 정상 호출만으로 우회할 수 있다(Codex 리뷰
-        # 2026-09-04 중간2).
+        # 평가 생략"이라는 경계를 정상 호출만으로 우회할 수 있다.
         raise ToolError(
             "이 workflow는 프로필이 없는 상태로 시작됐습니다 — 적합도 평가를 저장할 수 없습니다. "
             "company_data만으로 create_company를 바로 호출하세요(judge_result/report_prose 생략)."
@@ -436,7 +431,7 @@ async def prepare_fit_report(workflow_id: str, judge_result: dict, company_data:
 
 # extract_company 스키마 필드만 허용 — 적합도 평가 필드(fit_score/gaps/decision_factors 등)는
 # judge_result에서만 받아 서버가 직접 재정규화해 채운다(company_data로 직접 제출 불가 —
-# 2026-09-03 MCP 구조화 계약 전환, 클라이언트가 판정을 조작해 제출하는 경로를 원천 차단).
+# 클라이언트가 판정을 조작해 제출하는 경로를 막는다).
 # status/pinned/created_at 등도 여기 없어 자동 제외된다.
 _CREATE_COMPANY_ALLOWED_FIELDS = set(prompts.EXTRACT_COMPANY_TOOL_SCHEMA["properties"])
 
@@ -540,7 +535,7 @@ async def create_company(
             if not (report_prose or "").strip():
                 raise ToolError("judge_result가 있으면 report_prose(prepare_fit_report로 작성한 종합 의견)도 필요합니다.")
             # 클라이언트가 prepare_fit_report를 실제로 거쳤는지 서버는 신뢰할 수 없다 —
-            # 저장 직전 같은 함수로 다시 정규화한다(멱등, PLAN.md §6.2/§5.3).
+            # 저장 직전 같은 함수로 다시 정규화한다(멱등).
             normalized = fit_normalization.normalize_and_render(
                 judge_result, effective_company_data,
                 fit_normalization.split_criteria_lines(storage.read_eval_criteria()),
@@ -609,15 +604,14 @@ async def create_company(
         raise
 
     # 회사 파일·이력 저장은 여기서 이미 끝났다 — 재시도가 중복 저장을 만들지
-    # 않도록 알림/재색인(후처리)보다 먼저 완료 처리한다(Codex 리뷰 2026-09-04
-    # 중간1: 취소·후처리 예외가 completed 표식 이전에 나면 release_save로
-    # 잠금이 풀려 재시도가 두 번째 회사를 만들었음).
+    # 않도록 알림/재색인(후처리)보다 먼저 완료 처리한다. 취소·후처리 예외가
+    # completed 표식 이전에 나면 release_save로 잠금이 풀려 재시도가 두 번째 회사를 만든다.
     mcp_workflow_cache.complete(workflow_id, result)
 
     # RAG 재색인 트리거를 알림 await보다 먼저 호출한다 — 알림 대기 중 요청이
     # 취소되면(asyncio.CancelledError는 except Exception에 안 걸림) 그 뒤에 있는
     # 코드는 아예 실행되지 않으므로, 재색인 예약을 먼저 끝내둬야 취소돼도 새
-    # 회사가 RAG 색인에서 영구히 빠지지 않는다(Codex 리뷰 2026-09-04 r2 중간1).
+    # 회사가 RAG 색인에서 영구히 빠지지 않는다.
     try:
         trigger_reindex_background()
     except Exception:

@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 # Sonnet 5.5는 thinking을 끌 수 없어(disabled 400) 최저값 between_tools(도구가 없으면
 # 0토큰)를 쓰고, Haiku 5.5는 between_tools가 400이라 disabled(effort high 이하에서 허용)를 쓴다 —
 # 필드를 생략하면 adaptive thinking으로 출력이 2~3배 늘고 판정이 max_tokens에 걸려 재시도한다.
-# None이면 thinking 필드를 생략한다. 시험 결과는 docs/sonnet-5-5-migration/PLAN.md.
+# None이면 thinking 필드를 생략한다.
 _JSON_THINKING: dict[str, dict | None] = {
     "claude-sonnet-5-5": {"type": "between_tools"},
     "claude-haiku-5-5": {"type": "disabled"},
@@ -220,7 +220,6 @@ class AnthropicProvider(LLMProvider):
                     f"JSON outputs 응답을 파싱하지 못했습니다 (stop_reason={response.stop_reason}, 출력 {response.usage.output_tokens}토큰)"
                 )
             return result
-        raise RuntimeError("JSON outputs 응답을 얻지 못했습니다")
 
     async def complete(
         self,
@@ -278,14 +277,12 @@ class AnthropicProvider(LLMProvider):
                 )
             # adaptive thinking(Sonnet 5 등)이 켜진 모델은 content 맨 앞에 type="thinking"
             # 블록이 먼저 오는데, 이것도 hasattr(block, "text")가 True이면서 .text는 None이라
-            # 예전 방식(hasattr만 확인)으로는 실제 답변 대신 None을 그대로 반환해버렸다
-            # (2026-09-02, LLM Judge 스크립트 작성 중 실제로 재현해 발견). type이 정확히
+            # hasattr만 확인하면 실제 답변 대신 None이 반환된다. type이 정확히
             # "text"인 블록만 골라야 한다.
             for block in response.content:
                 if getattr(block, "type", None) == "text":
                     return block.text  # type: ignore[union-attr]
             return ""
-        return ""
 
     async def run_agent(
         self,
@@ -338,7 +335,7 @@ class AnthropicProvider(LLMProvider):
             tool_use_blocks = [b for b in response.content if b.type == "tool_use"]
             if not tool_use_blocks:
                 # complete()와 같은 이유 — thinking 블록도 hasattr(b, "text")가 True이면서
-                # .text는 None이라 "".join()이 TypeError로 죽는다(2026-09-02 발견).
+                # .text는 None이라 "".join()이 TypeError로 죽는다.
                 text = "".join(b.text for b in response.content if b.type == "text")
                 return {"text": text, "tool_calls": tool_calls_trace}
 
@@ -356,7 +353,7 @@ class AnthropicProvider(LLMProvider):
                     # 그대로 전달한다(예: "이 provider로 프로필이 아직 임베딩되지 않았습니다").
                     is_error = True
                     result = {"error": str(e)}
-                except Exception as e:
+                except Exception:
                     # 예상 못 한 예외(SQL 오류 등)는 원문에 테이블명·쿼리 같은 내부 정보가 담길 수
                     # 있어 Claude/프론트 도구 트레이스에 그대로 노출하지 않는다 — 서버 로그에만
                     # 전체를 남기고 도구에는 일반화된 메시지만 준다.
@@ -483,7 +480,7 @@ if __name__ == "__main__":
             for v in n:
                 _assert_json_outputs_ok(v)
 
-    for schema_name in ("EXTRACT_COMPANY_TOOL_SCHEMA", "EVALUATE_FIT_JUDGE_TOOL_SCHEMA", "EVALUATE_FIT_TOOL_SCHEMA", "EXTRACT_PROFILE_TOOL_SCHEMA"):
+    for schema_name in ("EXTRACT_COMPANY_TOOL_SCHEMA", "EVALUATE_FIT_JUDGE_TOOL_SCHEMA", "EVALUATE_FIT_TOOL_SCHEMA"):
         _assert_json_outputs_ok(_to_json_outputs_schema(getattr(prompts, schema_name)))
 
     assert _replace_tool_call_phrase("판정 submit_x 툴(함수)을 호출하세요.", "submit_x") == "판정 스키마에 맞는 JSON으로 응답하세요."
@@ -499,8 +496,5 @@ if __name__ == "__main__":
     assert "툴(함수)" not in _replace_tool_call_phrase(judge_user, prompts.EVALUATE_FIT_JUDGE_TOOL_NAME)
     assert "툴(함수)" not in _replace_tool_call_phrase(
         prompts.EXTRACT_COMPANY_USER_TEMPLATE.format(raw_text="r"), prompts.EXTRACT_COMPANY_TOOL_NAME
-    )
-    assert "툴(함수)" not in _replace_tool_call_phrase(
-        prompts.EXTRACT_PROFILE_USER_TEMPLATE.format(pdf_text="r", extra_section=""), prompts.EXTRACT_PROFILE_TOOL_NAME
     )
     print("OK: 5.5는 JSON outputs 경로, 스키마 변환(additionalProperties·전 필드 required·min/max 제거·type 배열+enum→anyOf)과 툴 호출 문구 치환")

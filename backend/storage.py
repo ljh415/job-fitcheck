@@ -39,12 +39,12 @@ def _slugify(name: str) -> str:
     return name or "unknown"
 
 
-def _unique_slug(base: str, exclude: str | None = None) -> str:
+def _unique_slug(base: str) -> str:
     """동일 슬러그 파일이 이미 존재하면 -1, -2 ... 를 붙여 충돌을 회피."""
     slug = base
     path = settings.companies_dir / f"{slug}.md"
     counter = 1
-    while path.exists() and slug != exclude:
+    while path.exists():
         slug = f"{base}-{counter}"
         path = settings.companies_dir / f"{slug}.md"
         counter += 1
@@ -174,13 +174,6 @@ def make_slug(company_name: str, job_title: str = "") -> str:
     company_part = _slugify(company_name or "company")
     base = f"{company_part}__{_slugify(job_title)}" if job_title else company_part
     return _unique_slug(base)
-
-
-def make_slug_for_update(slug: str, company_name: str, job_title: str = "") -> str:
-    """수정 시 슬러그 생성 — 자기 자신은 충돌에서 제외."""
-    company_part = _slugify(company_name or "company")
-    base = f"{company_part}__{_slugify(job_title)}" if job_title else company_part
-    return _unique_slug(base, exclude=slug)
 
 
 # ── 후보자 프로필 ─────────────────────────────────────────────────────────────

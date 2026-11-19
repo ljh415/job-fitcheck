@@ -1,4 +1,4 @@
-"""Plan B 6단계 — Postgres 전문검색(`document_chunk.text_tsv`, `rag/retrieval.py`의 FTS5 대응).
+"""Postgres 전문검색(`document_chunk.text_tsv`, `rag/retrieval.py`의 FTS5 대응).
 
 SQLite FTS5는 별도 가상 테이블을 만들고 청크 변경 시 수동으로 `rebuild_fts5()`를 불러야 했지만,
 `text_tsv`는 generated column이라 DB가 INSERT/UPDATE마다 알아서 갱신한다 — 그래서 이 파일엔

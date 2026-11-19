@@ -1,4 +1,4 @@
-"""Plan B 6단계 — Gap 및 행동 엔진, PostgreSQL판. `rag/gap.py`(SQLite, Plan A)의 포팅.
+"""Gap 및 행동 엔진, PostgreSQL판. `rag/gap.py`(SQLite, Plan A)의 포팅.
 
 프롬프트 상수(`GAP_ASSESS_SYSTEM` 등)와 순수 함수(`_recognized_scope` — DB 안 건드림)는 새로
 만들지 않고 `rag.gap`에서 그대로 재사용한다. `conn`을 받는 함수만 Postgres 방언으로 새로 쓴다.
@@ -74,7 +74,7 @@ def _candidate_postings(conn: psycopg.Connection, skill: str, embed_provider: Em
         ).fetchone()
         if not row or row[0] in candidates:
             return
-        candidates[row[0]] = {"posting_id": row[0], "company_name": row[1], "job_title": row[2], "excerpt": text}
+        candidates[row[0]] = {"company_name": row[1], "job_title": row[2], "excerpt": text}
 
     # 임베딩 채널이 먼저 상한을 다 채우면 전문검색 결과가 하나도 안 섞이는 걸 막기 위해 인터리브
     for embed_item, fts_item in itertools.zip_longest(embed_queue, fts_queue):
@@ -230,9 +230,9 @@ async def assess_all_gaps(
     응답 헤더로 이 계정의 분당 한도(요청 10,000회/토큰 1,200만)를 확인했고, 13개 동시 호출
     (요청 13건/토큰 약 6~7만)은 그 대비 무시할 수준.
 
-    공유 커넥션(`conn`) 동시 사용: 예전엔 `market_demand`/`search_chunks` 등 DB 호출이 전부
-    동기라 이벤트 루프상 실제로 안 겹쳐서 안전했지만, `asyncio.to_thread`로 이 DB 호출들을
-    감싼 뒤로는 진짜 여러 스레드가 동시에 같은 `conn`을 쓴다. psycopg3는 커넥션 자체는 스레드
+    공유 커넥션(`conn`) 동시 사용: `market_demand`/`search_chunks` 등 DB 호출을
+    `asyncio.to_thread`로 감싸므로(동기 호출이면 이벤트 루프상 안 겹친다) 진짜 여러 스레드가
+    동시에 같은 `conn`을 쓴다. psycopg3는 커넥션 자체는 스레드
     세이프하고 같은 커넥션에 대한 쿼리 실행을 내부적으로 직렬화하므로 크래시나 데이터 오염은
     없지만, 모든 커서가 같은 트랜잭션을 공유해서 13개 중 하나라도 쿼리가 실패하면 그 트랜잭션이
     aborted 상태가 되어 동시에 도는 나머지 스레드의 쿼리까지 연쇄 실패할 수 있다(전부

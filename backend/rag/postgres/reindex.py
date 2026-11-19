@@ -1,4 +1,4 @@
-"""Plan B 2단계 — PostgreSQL 전체 재색인 단일 진입점.
+"""PostgreSQL 전체 재색인 단일 진입점.
 
 스키마 생성 → 공고/기술사전/정답지 적재 → 청킹 → 임베딩까지 한 번에 실행한다.
 원본(`data/companies/*.raw.txt`, `data/candidate_profile.md`)이 사실 원본이고, 이 명령은
@@ -29,7 +29,7 @@ def run(provider_name: str, include_profile: bool, rebuild_schema_flag: bool = F
 
     if rebuild_schema_flag:
         # `CREATE TABLE IF NOT EXISTS`는 기존 테이블에 새 컬럼을 안 추가해준다 — 스키마가
-        # 바뀌었을 때(Stage 2→4→6처럼)는 드롭 후 재생성이 필요하다.
+        # 바뀌었을 때는 드롭 후 재생성이 필요하다.
         schema_conn = get_connection()
         try:
             rebuild_schema(schema_conn)
@@ -45,21 +45,15 @@ def run(provider_name: str, include_profile: bool, rebuild_schema_flag: bool = F
 
 
 def _run_with_conn(conn, provider_name: str, include_profile: bool) -> None:
-    # 예전엔 google/local을 동시에 유지하는 설계라 "지금 안 고른 provider도 챙겨야 한다"는
-    # 전제로 경고·자동 재임베딩 로직이 있었다. 활성 provider를 하나로 통일한 뒤에도 이
-    # 로직이 안 지워져서, 사용자가 의도적으로 하나만 쓰기로 정했는데도 "다른 provider가
-    # 안 됐다"는 경고가 계속 뜨고, 프로필이 바뀌면 꺼둔 provider로 API 호출까지 조용히
-    # 나가고 있었다 — 지금은 활성 provider 하나만 다루는 게 의도된 동작이라 이 로직 자체를
-    # 없앴다.
+    # 활성 provider 하나만 다룬다 — 안 고른 provider를 챙기는 경고·자동 재임베딩은 없다.
     n_pruned = prune_deleted_postings(conn)  # 원문이 삭제된 posting의 고아 청크/임베딩 정리
     if n_pruned:
         print(f"삭제된 공고 {n_pruned}건의 청크/임베딩 정리 완료")
-    # populate_posting_chunks()도, 뒤이은 run_embedding_pipeline()도 이제 commit을 안 한다 —
+    # populate_posting_chunks()도, 뒤이은 run_embedding_pipeline()도 commit하지 않는다 —
     # 청크 삭제+재생성과 공고 임베딩, (옵션인) 프로필 청크+임베딩까지 전부 성공해야만 아래에서
-    # 한 번에 commit된다. run_embedding_pipeline()이 공고 단계 성공 시 자체적으로 commit하면,
-    # 프로필 단계가 나중에 실패했을 때 공고 단계만 이미 확정된 채 남는다 — provider 전환 중
-    # 이전 provider 색인이 훼손되는 문제가 이 경로에서도 성립한다. 이제 실패하면 아래 except가
-    # 청크 삭제까지 전부 롤백한다.
+    # 한 번에 commit한다. 공고 단계 성공 시 자체적으로 commit하면, 프로필 단계가 나중에
+    # 실패했을 때 공고 단계만 이미 확정된 채 남아 provider 전환 중 이전 provider 색인이
+    # 훼손된다. 실패하면 아래 except가 청크 삭제까지 전부 롤백한다.
     n_touched, n_chunks = populate_posting_chunks(conn)
     provider = None
     try:

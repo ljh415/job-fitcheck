@@ -18,7 +18,6 @@ from services.jobplanet import JobplanetResult
 
 WANTED_URL = "https://www.wanted.co.kr/wd/395754"
 REMEMBER_URL = "https://career.rememberapp.co.kr/job/posting/328761"
-EVAL_COLUMNS = ("employee_count", "revenue_won", "revenue_as_of", "listing_status", "funding_stage", "funding_total")
 WANTED_QUERIES = {"companyInfo", "companySummary", "companyHire", "companyBanner"}
 
 _fake_name = {"value": ""}  # 시나리오마다 추출 결과의 회사명을 바꿔 slug가 겹치지 않게 한다
@@ -102,7 +101,6 @@ async def main():
     # 2. 리멤버 공고 등록 → 공고 페이지 회사 부분까지 보관
     _fake_name["value"] = "시험리멤버"
     rec = await companies.add_from_url(companies.FromUrlRequest(url=REMEMBER_URL))
-    remember_slug = rec.slug
     rows = _rows()
     assert len(rows) == 2, rows  # 원티드 1 + 리멤버 1
     row = rows[1]
@@ -375,9 +373,6 @@ async def main():
 
     # 12. 재분석(refill): URL로 등록한 공고는 사이트에서 다시 받아 원문 버전·회사 정보를 갱신하고,
     #     받기 실패 시 기존 값 보존, URL 등록이 아닌 공고는 사이트를 부르지 않음 (스크래핑은 가짜)
-    import httpx
-    from fastapi import HTTPException
-
     def fake_company(**over):
         base = {"source": "wanted", "source_company_id": "9100", "source_url": "https://x/company/9100",
                 "company_payload": {"v": 1}, "posting_company_payload": None,

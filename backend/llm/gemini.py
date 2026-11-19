@@ -165,7 +165,6 @@ class GeminiProvider(LLMProvider):
             max_output_tokens=max_tokens,
             temperature=0.3,
         )
-        last_exc: Exception | None = None
         t = {"ms": 0}
         for attempt in range(3):
             try:
@@ -177,7 +176,6 @@ class GeminiProvider(LLMProvider):
                     )
                 break
             except Exception as e:
-                last_exc = e
                 max_attempts, wait = self._retry_plan(e, attempt)
                 if self._is_retryable(e) and attempt < max_attempts:
                     kind = "429(요청 한도 초과)" if self._is_quota_exceeded(e) else "일시 오류"
@@ -187,8 +185,6 @@ class GeminiProvider(LLMProvider):
                     await asyncio.sleep(wait)
                 else:
                     self._raise(e)
-        else:
-            self._raise(last_exc)
 
         if response.usage_metadata:
             usage_tracker.append_usage(
@@ -231,7 +227,6 @@ class GeminiProvider(LLMProvider):
                 system_instruction=system,
                 max_output_tokens=current_max_tokens,
             )
-            last_exc: Exception | None = None
             t = {"ms": 0}
             for attempt in range(3):
                 try:
@@ -243,7 +238,6 @@ class GeminiProvider(LLMProvider):
                         )
                     break
                 except Exception as e:
-                    last_exc = e
                     max_attempts, wait = self._retry_plan(e, attempt)
                     if self._is_retryable(e) and attempt < max_attempts:
                         kind = "429(요청 한도 초과)" if self._is_quota_exceeded(e) else "일시 오류"
@@ -253,8 +247,6 @@ class GeminiProvider(LLMProvider):
                         await asyncio.sleep(wait)
                     else:
                         self._raise(e)
-            else:
-                self._raise(last_exc)
 
             # finish_reason 판정은 usage_metadata 유무와 무관하게 항상 수행한다 — usage_metadata가
             # None인 응답(SDK상 정상적으로 발생 가능)에서도 MAX_TOKENS 잘림을 놓치면 안 된다.
@@ -283,7 +275,6 @@ class GeminiProvider(LLMProvider):
                     operation, current_max_tokens,
                 )
             return response.text or ""
-        return ""
 
     async def run_agent(
         self,
@@ -316,8 +307,6 @@ class GeminiProvider(LLMProvider):
         tool_calls_trace: list[dict] = []
 
         for _ in range(max_iterations):
-            last_exc: Exception | None = None
-            response = None
             call_t = {"ms": 0}
             for attempt in range(3):
                 try:
@@ -327,7 +316,6 @@ class GeminiProvider(LLMProvider):
                         )
                     break
                 except Exception as e:
-                    last_exc = e
                     max_attempts, wait = self._retry_plan(e, attempt)
                     if self._is_retryable(e) and attempt < max_attempts:
                         kind = "429(요청 한도 초과)" if self._is_quota_exceeded(e) else "일시 오류"
@@ -337,8 +325,6 @@ class GeminiProvider(LLMProvider):
                         await asyncio.sleep(wait)
                     else:
                         self._raise(e)
-            if response is None:
-                self._raise(last_exc)
 
             if response.usage_metadata:
                 usage_tracker.append_usage(
@@ -438,7 +424,6 @@ class GeminiProvider(LLMProvider):
         )
         input_tokens = 0
         output_tokens = 0
-        last_exc: Exception | None = None
         yielded_any = False
         t = {"ms": 0}
         for attempt in range(3):
@@ -460,7 +445,6 @@ class GeminiProvider(LLMProvider):
             except LLMAPIError:
                 raise
             except Exception as e:
-                last_exc = e
                 # 이미 청크를 출력한 뒤라면 처음부터 재시도할 경우 응답이 중복 출력되므로,
                 # 첫 청크 이전 실패에 대해서만 재시도한다.
                 max_attempts, wait = self._retry_plan(e, attempt)
@@ -472,8 +456,6 @@ class GeminiProvider(LLMProvider):
                     await asyncio.sleep(wait)
                 else:
                     self._raise(e)
-        else:
-            self._raise(last_exc)
         if input_tokens or output_tokens:
             usage_tracker.append_usage(
                 operation=operation,

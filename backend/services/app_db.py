@@ -2,7 +2,6 @@
 
 단일 파일(data/app.db)로 관리한다. RAG의 Postgres(opt-in)와는 무관 — 프로필 히스토리는
 RAG를 안 쓰는 사용자도 써야 하는 핵심 기능이라 선택 기능의 DB에 의존하지 않는다.
-세부 설계는 docs/profile-history/PLAN.md 참고.
 """
 import hashlib
 import json
@@ -258,7 +257,7 @@ def _fail_stale_qa_pending() -> None:
     """서버 시작 시점에 남아있는 status='pending' 행은 예외 없이 이전 프로세스가 죽으며
     (컨테이너 재시작 등) 못 끝낸 요청이다 — 지금 이 프로세스가 막 시작했는데 pending인
     행이 있다는 것 자체가 증거라서, "몇 분 지났으면"같은 시간 기반 추측이 필요 없다.
-    좀비 pending을 다루는 확정적 방법(docs/chat-history-server-storage/PLAN.md 참고)."""
+    좀비 pending을 다루는 확정적 방법이다."""
     with get_connection() as conn:
         conn.execute(
             "UPDATE qa_messages SET status = 'failed', "
@@ -512,10 +511,10 @@ def record_raw_version(slug: str, raw_text: str, company_info_id: int | None = N
 
 
 def latest_raw_version(slug: str) -> dict | None:
-    """공고(slug)의 가장 최근 원문 버전 행(id, content_hash, company_info_id). 없으면 None."""
+    """공고(slug)의 가장 최근 원문 버전 행(company_info_id만). 없으면 None."""
     with get_connection() as conn:
         row = conn.execute(
-            "SELECT id, content_hash, company_info_id FROM posting_raw_versions "
+            "SELECT company_info_id FROM posting_raw_versions "
             "WHERE slug = ? ORDER BY id DESC LIMIT 1",
             (slug,),
         ).fetchone()
@@ -551,16 +550,15 @@ def migrate_qa_slug_history(device_id: str, company_slug: str, pairs: list[tuple
     qa_migrations에 (device_id, company_slug) 기록까지 **한 트랜잭션**으로 커밋한 뒤 삽입
     건수를 반환한다.
 
-    "슬러그에 메시지가 이미 있으면 스킵"(v1.5.1)이 아니라 "이 기기가 이 슬러그를 이미
+    "슬러그에 메시지가 이미 있으면 스킵"이 아니라 "이 기기가 이 슬러그를 이미
     옮겼는지"로 판단해야 한다 — 안 그러면 기기 A가 먼저 마이그레이션한 회사는 기기 B의
     (서로 다른) 이력이 영영 안 옮겨진다. 메시지 삽입과 마이그레이션 기록을 분리된 커밋으로
     하면, 중간에 실패했을 때 "메시지는 없는데 기록은 남아 영구 스킵"되거나 반대로 "재시도
-    때마다 중복 삽입"될 수 있어 하나의 트랜잭션으로 묶는다(docs/chat-history-server-storage/
-    PLAN.md 참고).
+    때마다 중복 삽입"될 수 있어 하나의 트랜잭션으로 묶는다.
 
     쌍(question, answer)의 occurrence 개수 기준으로 서버에 이미 있던 만큼만 건너뛴다 —
-    v1.5.1 당시(기기 추적 테이블이 없던 시절) 이미 성공적으로 옮겨진 기기가 복구 경로로
-    재호출해도 중복 삽입되지 않도록 하기 위함. 존재 여부를 boolean으로만 보면 완전히 같은
+    qa_migrations 기록은 없지만 이력은 이미 옮겨진 기기가 복구 경로로 재호출해도 중복
+    삽입되지 않도록 하기 위함. 존재 여부를 boolean으로만 보면 완전히 같은
     질문을 두 번 물어본 정상 이력조차 마이그레이션 중 하나로 뭉개진다 — 이번 호출에서 새로
     넣은 행을 다음 쌍의 "이미 있음" 근거로 다시 세면 안 되므로, 시작 시점의 기존 개수만
     한 번씩 소비한다.
@@ -676,9 +674,9 @@ def migrate_rag_chat(chat_id: str, title: str | None, created_at: str, entries: 
     방 생성과 메시지(entries: (질문, data JSON 문자열) 튜플 목록) 전부 삽입을 **한
     트랜잭션**으로 커밋하고 삽입 건수를 반환한다.
 
-    예전엔 방 생성(create_rag_chat)과 메시지 삽입(insert_pending_rag_message+
-    mark_rag_message_done)이 각각 별도 커밋이라, 방만 만들어진 직후나 메시지 일부만 들어간
-    뒤 서버가 죽으면 재시도해도 "이미 있는 방"으로 판정돼 나머지가 영구 누락됐다. 한
+    방 생성(create_rag_chat)과 메시지 삽입(insert_pending_rag_message+
+    mark_rag_message_done)을 각각 별도 커밋하면, 방만 만들어진 직후나 메시지 일부만 들어간
+    뒤 서버가 죽을 때 재시도해도 "이미 있는 방"으로 판정돼 나머지가 영구 누락된다. 한
     트랜잭션으로 묶으면 중간에 실패해도 전부 롤백되어 재시도 시 처음부터 다시 시도할 수 있다.
 
     방 생성은 SELECT로 먼저 존재를 확인하지 않고 INSERT ... ON CONFLICT(id) DO NOTHING으로
@@ -733,9 +731,7 @@ def get_rag_chat(chat_id: str) -> dict | None:
 
 
 def set_rag_chat_title_if_empty(chat_id: str, title: str) -> None:
-    """제목이 아직 없는 채팅방에만 첫 질문 앞부분으로 제목을 채운다(기존 프론트
-    `frontend/app.js`의 `if (!chat.title) chat.title = question.slice(0, 24) + ...`와
-    동일 규칙, 서버로 이전)."""
+    """제목이 아직 없는 채팅방에만 첫 질문 앞부분으로 제목을 채운다."""
     with get_connection() as conn:
         conn.execute(
             "UPDATE rag_chats SET title = ? WHERE id = ? AND (title IS NULL OR title = '')",

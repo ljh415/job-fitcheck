@@ -9,14 +9,12 @@ from .base import LLMProvider
 from .anthropic import AnthropicProvider
 from .openai import OpenAIProvider
 from .gemini import GeminiProvider
-from config import get_active_provider
 
 _provider_cache: dict[str, LLMProvider] = {}
 
 
-def get_provider(override: str | None = None) -> LLMProvider:
-    """활성 provider 또는 override로 지정한 provider 인스턴스를 반환 (캐시됨)."""
-    name = override or get_active_provider()
+def get_provider(name: str) -> LLMProvider:
+    """name으로 지정한 provider 인스턴스를 반환 (캐시됨)."""
     if name not in _provider_cache:
         if name == "claude":
             _provider_cache[name] = AnthropicProvider()

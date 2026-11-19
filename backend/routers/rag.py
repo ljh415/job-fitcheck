@@ -1,15 +1,12 @@
 """RAG(대화형 근거 기반 검색) — main SPA `/rag` 뷰가 쓰는 API.
 
-원래 `rag/main` 브랜치의 독립 테스트 화면(`rag-test.html`)용이었으나, main 반영
-(`feat/rag-integration-plan`) 작업으로 main SPA(`frontend/index.html`의 `tpl-rag`)에
-정식 통합됐다 — `rag-test.html`은 이제 안 씀. `rag/postgres/gap.py`·`answer.py`·`agent.py`를
-그대로 호출하는 얇은 wrapper이고, 로직은 전부 `rag/` 안에 있다. 저장소는 PostgreSQL+pgvector
-전용(SQLite `rag/gap.py`는 Plan A 기준선 재현용으로만 남아있고 이 서비스 경로에선 더 이상
-안 씀 — Stage 6에서 전환).
+`rag/postgres/gap.py`·`agent.py`와 `rag/answer.py`를 그대로 호출하는 얇은 wrapper이고
+(프론트는 `frontend/index.html`의 `tpl-rag`), 로직은 전부 `rag/` 안에 있다. 검색 색인(청크·임베딩)은
+PostgreSQL+pgvector 전용이고(SQLite `rag/gap.py`는 이 서비스 경로에서 안 쓴다), `/ask`의 채팅 대화
+기록만 `services/app_db`(SQLite)에 저장한다.
 
 RAG는 opt-in 기능이다 — `settings.rag_postgres_host`가 비어 있으면 `/status` 외 나머지
-엔드포인트는 503을 반환한다(main 이식 시 opt-in 설계, `docs/rag-integration/STATUS.md` 2번
-참고). 라우터 자체는 항상 등록한다 — import 시점에 DB 연결을 시도하지 않으므로 등록 자체는
+엔드포인트는 503을 반환한다. 라우터 자체는 항상 등록한다 — import 시점에 DB 연결을 시도하지 않으므로 등록 자체는
 안전하고, `/status`가 항상 응답 가능해야 프론트가 신뢰성 있게 활성화 여부를 조회할 수 있다.
 
 임베딩 provider는 요청마다 고르지 않는다 — `resolve_rag_embedding_provider()`(`config.py`)가
@@ -98,9 +95,8 @@ class RagSettingsUpdateRequest(BaseModel):
 
 @router.get("/settings", dependencies=[Depends(_require_rag_enabled)])
 async def get_rag_settings():
-    """RAG 전용 설정 — 메인 설정 화면과 분리된, `/rag` 페이지 안의 별도 팝업에서 쓴다(쿼리마다
-    provider를 고르던 드롭다운을 없애고 하나로 통일한 결정 — 이유는 `docs/rag-integration/
-    STATUS.md` 4번 참고)."""
+    """RAG 전용 설정 — 메인 설정 화면과 분리된, `/rag` 페이지 안의 별도 팝업에서 쓴다(provider는 쿼리마다
+    고르지 않고 하나로 통일한다)."""
     # resolve_rag_embedding_provider()를 먼저 불러야 한다 — 이 함수가 유효하지 않은 override를
     # 자동으로 정리(None)하는 부수효과가 있어서, override를 먼저 읽으면 이번 응답에서만
     # override="local"인데 resolved="google"인 모순된 스냅샷이 나간다.
@@ -144,8 +140,7 @@ class GapCheckRequest(BaseModel):
 
 class AskRequest(BaseModel):
     """chat_id 채팅방에 질문을 추가한다. history는 클라이언트가 안 보낸다 — 서버가
-    rag_messages에서 직접 조회(최근 20턴, status='done'만)해서 조립한다(QnA와 동일한 이유,
-    docs/chat-history-server-storage/PLAN.md 참고)."""
+    rag_messages에서 직접 조회(최근 20턴, status='done'만)해서 조립한다(QnA와 동일한 이유)."""
     question: str = Field(max_length=2_000)
     chat_id: str
 
@@ -227,7 +222,7 @@ async def gap_check(req: GapCheckRequest):
         # ClientError/ServerError 둘 다 APIError의 하위 클래스라, 공통 상위 클래스 APIError로
         # 잡아야 4xx·5xx 둘 다 커버된다. 이것도 서버 버그가 아니라 외부 API 오류이므로 503.
         raise HTTPException(503, f"Google 임베딩 API 오류: {e}")
-    except psycopg.OperationalError as e:
+    except psycopg.OperationalError:
         # get_connection() 실패(Postgres 다운·인증 오류 등)만 좁게 잡는다 — psycopg.Error
         # 전체를 잡으면, assess_gap() 안의 SQL 문법·제약조건 위반 같은 실제 버그
         # (ProgrammingError/IntegrityError 등도 psycopg.Error 하위)까지 "일시적 DB 연결 오류"로
@@ -260,16 +255,15 @@ async def _run_reindex_or_503(provider: str) -> None:
         raise HTTPException(503, f"임베딩 서버 통신 오류: {e}")
     except genai_errors.APIError as e:
         raise HTTPException(503, f"Google 임베딩 API 오류: {e}")
-    except psycopg.OperationalError as e:
+    except psycopg.OperationalError:
         raise HTTPException(503, "DB 연결 오류 — 잠시 후 다시 시도하세요")
 
 
 @router.post("/reindex", dependencies=[Depends(_require_rag_enabled)])
 async def reindex():
-    """재색인 웹 트리거 — `rag.postgres.reindex.run()`이 지금까지 CLI 전용이라
-    실제 사용자는 트리거할 방법이 없었다. 항상 `resolve_rag_embedding_provider()`가 결정한
-    활성 provider 하나만 재색인한다(provider별로 따로 고르던 구조를 없애고 설정값 하나로
-    통일 — `/api/rag/settings` 참고). 프로필 포함 여부는
+    """재색인 웹 트리거 — `rag.postgres.reindex.run()`을 웹에서 부른다. 항상
+    `resolve_rag_embedding_provider()`가 결정한 활성 provider 하나만 재색인한다
+    (`/api/rag/settings` 참고). 프로필 포함 여부는
     `settings.rag_include_profile`(기본 false — 이력서 내용이 임베딩 API로 전송되는 걸
     사용자가 명시적으로 켜야 함)을 따른다. run()은 동기 함수(psycopg/httpx 동기 호출)라
     `asyncio.to_thread`로 감싸 이벤트 루프를 막지 않는다 — 출력은 그대로 컨테이너 stdout으로
@@ -296,8 +290,8 @@ def _history_from_rag_rows(rows: list[dict]) -> list[dict]:
 
 async def _run_rag_generation(message_id: int, chat_id: str, question: str) -> dict:
     """대화형 근거 기반 RAG 실행 — 요청/응답 코루틴과 분리된 독립 태스크로 돌린다. QnA의
-    _run_qa_generation()과 같은 이유(docs/chat-history-server-storage/PLAN.md "LLM 호출을
-    HTTP 요청 생명주기와 분리" 참고) — 클라이언트가 연결을 끊어도 이 태스크는 계속 실행되어
+    _run_qa_generation()과 같은 이유(LLM 호출을
+    HTTP 요청 생명주기와 분리) — 클라이언트가 연결을 끊어도 이 태스크는 계속 실행되어
     DB에 결과를 남긴다. conn/embed_provider 생성·정리·예외 처리는 기존 ask()/gap_check()와
     동일한 패턴을 그대로 유지한다."""
     provider = resolve_rag_embedding_provider()
@@ -388,10 +382,9 @@ async def migrate_chats(req: RagChatMigrationRequest):
 
 @router.post("/ask", dependencies=[Depends(_require_rag_enabled), Depends(_require_app_db_healthy)])
 async def ask(req: AskRequest):
-    """대화형 근거 기반 RAG 진입점 — 자연어 질문을 Agent(tool-use)로 답한다(Phase 1~4의
-    "질문 분류→고정 함수 실행" 구조를 대체 — 질문이 애매하거나 여러 능력을 조합해야 답할 수
-    있을 때 완전히 무관한 답을 내놓는 구조적 결함이 있었다. 상세는
-    `docs/rag-project-plans/00_meta/HISTORY.md` 참고). 실제 생성은 _run_rag_generation()에
+    """대화형 근거 기반 RAG 진입점 — 자연어 질문을 Agent(tool-use)로 답한다("질문
+    분류→고정 함수 실행" 구조는 질문이 애매하거나 여러 능력을 조합해야 답할 수 있을 때
+    완전히 무관한 답을 내놓는 한계가 있어 쓰지 않는다). 실제 생성은 _run_rag_generation()에
     위임 — 독립 태스크로 돌려서 클라이언트 연결 끊김과 무관하게 끝까지 실행되게 한다(위 "LLM
     호출을 HTTP 요청 생명주기와 분리" 참고). 이 함수는 pending 삽입 → 태스크 생성 → 결과 대기
     → 예외를 기존과 동일한 HTTPException으로 변환하는 역할만 한다."""
@@ -408,9 +401,8 @@ async def ask(req: AskRequest):
         # asyncio.Task.cancel()은 문서화된 동작상 "지금 await 중인 Future/Task"에도 취소를
         # 전파한다 — 그냥 `await task`면 이 요청 코루틴이 취소될 때(클라이언트 연결 끊김 등)
         # task도 같이 취소돼 pending으로 남을 수 있다. shield로 감싸면 바깥 취소가 이
-        # await 표현식만 끊고 task 자체는 보호돼 끝까지 실행된다 — 실측 curl/Playwright
-        # 테스트에선 재현 안 됐지만, uvicorn이 비-스트리밍 응답에 취소를 안 거는 현재 동작에
-        # 우연히 기댄 것일 수 있어 방어적으로 반영한다.
+        # await 표현식만 끊고 task 자체는 보호돼 끝까지 실행된다 — 현재 uvicorn은
+        # 비-스트리밍 응답에 취소를 안 걸지만 그 동작에 기대지 않으려고 방어적으로 감싼다.
         result = await asyncio.shield(task)
         result["message_id"] = message_id
         return result
@@ -422,5 +414,5 @@ async def ask(req: AskRequest):
         raise HTTPException(503, f"임베딩 서버 통신 오류: {e}")
     except genai_errors.APIError as e:
         raise HTTPException(503, f"Google 임베딩 API 오류: {e}")
-    except psycopg.OperationalError as e:
+    except psycopg.OperationalError:
         raise HTTPException(503, "DB 연결 오류 — 잠시 후 다시 시도하세요")

@@ -61,8 +61,7 @@ class CompanyFrontmatter(BaseModel):
     salary_check: Literal["양호", "미확인", "낮음"] | None = None
     stability_check: Literal["충족", "조건부", "미달", "미확인"] | None = None
     location_check: str | None = None
-    # 적합도 평가 구조 개편(docs/fit-eval-structural-redesign/PLAN.md) 1단계 중간
-    # 판정 결과 — 디버깅·감사용으로 보존(4번 열린 질문 참고). refit 입력과 QnA
+    # 중간 판정 결과 — 디버깅·감사용으로 보존한다. refit 입력과 QnA
     # 컨텍스트에서 어떻게 다룰지는 companies.py/qa.py 쪽에서 별도로 결정한다.
     item_judgments: list[dict] = Field(default_factory=list)
     decision_factors: dict = Field(default_factory=dict)

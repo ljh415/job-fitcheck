@@ -209,7 +209,6 @@ tr.company-row:hover { background: var(--table-row-hover); }
 
 .detail-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-left: auto; }
 .detail-meta { display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px; }
-.meta-chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .chip { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 12px; background: var(--border); color: var(--text-secondary); }
 .company-facts { font-size: 12px; color: var(--text-muted); display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
 .facts-sep { color: var(--border-input); margin: 0 2px; }
@@ -246,15 +245,13 @@ tr.company-row:hover { background: var(--table-row-hover); }
 .markdown-body table.fit-check-table td:first-child { width: 220px; }
 .markdown-body table.fit-check-table th:nth-child(2),
 .markdown-body table.fit-check-table td:nth-child(2) { width: 130px; text-align: center; }
-/* "관련 경험 여부"(7자, 직무 적합도 분석 표 헤더)가 기존 90px에서 옆 칸을 침범하던 문제
-   (2026-09-03 실사용 중 발견) — 항목 칸(1번째)은 그대로 두고 이 칸만 오른쪽으로 넓혀서
-   해결. 혹시 모를 더 긴 라벨에 대비해 줄바꿈도 같이 허용. */
+/* "관련 경험 여부"(7자, 직무 적합도 분석 표 헤더)가 옆 칸을 침범하지 않도록 항목 칸(1번째)은
+   그대로 두고 이 칸만 줄바꿈을 허용한다(더 긴 라벨 대비). */
 .markdown-body table.fit-check-table th:nth-child(2) { white-space: normal; }
 
 /* ── 폼 ──────────────────────────────────────────────────────────── */
 .form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-bottom: 12px; }
 .source-url-row { display: flex; gap: 8px; align-items: center; margin-bottom: 0; }
-.source-url-row .full-width { flex: 1; margin-top: 0; }
 .edit-form-actions { margin: 4px 0 20px; }
 .edit-section { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 14px; }
 .edit-section-title { font-size: 12px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 12px; }
@@ -292,7 +289,6 @@ label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-w
 .qa-turn.assistant { align-items: flex-start; }
 .qa-timestamp { font-size: 11px; color: var(--text-dimmed); white-space: nowrap; margin-top: 2px; }
 .qa-turn.user .qa-timestamp { text-align: right; }
-.qa-turn.assistant .qa-timestamp { text-align: left; }
 .qa-input-row { display: flex; gap: 8px; align-items: flex-end; padding: 12px 0 16px; border-top: 1px solid var(--border); flex-shrink: 0; }
 .qa-input-row textarea { flex: 1; resize: none; }
 
@@ -406,7 +402,6 @@ label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-w
 .toast-close:hover { color: var(--text-inverse); }
 @keyframes toast-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
 
-.export-checklist { display: flex; flex-direction: column; gap: 8px; }
 .export-check-item { display: flex; flex-direction: row; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
 .export-check-item input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--primary); flex-shrink: 0; }
 .export-check-required { color: var(--text-muted); cursor: default; }
@@ -416,7 +411,6 @@ label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-w
 .export-dropdown-wrap { position: relative; }
 .export-dropdown-btn { font-size: 13px; padding: 6px 12px; white-space: nowrap; }
 .export-dropdown-panel { position: absolute; right: 0; top: calc(100% + 6px); background: var(--bg-surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow-md); padding: 14px; min-width: 240px; z-index: 200; display: flex; flex-direction: column; gap: 7px; }
-.export-dropdown-panel.hidden { display: none; }
 .export-dropdown-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--text-dimmed); margin-bottom: 2px; }
 .export-dropdown-action { width: 100%; margin-top: 4px; font-size: 13px; }
 .export-dropdown-divider { border: none; border-top: 1px solid var(--bg-muted); margin: 4px 0; }
@@ -492,16 +486,16 @@ label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-w
 .rag-excerpt { font-size: 13px; color: var(--text-muted); border-left: 3px solid var(--border); padding-left: 10px; margin: 6px 0; }
 .rag-tool-trace summary { cursor: pointer; font-size: 13px; }
 .rag-tool-result { font-size: 12px; overflow-x: auto; white-space: pre-wrap; word-break: break-word; background: var(--bg-muted); padding: 8px; border-radius: 4px; margin-top: 4px; }
-.rag-chat-panel { height: 480px; display: flex; flex-direction: column; }
+.rag-chat-panel { display: flex; flex-direction: column; }
 .rag-chat-panel .qa-messages { border: 1px solid var(--border); border-radius: 8px; padding: 8px; min-height: 0; }
 .rag-chat-panel .qa-input-row button { flex: 0 0 auto; white-space: nowrap; }
 #rag-chat-select { flex: 0 0 auto; width: auto; }
 
-/* 채팅 패널이 고정 480px에 갇히지 않고 창 하단까지 늘어나도록(RAG 화면 전용). --rag-nav-h는
+/* 채팅 패널이 창 하단까지 늘어나도록(RAG 화면 전용). --rag-nav-h는
    app.js가 nav의 실제 렌더링 높이를 측정해서 넣어준다(모바일에서 nav가 줄바꿈돼도 대응) */
 .rag-view { display: flex; flex-direction: column; height: calc(100vh - var(--rag-nav-h, 52px)); min-height: 0; }
 .rag-view > .rag-section-card:last-child { flex: 1; display: flex; flex-direction: column; min-height: 0; }
-.rag-view .rag-chat-panel { height: auto; flex: 1; min-height: 300px; }
+.rag-view .rag-chat-panel { flex: 1; min-height: 300px; }
 
 /* ── 모바일 반응형 ───────────────────────────────────────────────── */
 @media (max-width: 768px) {
@@ -527,7 +521,6 @@ label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-w
 
   /* 비교 뷰: 가로 스크롤 */
   .view--compare { min-width: unset; }
-  .view--compare .table-wrap { overflow-x: auto; }
   #compare-table { min-width: 600px; }
 
   /* 캘린더: 가로 스크롤 */
@@ -547,8 +540,8 @@ label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-w
   .profile-upload-footer { flex-direction: column; align-items: flex-start; }
 
   /* 마크다운 본문 테이블: 데스크톱 고정폭이 좁은 화면에서 근거/내용 칸을 과도하게 압박하지 않도록
-     비율로 조정. "충족 여부" 칸이 "관련 경험 여부"(7자) 헤더를 못 담아 옆 칸을 침범하던 문제
-     (2026-09-03)를 항목 칸은 그대로 두고 이 칸만 오른쪽으로(근거 칸 쪽에서) 넓혀서 해결. */
+     비율로 조정. "충족 여부" 칸이 "관련 경험 여부"(7자) 헤더를 담도록 항목 칸은 그대로 두고
+     이 칸만 근거 칸 쪽에서 넓힌다. */
   .markdown-body table.fit-check-table th:first-child,
   .markdown-body table.fit-check-table td:first-child { width: 33.3%; }
   .markdown-body table.fit-check-table th:nth-child(2),

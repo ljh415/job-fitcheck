@@ -1,6 +1,5 @@
 """services/app_db.py 자체검증 — 임시 SQLite DB에서 schema/백필/동시성/FK cascade/
-좀비 pending을 확인한다. 원래 app_db.py의 `if __name__ == "__main__"` 블록이었으나
-운영 코드와 분리하기 위해 이 스크립트로 이동했다(로직 변경 없음).
+좀비 pending을 확인한다. 운영 코드와 분리하려고 app_db.py 밖의 이 스크립트에 둔다.
 
 실행: backend/에서 `python3 -m scripts.check_app_db`
 """
@@ -169,7 +168,7 @@ with tempfile.TemporaryDirectory() as tmp:
     assert delete_profile_version(version_id) is False  # 이미 삭제됨
 
     # fit_history는 FK를 강제하지 않으므로, 삭제된 스냅샷을 참조해도 insert는 성공해야
-    # 한다("삭제됨" 표시는 조회 시점에 판단, 위 docs/profile-history/PLAN.md 참고)
+    # 한다("삭제됨" 표시는 조회 시점에 판단)
     assert latest_profile_version_id() == version_id2
     create_fit_history_entry("테스트회사__직무", version_id, 72, "추천", "리포트 원문(삭제된 버전 참조)")
     create_fit_history_entry("테스트회사__직무", version_id2, 62, "조건부추천", "리포트 원문(정상 참조)")
@@ -242,7 +241,7 @@ with tempfile.TemporaryDirectory() as tmp:
     assert delete_qa_history_for_slug("테스트회사__직무") == 0  # 이미 없음
 
     # migrate_qa_slug_history: 기기별 멱등 처리 — "슬러그에 메시지 있음"이 아니라
-    # "이 기기가 이 슬러그를 옮긴 적 있음" 기준이어야 한다(v1.5.1 회귀 수정)
+    # "이 기기가 이 슬러그를 옮긴 적 있음" 기준이어야 한다
     pairs_a = [("데스크탑 질문1", "데스크탑 답변1"), ("데스크탑 질문2", "데스크탑 답변2")]
     inserted_a = migrate_qa_slug_history("device-desktop", "마이그레이션테스트__직무", pairs_a)
     assert inserted_a == 2
@@ -254,7 +253,7 @@ with tempfile.TemporaryDirectory() as tmp:
     assert len(list_qa_history("마이그레이션테스트__직무")) == 2  # 중복 안 생김
 
     # 다른 기기가 같은 슬러그에 대해 다른 이력을 갖고 있으면, 먼저 옮겨진 게 있어도
-    # 반드시 같이 옮겨져야 한다(v1.5.1은 여기서 스킵해버리던 회귀)
+    # 반드시 같이 옮겨져야 한다
     pairs_b = [("모바일 질문1", "모바일 답변1")]
     inserted_b = migrate_qa_slug_history("device-mobile", "마이그레이션테스트__직무", pairs_b)
     assert inserted_b == 1
@@ -262,11 +261,10 @@ with tempfile.TemporaryDirectory() as tmp:
     assert len(all_migrated) == 3  # 데스크탑 2건 + 모바일 1건, 둘 다 살아있음
     assert any(m["question"] == "모바일 질문1" for m in all_migrated)
 
-    # v1.5.1 복구 경로: qa_migrations 기록이 아예 없는(=기기 추적 테이블이 없던 시절
-    # 이미 성공한) 새 기기가 같은 내용으로 재호출하면, "already" 단락(같은 device의
+    # 복구 경로: qa_migrations 기록이 아예 없지만 이력은 이미 서버에 옮겨진 새 기기가 같은 내용으로 재호출하면, "already" 단락(같은 device의
     # 재시도 체크)이 아니라 content 기반 스킵으로 걸러져야 한다 — device_id를 반드시
-    # 처음 쓰는 값으로 해야 이 경로를 제대로 검증한다(Codex 2차 리뷰가 지적한 맹점:
-    # 이미 qa_migrations 표식이 있는 기기를 재사용하면 content 검사 전에 반환돼버림)
+    # 처음 쓰는 값으로 해야 이 경로를 제대로 검증한다(이미 qa_migrations 표식이
+    # 있는 기기를 재사용하면 content 검사 전에 반환돼버린다)
     retry_legacy_same_content = migrate_qa_slug_history(
         "device-legacy-untracked", "마이그레이션테스트__직무", pairs_a
     )

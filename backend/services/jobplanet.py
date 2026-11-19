@@ -8,13 +8,12 @@
   0. Gemini 구글 검색 연결 — GOOGLE_API_KEY가 있을 때만. 모델이 구글 검색을 실행해
      잡플래닛 페이지 제목("기업리뷰 N건, N.N 리뷰평점")을 읽어 답한다. 구글 검색 연결은
      유료 티어 키에서만 되고(무료 키는 429) 답이 요약 글이라 숫자가 1~2건 흔들릴 수 있어,
-     답의 회사명이 조회한 회사명과 정확히 같을 때만 채택하고 아니면 다음 경로로 넘어간다.
-  1. Naver  — 검색결과 안의 안정적인 평점 블록(class="fds-listitem")을 파싱.
+     답의 회사명이 조회한 회사명이거나, 같은 회사의 다른 이름(known_names)과 정규화 후 같을
+     때만 채택하고 아니면 다음 경로로 넘어간다.
+  1. Naver  — 검색결과 안의 평점 블록(class="fds-listitem")을 파싱. 이 블록이 있을 때만 후보가 나온다.
      (2026-11-05 기준 이 블록이 사라져 후보 0건 — 보류 중)
-     예전엔 JSON title 필드(최대 300자)를 정규식으로 훑었는데, Naver가 그
-     텍스트를 매번 다른 지점에서 잘라버려서 평점 부분이 종종 통째로 사라졌다
-     (카카오처럼 리뷰 많은 회사도 not_found로 오탐). fds-listitem 블록은 title
-     JSON과 별도로 안정적으로 렌더링되고 잘릴 걱정이 없다.
+     JSON title 필드는 Naver가 텍스트를 매번 다른 지점에서 잘라 평점 부분이 통째로
+     사라질 수 있어(리뷰 많은 회사도 not_found로 오탐) 쓰지 않는다.
   2. DuckDuckGo HTML — Naver에서 못 찾은 경우 fallback
      단, 연속 요청 시 rate limiting (202) 발생 가능
 
@@ -88,20 +87,11 @@ class JobplanetResult:
         score: float | None,
         review_count: int | None,
         source: str,
-        raw_snippet: str = "",
     ):
         self.score = score
         self.review_count = review_count
         # source: "gemini_search" | "search_snippet" | "not_found" | "error"
         self.source = source
-        self.raw_snippet = raw_snippet
-
-    def to_dict(self) -> dict:
-        return {
-            "jobplanet_score": self.score,
-            "jobplanet_review_count": self.review_count,
-            "jobplanet_source": self.source,
-        }
 
 
 def _normalize(name: str) -> str:
@@ -161,7 +151,7 @@ def _best_candidate(
     if best and best_sim >= 0.5:
         if best_name != company_name:
             logger.info("잡플래닛 후보가 조회한 이름(%s)이 아니라 같은 회사의 다른 이름(%s)과 맞아 채택: %s", company_name, best_name, best[2][:60])
-        return JobplanetResult(best[0], best[1], "search_snippet", best[2][:200])
+        return JobplanetResult(best[0], best[1], "search_snippet")
     return None
 
 
@@ -235,7 +225,7 @@ def _read_gemini_answer(
         return None, f"쓸 수 없는 값 (평점 {score}, 리뷰 {count}건)"
     if via_known is not None:
         logger.info("잡플래닛 답의 회사명(%s)이 조회한 이름(%s)이 아니라 같은 회사의 다른 이름(%s)과 같아 채택", found, company_name, via_known)
-    return JobplanetResult(score, count, "gemini_search", text[:200]), ""
+    return JobplanetResult(score, count, "gemini_search"), ""
 
 
 async def _search_gemini(company_name: str, known_names: list[str | None] | None = None) -> JobplanetResult | None:
@@ -384,14 +374,12 @@ async def _fetch_one(company_name: str, known_names: list[str | None] | None = N
 
     except Exception as e:
         logger.warning("잡플래닛 조회 오류 (%s): %s: %s", search_name, type(e).__name__, e)
-        return JobplanetResult(None, None, "error", str(e))
+        return JobplanetResult(None, None, "error")
 
     return JobplanetResult(None, None, "not_found")
 
 
 if __name__ == "__main__":
-    import asyncio
-
     # 링크 없는 평점 블록(4.9/999, 가짜)이 다음 카드의 "(주) 카카오" 링크를
     # 가로채 틀린 점수로 채택되는 걸 막는 회귀 테스트(네트워크 불필요)
     _CROSS_CARD_FIXTURE = """
@@ -445,7 +433,7 @@ if __name__ == "__main__":
     assert _best_candidate("케이티밀리의서재", _snippet, ["밀리"]) is None  # 3글자 미만은 안 씀
     print("아는 이름 fixture 통과")
 
-    # 검색할 이름 후보: company_name 먼저, 중복·3글자 미만·None 제외
+    # 검색할 이름 후보: company_name 먼저, 중복·2글자 미만·None 제외
     assert _search_names("롯데그룹", ["롯데이노베이트", "(주)롯데그룹", None, "LOTTE", "롯", "롯데"]) == ["롯데그룹", "롯데이노베이트", "LOTTE", "롯데"]
     assert _search_names("에스케이그룹", ["SK"]) == ["에스케이그룹", "SK"]  # 두 글자 이름도 후보
     assert _search_names("TVING", ["티빙", "(주)티빙"]) == ["TVING", "티빙"]
@@ -459,7 +447,7 @@ if __name__ == "__main__":
         if name == "에스케이그룹":
             return JobplanetResult(None, None, "not_found")
         if name == "SK에너지":
-            return JobplanetResult(None, None, "error", "x")
+            return JobplanetResult(None, None, "error")
         return JobplanetResult(3.6, 114, "gemini_search")
 
     _fetch_one = _fake_fetch_one
@@ -483,7 +471,7 @@ if __name__ == "__main__":
         assert kakao.score is not None and kakao.score > 0
         print("카카오:", kakao.score, kakao.review_count, kakao.source)
 
-        # 에너닷: 소규모 회사, 예전에도 되던 케이스라 회귀 확인용
+        # 에너닷: 소규모 회사 — 회귀 확인용
         enerdat = await fetch_jobplanet_score("에너닷")
         assert enerdat.source in ("gemini_search", "search_snippet"), f"에너닷: {enerdat.source}"
         print("에너닷:", enerdat.score, enerdat.review_count, enerdat.source)
