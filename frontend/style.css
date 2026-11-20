@@ -175,6 +175,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--p
 .table-wrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; background: var(--bg-surface); border-radius: 10px; overflow: hidden; box-shadow: var(--shadow-sm); }
 th { background: var(--table-th-bg); font-weight: 600; text-align: left; padding: 10px 12px; border-bottom: 2px solid var(--table-th-border); white-space: nowrap; }
+th.col-verdict, td.col-verdict { width: calc(3.2em + 24px); }
 td { padding: 10px 12px; border-bottom: 1px solid var(--border-subtle); vertical-align: middle; }
 tr:last-child td { border-bottom: none; }
 tr.company-row { cursor: pointer; transition: background 0.1s; }
@@ -190,7 +191,9 @@ tr.company-row:hover { background: var(--table-row-hover); }
 
 /* ── 상태 칩 ─────────────────────────────────────────────────────── */
 .status-chip { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; }
-.status-select { padding: 3px 8px; border-radius: 12px; font-size: 12px; font-weight: 600; border: none; cursor: pointer; outline: none; width: auto; }
+.status-select { padding: 3px 22px 3px 8px; border-radius: 12px; font-size: 12px; font-weight: 600; border: none; cursor: pointer; outline: none; width: 82px; }
+/* 화살표를 직접 그려 오른쪽 여백을 정한다. .status-* 의 background 약식이 이미지를 지우므로 선택자를 더 구체적으로 둔다 */
+select.status-select { appearance: none; -webkit-appearance: none; background-repeat: no-repeat; background-size: 8px 4px; background-position: calc(100% - 9px) 50%; background-image: conic-gradient(from 135deg at 50% 0, currentColor 90deg, transparent 0); }
 .status-미지원   { background: var(--status-미지원-bg);   color: var(--status-미지원-text); }
 .status-지원     { background: var(--status-지원-bg);     color: var(--status-지원-text); }
 .status-서류통과 { background: var(--status-서류통과-bg); color: var(--status-서류통과-text); }
@@ -379,6 +382,7 @@ label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-w
 .pinned-card-name { font-weight: 700; font-size: 13px; margin-bottom: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 20px; }
 .pinned-card-job { font-size: 12px; color: var(--text-muted); margin-bottom: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pinned-card-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.pinned-card-meta .status-select { border-radius: 20px; line-height: 1.3; }
 .pin-card-btn { position: absolute; top: 6px; right: 6px; background: none; padding: 2px 4px; font-size: 13px; line-height: 1; border-radius: 4px; opacity: 0.5; }
 .pin-card-btn:hover { opacity: 1; background: var(--score-low-bg); }
 .pin-btn { background: none; padding: 2px 4px; font-size: 13px; line-height: 1; border-radius: 4px; opacity: 0.2; }
