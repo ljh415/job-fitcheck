@@ -617,6 +617,9 @@ async function onStatusChange(slug, selectEl) {
       const pinResult = await api(`/companies/${encodeURIComponent(slug)}/pin`, { method: 'POST', body: '{}' });
       if (company) company.frontmatter.pinned = pinResult.pinned;
       render();
+    } else if (record.frontmatter.pinned) {
+      // 핀이 그대로여도 상단 pinned 카드의 상태 태그는 다시 그려야 한다
+      renderPinnedSection(allCompanies.filter(c => c.frontmatter.pinned));
     }
   } catch (e) {
     selectEl.className = prevClass;
