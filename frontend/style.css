@@ -193,7 +193,7 @@ tr.company-row:hover { background: var(--table-row-hover); }
 .status-chip { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; }
 .status-select { padding: 3px 22px 3px 8px; border-radius: 12px; font-size: 12px; font-weight: 600; border: none; cursor: pointer; outline: none; width: 82px; }
 /* 화살표를 직접 그려 오른쪽 여백을 정한다. .status-* 의 background 약식이 이미지를 지우므로 선택자를 더 구체적으로 둔다 */
-select.status-select { appearance: none; -webkit-appearance: none; background-repeat: no-repeat; background-size: 8px 4px; background-position: calc(100% - 9px) 50%; background-image: conic-gradient(from 135deg at 50% 0, currentColor 90deg, transparent 0); }
+select.status-select { appearance: none; -webkit-appearance: none; background-repeat: no-repeat; background-size: 8px 4px; background-position: calc(100% - 9px) 50%; background-image: conic-gradient(from -45deg at 50% 100%, currentColor 90deg, transparent 0); }
 .status-미지원   { background: var(--status-미지원-bg);   color: var(--status-미지원-text); }
 .status-지원     { background: var(--status-지원-bg);     color: var(--status-지원-text); }
 .status-서류통과 { background: var(--status-서류통과-bg); color: var(--status-서류통과-text); }
