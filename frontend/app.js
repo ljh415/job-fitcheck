@@ -363,6 +363,13 @@ function renderTable(companies, terminatedCount = 0) {
   renderMainTable(companies, terminatedCount);
 }
 
+function statusSelectHtml(escapedSlug, status) {
+  const options = ['미지원','지원','서류통과','인터뷰','최종','탈락','보류','지원마감'].map(s =>
+    `<option value="${s}" ${status === s ? 'selected' : ''}>${s}</option>`
+  ).join('');
+  return `<select class="status-select status-${escHtml(status)}" data-slug="${escapedSlug}" data-action="status-change">${options}</select>`;
+}
+
 function renderPinnedSection(pinnedCompanies) {
   const section = document.getElementById('pinned-section');
   const cards = document.getElementById('pinned-cards');
@@ -388,7 +395,7 @@ function renderPinnedSection(pinnedCompanies) {
       <div class="pinned-card-job">${escHtml(fm.job_title || '-')}</div>
       <div class="pinned-card-meta">
         <span class="score-badge ${scoreClass}">${scoreText}</span>
-        <span class="status-chip status-${escHtml(fm.status)}">${escHtml(fm.status)}</span>
+        ${statusSelectHtml(slug, fm.status)}
       </div>
     </div>`;
   }).join('');
@@ -416,7 +423,6 @@ function renderMainTable(companies, terminatedCount = 0) {
       : 'score-low';
     const scoreText = score !== null && score !== undefined ? score : '-';
     const slug = escHtml(c.slug);
-    const status = escHtml(fm.status);
     const isPinned = !!fm.pinned;
     return `<tr class="company-row${isTerminated ? ' terminated-row' : ''}" data-slug="${slug}" data-nav="detail">
       <td><input type="checkbox" class="row-check" data-slug="${slug}" /></td>
@@ -429,16 +435,10 @@ function renderMainTable(companies, terminatedCount = 0) {
       </td>
       <td>${escHtml(fm.job_title || '-')}</td>
       <td><span class="score-badge ${scoreClass}">${scoreText}</span></td>
-      <td>${escHtml(fm.fit_label || '-')}</td>
+      <td class="col-verdict">${escHtml(fm.fit_label || '-')}</td>
       <td>${escHtml(fm.stability || '-')}</td>
       <td>${escHtml(fm.location || '-')}</td>
-      <td>
-        <select class="status-select status-${status}" data-slug="${slug}" data-action="status-change">
-          ${['미지원','지원','서류통과','인터뷰','최종','탈락','보류','지원마감'].map(s =>
-            `<option value="${s}" ${fm.status === s ? 'selected' : ''}>${s}</option>`
-          ).join('')}
-        </select>
-      </td>
+      <td>${statusSelectHtml(slug, fm.status)}</td>
       <td>${(fm.updated_at || '').slice(0, 10)}</td>
     </tr>`;
   });
@@ -618,8 +618,8 @@ async function onStatusChange(slug, selectEl) {
       if (company) company.frontmatter.pinned = pinResult.pinned;
       render();
     } else if (record.frontmatter.pinned) {
-      // 핀이 그대로여도 상단 pinned 카드의 상태 태그는 다시 그려야 한다
-      renderPinnedSection(allCompanies.filter(c => c.frontmatter.pinned));
+      // 핀이 그대로여도 상단 카드와 표의 select를 서로 맞춰야 한다
+      render();
     }
   } catch (e) {
     selectEl.className = prevClass;
