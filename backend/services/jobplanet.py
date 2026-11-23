@@ -10,6 +10,11 @@
      유료 티어 키에서만 되고(무료 키는 429) 답이 요약 글이라 숫자가 1~2건 흔들릴 수 있어,
      답의 회사명이 조회한 회사명이거나, 같은 회사의 다른 이름(known_names)과 정규화 후 같을
      때만 채택하고 아니면 다음 경로로 넘어간다.
+     같은 회사의 채용공고 페이지 제목에도 평점·리뷰 수("N.N 기업 만족도, N개 기업리뷰")가 있고
+     구글에 남은 스냅샷이 회사 리뷰 페이지보다 오래돼 값이 다를 수 있다. 그래서 답에 근거
+     제목과 URL을 같이 받아, 제목이 회사 리뷰 제목 형식이고 숫자가 답과 같으며 URL이 회사 리뷰
+     페이지(/companies/{id}/reviews)일 때만 채택한다. 답의 URL은 구글 중계 주소라서 리다이렉트
+     위치만 읽어 실제 주소를 얻는다(잡플래닛 페이지는 열지 않는다).
   1. Naver  — 검색결과 안의 평점 블록(class="fds-listitem")을 파싱. 이 블록이 있을 때만 후보가 나온다.
      (2026-11-05 기준 이 블록이 사라져 후보 0건 — 보류 중)
      JSON title 필드는 Naver가 텍스트를 매번 다른 지점에서 잘라 평점 부분이 통째로
@@ -74,11 +79,22 @@ _GEMINI_PROMPT = (
     "잡플래닛(jobplanet.co.kr)에서 회사 '{name}'의 기업리뷰 평점과 리뷰 수를 찾아줘. "
     "검색 결과 제목에 나온 숫자('기업리뷰 N건, N.N 리뷰평점')를 그대로 인용하고, "
     "계열사·부서·이름이 비슷한 다른 회사는 제외하고 정확히 그 회사만 답해. "
-    "같은 이름의 페이지가 여럿이면 리뷰 수가 가장 많은 페이지를 골라. "
+    "제목에 '기업리뷰 N건, N.N 리뷰평점'이 들어 있는 회사 리뷰 페이지의 값만 써. "
+    "채용공고·연봉·면접·복지 페이지처럼 다른 종류 페이지의 숫자는 쓰지 마. "
     "찾지 못하면 '없음'이라고만 답해. "
-    "형식: 회사명=<잡플래닛에 표시된 회사명>, 평점=N.N, 리뷰수=N"
+    "형식: 회사명=<잡플래닛에 표시된 회사명>, 평점=N.N, 리뷰수=N, "
+    "제목=<그 숫자가 나온 검색 결과 제목 원문>, URL=<그 검색 결과의 주소 그대로>"
 )
-_GEMINI_ANSWER_RE = re.compile(r"회사명\s*=\s*(.+?)\s*,\s*평점\s*=\s*(\d+(?:\.\d+)?)\s*,\s*리뷰수\s*=\s*([\d,]+)")
+_GEMINI_ANSWER_RE = re.compile(
+    r"회사명\s*=\s*(.+?)\s*,\s*평점\s*=\s*(\d+(?:\.\d+)?)\s*,\s*리뷰수\s*=\s*([\d,]+)"
+    r"\s*,\s*제목\s*=\s*(.+?)\s*,\s*URL\s*=\s*(\S+)"
+)
+# 답에 인용된 제목이 회사 리뷰 페이지 형식인지 보는 정규식. 리뷰 수에 천 단위 쉼표가 있을 수 있다.
+_GEMINI_TITLE_RE = re.compile(r"기업리뷰\s*([\d,]+)건[,\s]+(\d+\.\d+)\s*리뷰평점")
+# 근거 URL 판단: 구글 중계 주소는 리다이렉트 위치만 읽어 풀고(서버가 모델이 쓴 임의 주소를 열지 않도록
+# 이 접두만 허용), 풀린 주소가 회사 리뷰 페이지일 때만 쓴다.
+_GROUNDING_REDIRECT_PREFIX = "https://vertexaisearch.cloud.google.com/grounding-api-redirect/"
+_REVIEW_PAGE_RE = re.compile(r"^https://www\.jobplanet\.co\.kr/companies/\d+/reviews(?:[/?]|$)")
 
 
 class JobplanetResult:
@@ -203,8 +219,12 @@ def _extract_naver_candidates(html: str) -> list[tuple[float, int, str]]:
 def _read_gemini_answer(
     text: str, company_name: str, known_names: list[str | None] | None = None,
 ) -> tuple[JobplanetResult | None, str]:
-    """Gemini 답에서 (회사명, 평점, 리뷰 수)를 읽는다. 채택하면 (결과, ""), 못 쓰면 (None, 사유).
-    네트워크와 분리해뒀다 — self-check에서 답 문장으로 직접 검증할 수 있도록.
+    """Gemini 답에서 (회사명, 평점, 리뷰 수, 근거 제목)을 읽는다. 채택하면 (결과, ""), 못 쓰면 (None, 사유).
+    네트워크와 분리해뒀다 — self-check에서 답 문장으로 직접 검증할 수 있도록. 근거 URL 검사는
+    네트워크가 필요해 _search_gemini()가 따로 한다.
+
+    근거 제목이 회사 리뷰 페이지 형식("기업리뷰 N건, N.N 리뷰평점")이고 그 숫자가 답의 평점·리뷰 수와
+    같아야 한다 — 채용공고 페이지 제목의 숫자나 옮겨 적다 틀린 숫자를 걸러낸다.
 
     답의 회사명이 조회한 회사명, 또는 같은 회사로 이미 아는 다른 이름(known_names — AI가 뽑은
     display_name 등)과 정규화 후 정확히 같을 때만 채택한다 — 계열사·부서(더스윙오퍼레이션)나
@@ -215,6 +235,7 @@ def _read_gemini_answer(
     if not m:
         return None, f"답에서 값을 못 읽음: {text[:60]!r}"
     found, score, count = m.group(1).strip(), float(m.group(2)), int(m.group(3).replace(",", ""))
+    title = m.group(4).strip()
     found_norm = _normalize(found)
     via_known = None
     if found_norm != _normalize(company_name):
@@ -223,9 +244,26 @@ def _read_gemini_answer(
             return None, f"답의 회사명이 다름 (조회 {company_name} ≠ 답 {found})"
     if count == 0 or not 0 < score <= 5:
         return None, f"쓸 수 없는 값 (평점 {score}, 리뷰 {count}건)"
+    tm = _GEMINI_TITLE_RE.search(title)
+    if not tm or int(tm.group(1).replace(",", "")) != count or float(tm.group(2)) != score:
+        return None, f"근거 제목이 회사 리뷰 형식이 아니거나 숫자가 답과 다름: {title[:70]!r}"
     if via_known is not None:
         logger.info("잡플래닛 답의 회사명(%s)이 조회한 이름(%s)이 아니라 같은 회사의 다른 이름(%s)과 같아 채택", found, company_name, via_known)
     return JobplanetResult(score, count, "gemini_search"), ""
+
+
+async def _resolve_grounding_url(url: str) -> str:
+    """답에 쓰인 근거 URL을 실제 주소로 푼다. 구글 중계 주소는 리다이렉트 위치만 읽고, 그 밖의 주소는
+    그대로 돌려준다(주소를 열지는 않는다). 풀지 못하면 빈 문자열."""
+    if not url.startswith(_GROUNDING_REDIRECT_PREFIX):
+        return url
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(url, follow_redirects=False)
+    except Exception as e:
+        logger.warning("잡플래닛 근거 URL 풀기 실패: %s: %s", type(e).__name__, e)
+        return ""
+    return resp.headers.get("location", "")
 
 
 async def _search_gemini(company_name: str, known_names: list[str | None] | None = None) -> JobplanetResult | None:
@@ -267,9 +305,15 @@ async def _search_gemini(company_name: str, known_names: list[str | None] | None
         )
     grounding = response.candidates[0].grounding_metadata if response.candidates else None
     searches = len(getattr(grounding, "web_search_queries", None) or [])
-    result, reason = _read_gemini_answer((response.text or "").strip(), company_name, known_names)
+    text = (response.text or "").strip()
+    result, reason = _read_gemini_answer(text, company_name, known_names)
+    url = ""
     if result:
-        logger.info("잡플래닛 Gemini 조회 (%s): %.1f점 %d건, 검색 %d회", company_name, result.score, result.review_count, searches)
+        url = await _resolve_grounding_url(_GEMINI_ANSWER_RE.search(text).group(5).strip("<>.,)"))
+        if not _REVIEW_PAGE_RE.match(url):
+            result, reason = None, f"근거 URL이 회사 리뷰 페이지가 아님: {url[:100]!r}"
+    if result:
+        logger.info("잡플래닛 Gemini 조회 (%s): %.1f점 %d건, 검색 %d회, 근거 %s", company_name, result.score, result.review_count, searches, url)
     else:
         logger.info("잡플래닛 Gemini 조회 (%s) 채택 안 함, 검색 %d회: %s", company_name, searches, reason)
     return result
@@ -398,21 +442,53 @@ if __name__ == "__main__":
     assert _fixture_candidates == [(3.8, 1307, "(주) 카카오 기업정보")], _fixture_candidates
     print("교차 카드 fixture:", _fixture_candidates)
 
+    _REDIRECT = _GROUNDING_REDIRECT_PREFIX + "x"
+
+    def _ans(name, score, count):
+        """회사 리뷰 페이지 제목 형식의 근거를 단 답 문장."""
+        c = f"{count:,}"
+        return (f"회사명={name}, 평점={score}, 리뷰수={c}, "
+                f"제목={name} 2026년 하반기 채용 | 기업리뷰 {c}건, {score} 리뷰평점 - 잡플래닛, URL={_REDIRECT}")
+
     # Gemini 답 읽기(네트워크 불필요): 정상 / 천 단위 쉼표 / 부서·다른 회사 / 없음 / 리뷰 0건
-    _ok, _ = _read_gemini_answer("회사명=(주)더스윙, 평점=2.4, 리뷰수=1,110", "더스윙")
+    _ok, _ = _read_gemini_answer(_ans("(주)더스윙", 2.4, 1110), "더스윙")
     assert _ok and (_ok.score, _ok.review_count, _ok.source) == (2.4, 1110, "gemini_search"), _ok
     for _text, _name in [
-        ("회사명=(주)더스윙오퍼레이션, 평점=1.9, 리뷰수=11", "더스윙"),
-        ("회사명=카카오뱅크, 평점=3.7, 리뷰수=500", "카카오"),
+        (_ans("(주)더스윙오퍼레이션", 1.9, 11), "더스윙"),
+        (_ans("카카오뱅크", 3.7, 500), "카카오"),
         ("없음", "더스윙"),
-        ("회사명=(주)스윙부스, 평점=0.0, 리뷰수=0", "스윙부스"),
+        (_ans("(주)스윙부스", 0.0, 0), "스윙부스"),
     ]:
         _bad, _why = _read_gemini_answer(_text, _name)
         assert _bad is None and _why, (_text, _bad)
     print("Gemini 답 읽기 fixture 통과")
 
+    # 근거 제목·URL 검사: 채용공고 페이지 제목(구글에 남은 옛 스냅샷)·제목 없는 답·숫자가 다른 제목은 거절,
+    # URL은 회사 리뷰 페이지(/companies/{id}/reviews)일 때만 통과
+    _POSTING = ("회사명=(주)룰루랩, 평점=2.2, 리뷰수=71, 제목=[룰루랩] 중국 콘텐츠 디자이너, 서울 채용, "
+                f"2.2 기업 만족도, 71개 기업리뷰, URL={_REDIRECT}")
+    _NO_TITLE = "회사명=(주)룰루랩, 평점=3.0, 리뷰수=45"
+    _WRONG_NUM = _ans("(주)룰루랩", 3.0, 45).replace("평점=3.0", "평점=3.3")
+    for _text in (_POSTING, _NO_TITLE, _WRONG_NUM):
+        _bad, _why = _read_gemini_answer(_text, "룰루랩")
+        assert _bad is None and _why, (_text, _bad)
+    assert _read_gemini_answer(_ans("(주)룰루랩", 3.0, 45), "룰루랩")[0] is not None
+    for _u, _want in [
+        ("https://www.jobplanet.co.kr/companies/358867/reviews/%EB%A3%B0%EB%A3%A8%EB%9E%A9", True),
+        ("https://www.jobplanet.co.kr/companies/358867/reviews", True),
+        ("https://www.jobplanet.co.kr/job/search?posting_ids[]=1479130", False),
+        ("https://www.jobplanet.co.kr/companies/358867/landing/%EB%A3%B0%EB%A3%A8%EB%9E%A9", False),
+        ("https://www.jobplanet.co.kr/companies/358867/premium_reviews", False),
+        ("https://evil.example/https://www.jobplanet.co.kr/companies/1/reviews", False),
+        ("", False),
+    ]:
+        assert bool(_REVIEW_PAGE_RE.match(_u)) is _want, _u
+    # 구글 중계 주소가 아닌 주소는 열지 않고 그대로 돌려준다
+    assert asyncio.run(_resolve_grounding_url("https://www.jobplanet.co.kr/companies/1/reviews")) == "https://www.jobplanet.co.kr/companies/1/reviews"
+    print("근거 제목·URL fixture 통과")
+
     # 아는 다른 이름(display_name 등)과의 일치 — 구글이 조회한 이름이 아니라 잡플래닛 등록명을 돌려주는 경우
-    _MILLIE = "회사명=(주)밀리의서재, 평점=3.2, 리뷰수=143"
+    _MILLIE = _ans("(주)밀리의서재", 3.2, 143)
     _known_ok, _ = _read_gemini_answer(_MILLIE, "케이티밀리의서재", ["밀리의서재"])
     assert _known_ok and (_known_ok.score, _known_ok.review_count) == (3.2, 143), _known_ok
     _known_ok2, _ = _read_gemini_answer(_MILLIE, "케이티밀리의서재", ["주식회사 케이티 밀리의서재", None, "(주)밀리의서재"])
@@ -420,9 +496,9 @@ if __name__ == "__main__":
     for _args in [
         (_MILLIE, "케이티밀리의서재"),                                                        # 아는 이름이 없으면 기존처럼 거절
         (_MILLIE, "케이티밀리의서재", ["다른회사이름"]),                                        # 다른 이름이면 거절
-        ("회사명=(주)더스윙오퍼레이션, 평점=1.9, 리뷰수=11", "더스윙", ["SWING"]),              # 계열사는 아는 이름이 있어도 거절
-        ("회사명=삼성, 평점=3.5, 리뷰수=999", "삼성SDS", ["삼성"]),                           # 정규화 3글자 미만의 아는 이름은 안 씀
-        ("회사명=(주)밀리의서재, 평점=0.0, 리뷰수=0", "케이티밀리의서재", ["밀리의서재"]),         # 아는 이름이어도 리뷰 0건은 거절
+        (_ans("(주)더스윙오퍼레이션", 1.9, 11), "더스윙", ["SWING"]),                       # 계열사는 아는 이름이 있어도 거절
+        (_ans("삼성", 3.5, 999), "삼성SDS", ["삼성"]),                                    # 정규화 3글자 미만의 아는 이름은 안 씀
+        (_ans("(주)밀리의서재", 0.0, 0), "케이티밀리의서재", ["밀리의서재"]),                  # 아는 이름이어도 리뷰 0건은 거절
     ]:
         _bad2, _why2 = _read_gemini_answer(*_args)
         assert _bad2 is None and _why2, (_args, _bad2)
