@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.10.5 — 적합도 평가 시스템 프롬프트를 provider별로 고르도록 분기 복원 (2026-11-25)
+
+`refactor/codebase-audit` 브랜치를 반영. 백엔드 코드(`prompts.py`·`services/company_analysis.py`·`mcp_server.py`)가 바뀌어 반영하려면 재빌드가 필요하다.
+동작은 그대로다(모든 provider가 지금과 같은 프롬프트를 받는다).
+
+- 문제: 평가 프롬프트는 provider마다 따로 다듬는 설계(`llm/` 아래 provider 클래스를 나눠 둔 이유)인데, v1.7.0의 판정·보고서 2단계 경로
+  (`evaluate_fit_structured`)가 판정 프롬프트(`EVALUATE_FIT_JUDGE_SYSTEM`)와 보고서 프롬프트(`EVALUATE_FIT_REPORT_SYSTEM`) 하나를 모든 provider에 넘겨
+  provider별로 프롬프트를 고르는 자리가 없었다. OpenAI·Gemini도 Claude 기준으로 다듬은 프롬프트를 그대로 받고 있었다.
+- `prompts.py`에 provider별 dict `EVALUATE_FIT_JUDGE_SYSTEMS`·`EVALUATE_FIT_REPORT_SYSTEMS`를 추가했다. 키는 `claude`·`openai`·`gemini`·`mcp`이고
+  `claude` 칸이 프롬프트 본문을 직접 갖는다. 나머지 칸은 기존 상수를 가리키는 임시 자리라 provider별 튜닝 때 그 칸만 바꾸면 된다.
+  모든 칸이 이전 프롬프트와 글자 단위로 같고, 프롬프트 본문·기존 상수는 바꾸지 않았다.
+- `evaluate_fit_structured`가 판정·보고서 호출의 `system`을 `snap.provider_name`으로 dict에서 꺼내 쓰고, MCP(`prepare_company_import`·`prepare_fit_report`)는
+  `mcp` 칸을 쓴다. 등록되지 않은 키는 기본값으로 대체하지 않고 `KeyError`로 끝난다(분기가 빠져도 눈에 띄지 않게 되는 것을 막기 위해).
+- `prompts.py`에 프롬프트별 사용 경로·provider 분기 여부를 구분하는 주석을 추가했고, `services/company_analysis.py` 모듈 설명을 지금 코드에 맞게 고쳤다.
+- 옛 단일 호출 경로(`evaluate_fit()`, `EVALUATE_FIT_SYSTEM*`)와 `llm/*.py`는 건드리지 않았다. 판정·보고서 유저 프롬프트와 도구 스키마는 아직 provider 구분 없이 공통이다.
+- 검증(유료 호출 없음): 상수·함수 AST 비교(추가는 dict 두 개뿐), 가짜 provider로 세 provider 모두 `system`이 이전 상수와 일치함을 확인, `fit_normalization`·`company_analysis` self-check,
+  재빌드 후 헬스·설정·회사 목록 200과 컨테이너 안 import 확인.
+
 ## v1.10.4 — 잡플래닛 평점이 채용공고 페이지의 옛 값으로 저장되던 문제 수정 (2026-11-23)
 
 `fix/jobplanet-posting-page` 브랜치를 반영. 백엔드 코드(`services/jobplanet.py`)만 바뀌어 반영하려면 재빌드가 필요하다.
