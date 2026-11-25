@@ -337,7 +337,7 @@ async def prepare_company_import(url: str | None = None, raw_text: str | None = 
         },
         "evaluate_fit_judge": {
             "available": has_profile,
-            "system": prompts.EVALUATE_FIT_JUDGE_SYSTEM + _MCP_ISOLATION_NOTICE,
+            "system": prompts.EVALUATE_FIT_JUDGE_SYSTEMS["mcp"] + _MCP_ISOLATION_NOTICE,
             "user_template": prompts.EVALUATE_FIT_JUDGE_USER_TEMPLATE,
             "output_schema": prompts.EVALUATE_FIT_JUDGE_TOOL_SCHEMA,
             "candidate_profile": profile_text,
@@ -421,7 +421,7 @@ async def prepare_fit_report(workflow_id: str, judge_result: dict, company_data:
         "item_judgments": normalized["item_judgments"],
         "decision_factors": normalized["decision_factors"],
         "report": {
-            "system": prompts.EVALUATE_FIT_REPORT_SYSTEM + _MCP_ISOLATION_NOTICE,
+            "system": prompts.EVALUATE_FIT_REPORT_SYSTEMS["mcp"] + _MCP_ISOLATION_NOTICE,
             "user": normalized["report_user"],
             "note": "위 system+user로 일반 텍스트 완성(도구 호출 아님)을 요청하면 산문이 나온다. "
             "그 결과를 그대로(다듬지 말고) create_company의 report_prose 인자로 전달할 것.",

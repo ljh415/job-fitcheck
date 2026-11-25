@@ -1,5 +1,6 @@
-"""회사 적합도 평가 — provider별 분기를 하나로 통합한다. 최초 평가(_process_company)와
-재평가(refit_company)가 이 함수를 공유해, 한쪽만 고쳐서 결과가 어긋나는 걸 방지한다."""
+"""회사 적합도 평가. 최초 평가(_process_company)와 재평가(refit_company)가 이 함수를
+공유해, 한쪽만 고쳐서 결과가 어긋나는 걸 방지한다. evaluate_fit_structured의 판정·보고서
+시스템 프롬프트는 provider별로 prompts.EVALUATE_FIT_*_SYSTEMS에서 고른다."""
 import json
 import logging
 import re
@@ -126,7 +127,7 @@ async def evaluate_fit_structured(
         custom_criteria=custom_criteria_section,
     )
     judge_result = await high.extract_structured(
-        system=prompts.EVALUATE_FIT_JUDGE_SYSTEM,
+        system=prompts.EVALUATE_FIT_JUDGE_SYSTEMS[snap.provider_name],
         user=judge_user,
         tool_name=prompts.EVALUATE_FIT_JUDGE_TOOL_NAME,
         tool_description=prompts.EVALUATE_FIT_JUDGE_TOOL_DESCRIPTION,
@@ -145,7 +146,7 @@ async def evaluate_fit_structured(
     fit_score, report_prose = None, ""
     for _ in range(2):
         report_result = await high.extract_structured(
-            system=prompts.EVALUATE_FIT_REPORT_SYSTEM,
+            system=prompts.EVALUATE_FIT_REPORT_SYSTEMS[snap.provider_name],
             user=normalized["report_user"],
             tool_name=prompts.EVALUATE_FIT_REPORT_TOOL_NAME,
             tool_description=prompts.EVALUATE_FIT_REPORT_TOOL_DESCRIPTION,

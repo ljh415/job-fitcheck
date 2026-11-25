@@ -1,5 +1,40 @@
 # Changelog
 
+## v1.10.5 — 적합도 평가 시스템 프롬프트를 provider별로 고르도록 분기 복원 (2026-11-25)
+
+`refactor/codebase-audit` 브랜치를 반영. 백엔드 코드(`prompts.py`·`services/company_analysis.py`·`mcp_server.py`)가 바뀌어 반영하려면 재빌드가 필요하다.
+동작은 그대로다(모든 provider가 지금과 같은 프롬프트를 받는다).
+
+- 문제: 평가 프롬프트는 provider마다 따로 다듬는 설계(`llm/` 아래 provider 클래스를 나눠 둔 이유)인데, v1.7.0의 판정·보고서 2단계 경로
+  (`evaluate_fit_structured`)가 판정 프롬프트(`EVALUATE_FIT_JUDGE_SYSTEM`)와 보고서 프롬프트(`EVALUATE_FIT_REPORT_SYSTEM`) 하나를 모든 provider에 넘겨
+  provider별로 프롬프트를 고르는 자리가 없었다. OpenAI·Gemini도 Claude 기준으로 다듬은 프롬프트를 그대로 받고 있었다.
+- `prompts.py`에 provider별 dict `EVALUATE_FIT_JUDGE_SYSTEMS`·`EVALUATE_FIT_REPORT_SYSTEMS`를 추가했다. 키는 `claude`·`openai`·`gemini`·`mcp`이고
+  `claude` 칸이 프롬프트 본문을 직접 갖는다. 나머지 칸은 기존 상수를 가리키는 임시 자리라 provider별 튜닝 때 그 칸만 바꾸면 된다.
+  모든 칸이 이전 프롬프트와 글자 단위로 같고, 프롬프트 본문·기존 상수는 바꾸지 않았다.
+- `evaluate_fit_structured`가 판정·보고서 호출의 `system`을 `snap.provider_name`으로 dict에서 꺼내 쓰고, MCP(`prepare_company_import`·`prepare_fit_report`)는
+  `mcp` 칸을 쓴다. 등록되지 않은 키는 기본값으로 대체하지 않고 `KeyError`로 끝난다(분기가 빠져도 눈에 띄지 않게 되는 것을 막기 위해).
+- `prompts.py`에 프롬프트별 사용 경로·provider 분기 여부를 구분하는 주석을 추가했고, `services/company_analysis.py` 모듈 설명을 지금 코드에 맞게 고쳤다.
+- 옛 단일 호출 경로(`evaluate_fit()`, `EVALUATE_FIT_SYSTEM*`)와 `llm/*.py`는 건드리지 않았다. 판정·보고서 유저 프롬프트와 도구 스키마는 아직 provider 구분 없이 공통이다.
+- 검증(유료 호출 없음): 상수·함수 AST 비교(추가는 dict 두 개뿐), 가짜 provider로 세 provider 모두 `system`이 이전 상수와 일치함을 확인, `fit_normalization`·`company_analysis` self-check,
+  재빌드 후 헬스·설정·회사 목록 200과 컨테이너 안 import 확인.
+
+## v1.10.4 — 잡플래닛 평점이 채용공고 페이지의 옛 값으로 저장되던 문제 수정 (2026-11-23)
+
+`fix/jobplanet-posting-page` 브랜치를 반영. 백엔드 코드(`services/jobplanet.py`)만 바뀌어 반영하려면 재빌드가 필요하다.
+
+- 문제: 룰루랩 공고를 URL로 등록하자 잡플래닛 평점이 2.2점(리뷰 71건)으로 저장됐는데 실제 잡플래닛 화면은 3.3점(40명)이었다. 구글에는 같은 회사의
+  채용공고 페이지 제목("N.N 기업 만족도, N개 기업리뷰")에 리뷰가 삭제되기 전의 옛 값이 남아 있었고, Gemini 조회 프롬프트가 "같은 이름의 페이지가
+  여럿이면 리뷰 수가 가장 많은 페이지"를 고르라고 해서 옛 값(71건)이 채택됐다. 회사명만 검증하고 어떤 페이지의 숫자인지는 보지 않았다.
+- Gemini 답에 근거 제목과 URL을 함께 받도록 형식을 바꿨다(`회사명=…, 평점=…, 리뷰수=…, 제목=…, URL=…`). "리뷰 수가 가장 많은 페이지" 규칙은 없애고
+  회사 리뷰 페이지의 값만 쓰게 했다.
+- 채택 조건 추가: 근거 제목이 "기업리뷰 N건, N.N 리뷰평점" 형식이고 숫자가 답과 같으며, 근거 URL이 회사 리뷰 페이지(`/companies/{id}/reviews`)일 때만 채택한다.
+  하나라도 안 맞으면 다음 경로(Naver, DuckDuckGo)로 넘어가고, 못 찾으면 평점은 미확인으로 저장된다. 답의 URL은 구글 중계 주소라서 리다이렉트 위치만 읽어
+  실제 주소를 얻으며(`vertexaisearch.cloud.google.com/grounding-api-redirect/` 주소만 열고 잡플래닛 페이지는 열지 않는다), 채택한 근거 URL은 로그에 남는다.
+- 저장되는 값(`JobplanetResult`의 평점·리뷰 수·출처)과 화면은 그대로다. self-check에 공고 페이지 제목 거절, 제목 없는 답, 숫자 불일치, URL 판별 시험을 추가했다.
+  Gemini 실제 호출 7회(룰루랩 3회·카카오·에너닷·밀리의서재·없는 회사)로 새 형식을 모델이 지키고 채택 URL이 모두 회사 리뷰 페이지임을 확인했다.
+- 고치지 못한 것: 구글에 남은 회사 리뷰 페이지 스냅샷 자체가 실제 화면보다 오래돼서 룰루랩은 3.0점(45건)이 나온다(실제 3.3점, 40명). 이미 저장된 룰루랩의
+  2.2점/71건은 다시 채우기(refill) 전까지 그대로다.
+
 ## v1.10.3 — 비용·토큰 집계 정정, README 비용표 재측정 (2026-11-19)
 
 `fix/usage-cost-accuracy`·`fix/pinned-status-chip` 브랜치를 반영. 사용량 로그와 설정 화면의 비용(`usage_tracker.py`)을 공식 가격표·실제
