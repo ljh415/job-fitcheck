@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.11.0 — OpenAI gpt-6 계열 지원(Responses API)과 모델 허용 목록 (2026-11-27)
+
+`feat/openai-6-migration` 브랜치를 반영. 백엔드와 프론트엔드가 바뀌어 반영하려면 재빌드가 필요하다. 전역 기본 provider(gemini)와 Claude 동작은 그대로다.
+
+- `llm/openai.py`: 모델 이름이 `gpt-6`으로 시작하면 Responses API 경로로 호출한다(`extract_structured`·`complete`·`stream`·`run_agent` 모두). `store=False`로 서버에 저장하지 않고, `temperature`는 보내지 않으며, 출력 상한(`max_output_tokens`)은 최소 16,384에서 상한에 걸리면 두 배로 올린다. 함수 호출이 없거나 정상 완료가 아닌 응답은 최대 3회까지 다시 요청하고 끝내 실패하면 사용자용 오류를 낸다. 에이전트 루프는 이전 출력 항목(reasoning 포함)을 다음 요청에 그대로 다시 넣는다. gpt-5 이하 모델은 기존 chat/completions 경로 그대로다.
+- `llm/incidents.py`(신규): 정상 완료가 아닌 응답을 `data/llm_incidents.jsonl`에 남긴다(응답 ID·요청 ID·상태·incomplete 사유·항목 종류·message 앞 500자·토큰 수, 요청 본문은 저장하지 않음). 기록 실패가 호출을 막지 않는다.
+- `llm/openai.py`·`llm/router.py`·`routers/settings.py`: OpenAI 선택 가능 모델을 단계별 허용 목록으로 제한한다. High는 gpt-6.2-sol·gpt-6.1-sol·gpt-6-sol·gpt-6.2-astra·gpt-6-astra, Light는 gpt-6-luna·gpt-6.1-terra이고 의료 특화 모델은 뺐다. 설정 화면 목록(`GET /api/models`가 `tiers`도 반환)·`PUT /api/settings`·저장값을 검증하며, 허용 밖 저장값(예: gpt-5)은 기본값으로 대체된다.
+- `config.py`: OpenAI 기본 모델을 gpt-5/gpt-5-mini에서 gpt-6.2-sol/gpt-6-luna로 바꿨다.
+- `prompts.py`·`routers/companies.py`·`mcp_server.py`: 본문 생성 시스템 프롬프트를 provider별 dict `GENERATE_BODY_SYSTEMS`(키 claude·openai·gemini·mcp)로 나눴다. claude 칸은 기존 본문 그대로이고 openai 칸에만 `~` 범위를 en dash로 쓰라는 한 줄이 더해진다.
+- `services/usage_tracker.py`·`frontend/app.js`: gpt-6 계열 단가(gpt-6-astra $10/$50, gpt-6.2-astra $8/$40, sol 3종 $2/$10, gpt-6.1-terra $1/$5, gpt-6-luna $0.10/$0.50)와 사용 기록의 `response_id`를 추가했다. 설정 화면 드롭다운은 High·Light 각각 허용 목록만 보여주고, 브라우저 모델 목록 캐시 키를 `model-cache-v3`로 바꿨다.
+- `CLAUDE.md`·`README.md`: OpenAI 기본 모델과 허용 목록 설명을 갱신했다.
+
 ## v1.10.5 — 적합도 평가 시스템 프롬프트를 provider별로 고르도록 분기 복원 (2026-11-25)
 
 `refactor/codebase-audit` 브랜치를 반영. 백엔드 코드(`prompts.py`·`services/company_analysis.py`·`mcp_server.py`)가 바뀌어 반영하려면 재빌드가 필요하다.
