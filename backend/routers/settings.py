@@ -38,6 +38,7 @@ async def health():
         "company_count": len(companies),
         "profile_exists": storage.profile_exists(),
         "provider": get_active_provider(),
+        "env": settings.app_env,
     }
 
 
