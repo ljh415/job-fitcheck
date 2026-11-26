@@ -74,7 +74,7 @@ docker compose restart api     # ❌ 이미지가 캐시되어 변경사항 미�
 - **LLM 티어**: Lightweight = 본문 생성·요약, High = 공고 구조화 추출·프로필 추출·적합도 평가·Q&A. 설정 화면에서 모델 변경 가능(Claude는 허용 목록 4개만, 아래). (공고 추출은 2026-10-13부터 High — Haiku가 원문 줄을 쪼개거나 빠뜨리고 같은 공고도 매번 항목 수가 달라서, `docs/extract-line-items` 참고)
   - Claude 기본: Light=haiku-5-5, High=sonnet-5-5. 선택 가능한 Claude 모델은 `backend/llm/anthropic.py`의 `ALLOWED_CLAUDE_MODELS` 4개(sonnet-5, sonnet-5-5, haiku-4-5, haiku-5-5)뿐이고, 설정 화면 목록·`PUT /api/settings`·저장값을 서버가 검증한다(새 모델은 시험 후 추가). 5.5 계열은 강제 도구 호출(`tool_choice`)을 거부해서 `extract_structured()`가 JSON outputs 경로를 쓰며 모델별 thinking 설정은 `_JSON_THINKING`(Sonnet 5.5 `between_tools`, Haiku 5.5 `disabled`). Sonnet 5·Haiku 4.5는 기존 강제 호출 경로를 쓴다(상세 `docs/sonnet-5-5-migration`). Claude는 temperature를 보내지 않는다.
   - 실행 모델은 `data/runtime_settings.json`(설정 화면)이 우선이라 코드 기본값만으로는 바뀌지 않는다(허용 밖 저장값은 기본값으로 대체). 본문 생성·적합도 평가 입력의 원문은 길이 제한 없이 전체를 넣는다(2026-10-20부터, 이전에는 앞 4000자).
-  - OpenAI 기본: Light=gpt-6-luna, High=gpt-6.2-sol (gpt-6 계열은 Responses API 경로, reasoning_effort=medium)
+  - OpenAI 기본: Light=gpt-6-luna, High=gpt-6.2-sol (gpt-6 계열은 Responses API 경로, reasoning_effort=medium). 선택 가능한 OpenAI 모델은 `backend/llm/openai.py`의 `ALLOWED_OPENAI_HIGH_MODELS`(gpt-6.2-sol·gpt-6.1-sol·gpt-6-sol·gpt-6.2-astra·gpt-6-astra)와 `ALLOWED_OPENAI_LIGHT_MODELS`(gpt-6-luna·gpt-6.1-terra)뿐이고, 설정 화면 목록·`PUT /api/settings`·저장값을 서버가 단계별로 검증한다(새 모델은 시험 후 추가)
   - Gemini 기본: Light=gemini-3.1-flash-lite, High=gemini-3.5-flash
   - `reasoning_effort`는 gpt-5/gpt-5.x 계열에만 자동 적용. PUT `/api/settings`로 변경 가능.
 - **FastAPI 경로 순서 주의**: `/api/companies/timeline`은 반드시 `/api/companies/{slug}` 앞에 등록해야 충돌하지 않음.

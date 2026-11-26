@@ -1831,7 +1831,7 @@ const MODEL_INPUT_PRICE = {
   // Claude (선택 가능한 모델만: Sonnet 5/5.5 $2, Haiku 4.5 $1, Haiku 5.5 $0.1 — 구체적 패턴 먼저)
   'claude-haiku-5-5': 0.1, 'claude-haiku': 1, 'claude-sonnet': 2,
   // GPT-6 (Responses API 경로)
-  'gpt-6.2-sol': 2, 'gpt-6-luna': 0.1,
+  'gpt-6.2-astra': 8, 'gpt-6-astra': 10, 'gpt-6.2-sol': 2, 'gpt-6.1-sol': 2, 'gpt-6-sol': 2, 'gpt-6.1-terra': 1, 'gpt-6-luna': 0.1,
   // GPT-5 (구체적 패턴 먼저)
   'gpt-5.5-pro': 30, 'gpt-5.5': 5,
   'gpt-5.4-pro': 30, 'gpt-5.4-mini': 0.75, 'gpt-5.4-nano': 0.2, 'gpt-5.4': 2.5,
@@ -1896,16 +1896,16 @@ function renderModelTierView(models) {
     }).join('');
 }
 
-function applyModelListToDropdowns(models, provider, currentHigh, currentLight) {
+function applyModelListToDropdowns(models, provider, currentHigh, currentLight, tiers = null) {
   const highId = `${provider}-high-model`;
   const lightId = `${provider}-light-model`;
-  [[highId, currentHigh], [lightId, currentLight]].forEach(([id, current]) => {
+  [[highId, currentHigh, tiers?.high], [lightId, currentLight, tiers?.light]].forEach(([id, current, tierModels]) => {
     const wrap = document.getElementById(id)?.parentElement;
     if (!wrap) return;
     const labelText = wrap.childNodes[0].textContent;
     const sel = document.createElement('select');
     sel.id = id;
-    models.forEach(m => {
+    (tierModels || models).forEach(m => {
       const opt = document.createElement('option');
       opt.value = m; opt.textContent = m;
       if (m === current) opt.selected = true;
@@ -1919,15 +1919,16 @@ function applyModelListToDropdowns(models, provider, currentHigh, currentLight) 
 
 function loadModelCache(provider) {
   try {
-    // v2: Claude 허용 목록 도입 전에 저장된 캐시(13개짜리)와 섞이지 않도록 키를 구분한다
-    const raw = localStorage.getItem(`model-cache-v2-${provider}`);
+    // v3: 허용 목록 도입 전에 저장된 캐시(Claude 13개, OpenAI 전체 목록)와 섞이지 않도록 키를 구분한다
+    const raw = localStorage.getItem(`model-cache-v3-${provider}`);
     return raw ? JSON.parse(raw) : null;
   } catch { return null; }
 }
 
-function saveModelCache(provider, models) {
-  localStorage.setItem(`model-cache-v2-${provider}`, JSON.stringify({
+function saveModelCache(provider, models, tiers = null) {
+  localStorage.setItem(`model-cache-v3-${provider}`, JSON.stringify({
     models,
+    tiers,
     updatedAt: new Date().toISOString(),
   }));
 }
@@ -1935,7 +1936,7 @@ function saveModelCache(provider, models) {
 function applyModelCache(provider, currentHigh, currentLight) {
   const cache = loadModelCache(provider);
   if (!cache) return;
-  applyModelListToDropdowns(cache.models, provider, currentHigh, currentLight);
+  applyModelListToDropdowns(cache.models, provider, currentHigh, currentLight, cache.tiers);
   renderModelTierView(cache.models);
   const updatedEl = document.getElementById('model-list-updated');
   if (updatedEl) {
@@ -1955,8 +1956,8 @@ async function fetchModelList(quiet = false) {
     const currentHigh = document.getElementById(`${provider}-high-model`)?.value || '';
     const currentLight = document.getElementById(`${provider}-light-model`)?.value || '';
 
-    saveModelCache(provider, models);
-    applyModelListToDropdowns(models, provider, currentHigh, currentLight);
+    saveModelCache(provider, models, data.tiers);
+    applyModelListToDropdowns(models, provider, currentHigh, currentLight, data.tiers);
     renderModelTierView(models);
 
     const updatedEl = document.getElementById('model-list-updated');

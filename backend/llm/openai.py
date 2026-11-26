@@ -51,6 +51,13 @@ def _reasoning_effort_kwarg(model: str, reasoning_effort: str | None = None) -> 
 
 
 _RESPONSES_MODEL_PREFIXES = ("gpt-6",)
+# 설정 화면에서 고를 수 있는 OpenAI 모델 = 시험을 마친 모델. 새 모델은 시험 후 여기에 추가한다.
+# 의료 특화(-healthcare) 모델은 일반 용도가 아니라 뺀다.
+ALLOWED_OPENAI_HIGH_MODELS = frozenset({
+    "gpt-6.2-sol", "gpt-6.1-sol", "gpt-6-sol", "gpt-6.2-astra", "gpt-6-astra",
+})
+ALLOWED_OPENAI_LIGHT_MODELS = frozenset({"gpt-6-luna", "gpt-6.1-terra"})
+ALLOWED_OPENAI_MODELS = ALLOWED_OPENAI_HIGH_MODELS | ALLOWED_OPENAI_LIGHT_MODELS
 _RESPONSES_MAX_ATTEMPTS = 3  # 첫 시도 + 재시도 2회
 # 출력 상한(max_output_tokens)에는 reasoning 토큰이 포함되므로 낮게 잡으면 보이는 출력 전에 끝나 응답이 빈다.
 _RESPONSES_MIN_OUTPUT_TOKENS = 16384

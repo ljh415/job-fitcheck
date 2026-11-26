@@ -7,12 +7,13 @@ Lightweight 티어: 마크다운 본문 생성
 High 티어: 공고 구조화 추출, PDF 프로필 추출, 적합도 평가, Q&A
     — 원문 항목 보존과 후보자 맥락 통합 추론이 필요하므로 고성능 모델 사용
 
-Claude는 llm/anthropic.py의 ALLOWED_CLAUDE_MODELS에 있는 모델만 쓴다(설정 화면 목록·저장값 검증).
+Claude는 llm/anthropic.py의 ALLOWED_CLAUDE_MODELS, OpenAI는 llm/openai.py의 ALLOWED_OPENAI_HIGH/LIGHT_MODELS(단계별)에 있는 모델만 쓴다(설정 화면 목록·저장값 검증).
 """
 from typing import NamedTuple
 
 from config import get_active_provider, get_model_override, get_reasoning_effort, settings
 from .anthropic import ALLOWED_CLAUDE_MODELS
+from .openai import ALLOWED_OPENAI_HIGH_MODELS, ALLOWED_OPENAI_LIGHT_MODELS
 from .base import LLMProvider
 from . import get_provider
 
@@ -49,8 +50,12 @@ def _model(tier: str, provider: str) -> str:
     """런타임 오버라이드가 있으면 그것을, 없으면 설정 기본값을 반환."""
     key = f"{provider}_{tier}_model"
     override = get_model_override(key)
-    # 허용 밖 Claude 모델이 저장돼 있으면(예: 허용 목록 도입 전 설정) 무시하고 기본값을 쓴다
-    if override and (provider != "claude" or override in ALLOWED_CLAUDE_MODELS):
+    # 허용 밖 Claude·OpenAI 모델이 저장돼 있으면(예: 허용 목록 도입 전 설정) 무시하고 기본값을 쓴다
+    allowed = {
+        "claude": ALLOWED_CLAUDE_MODELS,
+        "openai": ALLOWED_OPENAI_HIGH_MODELS if tier == "high" else ALLOWED_OPENAI_LIGHT_MODELS,
+    }.get(provider)
+    if override and (allowed is None or override in allowed):
         return override
     if provider == "claude":
         return settings.claude_high_model if tier == "high" else settings.claude_light_model
