@@ -329,7 +329,7 @@ async def prepare_company_import(url: str | None = None, raw_text: str | None = 
             "output_schema": prompts.EXTRACT_COMPANY_TOOL_SCHEMA,
         },
         "generate_body": {
-            "system": prompts.GENERATE_BODY_SYSTEM + _MCP_ISOLATION_NOTICE,
+            "system": prompts.GENERATE_BODY_SYSTEMS["mcp"] + _MCP_ISOLATION_NOTICE,
             "user_template": prompts.GENERATE_BODY_USER_TEMPLATE,
             "note": "user_template엔 {company_json}·{raw_text} 자리가 아직 안 채워져 있음 — "
             "company_json은 extract_company 결과를 JSON 문자열로, raw_text는 "

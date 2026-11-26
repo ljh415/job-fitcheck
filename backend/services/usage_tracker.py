@@ -63,6 +63,14 @@ PRICING: dict[str, dict[str, float]] = {
     "gpt-5.4":                      {"input": 2.50,  "output": 15.00},
     "gpt-5.5":                      {"input": 5.00,  "output": 30.00},
     "gpt-5.5-pro":                  {"input": 30.00, "output": 180.00},
+    # OpenAI GPT-6 계열 (공식 가격표 2026-11-19 기준, 추론 토큰은 출력 단가로 과금)
+    "gpt-6.2-astra":                {"input": 8.00,  "output": 40.00},
+    "gpt-6-astra":                  {"input": 10.00, "output": 50.00},
+    "gpt-6.2-sol":                  {"input": 2.00,  "output": 10.00},
+    "gpt-6.1-sol":                  {"input": 2.00,  "output": 10.00},
+    "gpt-6-sol":                    {"input": 2.00,  "output": 10.00},
+    "gpt-6.1-terra":                {"input": 1.00,  "output":  5.00},
+    "gpt-6-luna":                   {"input": 0.10,  "output":  0.50},
     # Google Gemini (유료 티어 근사값 — 무료 티어는 비용 미발생)
     "gemini-2.5-pro":               {"input": 1.25,  "output": 10.00},
     "gemini-2.5-flash":             {"input": 0.30,  "output":  2.50},
@@ -96,11 +104,12 @@ def calc_cost(
 
 def append_usage(
     operation: str, model: str, input_tokens: int, output_tokens: int, duration_ms: int | None = None,
-    cache_write_tokens: int = 0, cache_read_tokens: int = 0,
+    cache_write_tokens: int = 0, cache_read_tokens: int = 0, response_id: str | None = None,
 ) -> None:
     """사용 기록을 JSONL 파일에 추가한다. duration_ms는 API 호출
     자체(요청 전송~응답 수신)의 소요시간 — 재시도·에러 처리 등 부가 로직은 제외하고
-    호출부가 직접 측정해서 넘긴다."""
+    호출부가 직접 측정해서 넘긴다. response_id는 provider가 준 응답 ID로, 이상한 결과가 나온 호출을
+    나중에 provider 쪽에서 찾을 때 쓴다(Responses API 경로만 넘긴다)."""
     cost = calc_cost(model, input_tokens, output_tokens, cache_write_tokens, cache_read_tokens)
     entry = {
         "ts": datetime.now().isoformat(timespec="seconds"),
@@ -116,6 +125,8 @@ def append_usage(
         entry["cache_write_tokens"] = cache_write_tokens
     if cache_read_tokens:
         entry["cache_read_tokens"] = cache_read_tokens
+    if response_id:
+        entry["response_id"] = response_id
     request_id = current_request_id.get()
     if request_id is not None:
         entry["request_id"] = request_id

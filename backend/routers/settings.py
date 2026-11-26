@@ -22,6 +22,7 @@ from config import (
 )
 from export import build_export_zip
 from llm.anthropic import ALLOWED_CLAUDE_MODELS
+from llm.openai import ALLOWED_OPENAI_HIGH_MODELS, ALLOWED_OPENAI_LIGHT_MODELS, ALLOWED_OPENAI_MODELS
 from models import SettingsResponse, SettingsUpdateRequest
 
 logger = logging.getLogger(__name__)
@@ -44,11 +45,19 @@ async def health():
 
 # ── 설정 ─────────────────────────────────────────────────────────────────────
 
+_OPENAI_TIER_ALLOWED = {
+    "openai_high_model": ALLOWED_OPENAI_HIGH_MODELS,
+    "openai_light_model": ALLOWED_OPENAI_LIGHT_MODELS,
+}
+
+
 @router.get("/api/settings", response_model=SettingsResponse)
 async def get_settings():
     def _m(key: str, default: str) -> str:
         value = get_model_override(key) or default
         if key.startswith("claude_") and value not in ALLOWED_CLAUDE_MODELS:
+            return default
+        if key in _OPENAI_TIER_ALLOWED and value not in _OPENAI_TIER_ALLOWED[key]:
             return default
         return value
     return SettingsResponse(
@@ -78,6 +87,13 @@ async def update_settings(req: SettingsUpdateRequest):
             raise HTTPException(
                 status_code=400,
                 detail=f"지원하지 않는 Claude 모델입니다: {val} (사용 가능: {', '.join(sorted(ALLOWED_CLAUDE_MODELS))})",
+            )
+    for key, allowed in _OPENAI_TIER_ALLOWED.items():
+        val = getattr(req, key)
+        if val and val not in allowed:
+            raise HTTPException(
+                status_code=400,
+                detail=f"지원하지 않는 OpenAI 모델입니다: {val} (사용 가능: {', '.join(sorted(allowed))})",
             )
     if req.provider:
         try:
@@ -138,7 +154,7 @@ async def list_models(provider: str = "claude"):
             client = AsyncOpenAI(api_key=settings.openai_api_key)
             page = await client.models.list()
             model_ids = sorted(
-                [m.id for m in page.data if m.id.startswith("gpt-") or m.id.startswith("o1") or m.id.startswith("o3")],
+                [m.id for m in page.data if m.id in ALLOWED_OPENAI_MODELS],
                 reverse=True,
             )
         elif provider == "gemini":
@@ -169,7 +185,14 @@ async def list_models(provider: str = "claude"):
         # 요청 URL 전체(키 포함)가 그대로 들어있을 수 있다. 클라이언트에는 노출하지 않고 서버 로그에만 남긴다.
         logger.warning("모델 목록 조회 실패 (provider=%s): %s", provider, e)
         raise HTTPException(status_code=502, detail=f"모델 목록 조회 실패 ({provider}). 서버 로그를 확인해주세요.")
-    return {"provider": provider, "models": model_ids}
+    result = {"provider": provider, "models": model_ids}
+    if provider == "openai":
+        # 화면이 High·Light 드롭다운에 각각 맞는 모델만 보여주도록 단계별 목록도 보낸다
+        result["tiers"] = {
+            "high": [m for m in model_ids if m in ALLOWED_OPENAI_HIGH_MODELS],
+            "light": [m for m in model_ids if m in ALLOWED_OPENAI_LIGHT_MODELS],
+        }
+    return result
 
 
 # ── 평가 기준 ─────────────────────────────────────────────────────────────────

@@ -35,8 +35,8 @@ class Settings(BaseSettings):
     # 모델 티어 기본값 (설정 뷰에서 런타임 변경 가능)
     claude_high_model: str = "claude-sonnet-5-5"
     claude_light_model: str = "claude-haiku-5-5"
-    openai_high_model: str = "gpt-5"
-    openai_light_model: str = "gpt-5-mini"
+    openai_high_model: str = "gpt-6.2-sol"
+    openai_light_model: str = "gpt-6-luna"
     openai_reasoning_effort: str = "medium"
     gemini_high_model: str = "gemini-3.5-flash"
     gemini_light_model: str = "gemini-3.1-flash-lite"
