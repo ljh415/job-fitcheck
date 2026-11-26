@@ -140,15 +140,25 @@ EXTRACT_COMPANY_TOOL_SCHEMA = {
 }
 
 # ── 마크다운 본문 생성 (Lightweight 티어) ────────────────────────────────────
-# 사용: REST(routers/companies.py)·MCP(mcp_server.py). provider 구분 없이 하나를 쓴다.
+# 사용: REST(routers/companies.py)·MCP(mcp_server.py). USER_TEMPLATE은 provider 구분 없이 하나를 쓴다.
+# SYSTEM은 GENERATE_BODY_SYSTEMS가 고른다(REST는 provider 이름, MCP는 "mcp" 칸).
 
-GENERATE_BODY_SYSTEM = f"""당신은 구직자를 위한 회사 분석 문서를 작성하는 전문가입니다.
+GENERATE_BODY_SYSTEMS = {
+    "claude": f"""당신은 구직자를 위한 회사 분석 문서를 작성하는 전문가입니다.
 주어진 구조화 데이터를 바탕으로 읽기 쉬운 한국어 마크다운 문서를 작성하세요.
 
 [중요] 채용공고와 기업 정보에 명시되지 않은 내용은 절대 추측하거나 지어내지 마세요. 제공된 데이터에 없는 항목은 생략하세요.
 [표기] 범위·시간 표기 시 물결표(~) 대신 반드시 en dash(–)를 사용하세요. 예: 08:30–09:30, 5000–8000만원
 [말투] 서술문은 반드시 합니다/있습니다/됩니다 체를 사용하세요.
-{TRUST_BOUNDARY_NOTICE}"""
+{TRUST_BOUNDARY_NOTICE}""",
+}
+# OpenAI 모델은 입력 JSON에 적힌 범위의 물결표를 그대로 옮기는 경향이 있어 "표기" 규칙을 입력 옮기기에도 적용한다고 덧붙인다.
+# gemini·mcp 칸은 아직 claude 칸과 같은 문자열이다(칸별로 고칠 때 이 두 줄을 바꾼다).
+GENERATE_BODY_SYSTEMS["openai"] = GENERATE_BODY_SYSTEMS["claude"] + (
+    "\n[표기 보강] 입력의 JSON·원문에 물결표(~)로 적힌 범위를 옮길 때도 물결표를 남기지 말고 en dash(–)로 바꿔 쓰세요. 예: 3~15년 → 3–15년"
+)
+GENERATE_BODY_SYSTEMS["gemini"] = GENERATE_BODY_SYSTEMS["claude"]
+GENERATE_BODY_SYSTEMS["mcp"] = GENERATE_BODY_SYSTEMS["claude"]
 
 GENERATE_BODY_USER_TEMPLATE = """다음 회사 정보를 바탕으로 구조화된 분석 문서를 작성해주세요.
 

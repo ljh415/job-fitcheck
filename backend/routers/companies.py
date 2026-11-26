@@ -634,7 +634,7 @@ async def _process_company(
         raw_text=safe_raw_text,
     )
     body = await light.complete(
-        system=prompts.GENERATE_BODY_SYSTEM,
+        system=prompts.GENERATE_BODY_SYSTEMS[snap.provider_name],
         user=user_body,
         model=light_model,
         operation="본문 생성",
