@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     # 로그인 비밀번호 — 비어 있으면 인증 미적용 (로컬 개발용)
     app_secret: str = ""
 
+    # 실행 환경 표식 — dev compose에서만 "dev"로 주입, 프론트가 탭 제목에 [DEV]를 붙이는 데 쓴다
+    app_env: str = ""
+
     # 텔레그램 알림 — 비어 있으면 미전송
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""

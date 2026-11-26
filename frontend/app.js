@@ -2112,6 +2112,10 @@ function showToast(msg, type = 'success', duration = 5000) {
 
 /* ── 초기 로드 ────────────────────────────────────────────────────── */
 window.addEventListener('DOMContentLoaded', async () => {
+  // dev 환경 구분 — /api/health는 로그인 없이 호출되므로 로그인 화면에서도 표시된다. 실패하면 제목은 그대로 둔다.
+  fetch('/api/health').then(r => r.json()).then(h => {
+    if (h.env === 'dev') document.title = '[DEV] ' + document.title;
+  }).catch(() => {});
   const token = localStorage.getItem(TOKEN_KEY);
   if (!token) {
     currentView = 'login';
