@@ -3,6 +3,11 @@ OpenAI ChatGPT provider 구현.
 
 구조화 추출: tool_choice={"type": "function"} 로 특정 함수 강제 호출
 스트리밍: stream=True + async context manager 사용
+
+모델별 경로: gpt-6 계열은 Responses API(`_*_responses` 메서드), 그 밖의 모델은 chat/completions.
+gpt-6 계열은 chat/completions에서 max_tokens·temperature를 거부하고 함수 도구와 reasoning을 같이 쓸 수 없다.
+Responses 경로는 요청을 OpenAI 서버에 저장하지 않고(store=False), 함수 호출이 없거나 정상 완료가 아닌
+응답은 다시 요청하며 실패한 시도를 llm/incidents.py로 기록한다.
 """
 import json
 import logging
@@ -14,6 +19,7 @@ from openai import AsyncOpenAI
 
 from services import usage_tracker
 from config import get_reasoning_effort, settings
+from . import incidents
 from .base import LLMAPIError, LLMProvider
 
 logger = logging.getLogger(__name__)
@@ -44,6 +50,64 @@ def _reasoning_effort_kwarg(model: str, reasoning_effort: str | None = None) -> 
     return {"extra_body": {"reasoning_effort": reasoning_effort or get_reasoning_effort()}}
 
 
+_RESPONSES_MODEL_PREFIXES = ("gpt-6",)
+_RESPONSES_MAX_ATTEMPTS = 3  # 첫 시도 + 재시도 2회
+# 출력 상한(max_output_tokens)에는 reasoning 토큰이 포함되므로 낮게 잡으면 보이는 출력 전에 끝나 응답이 빈다.
+_RESPONSES_MIN_OUTPUT_TOKENS = 16384
+_RESPONSES_OUTPUT_TOKENS_CAP = 32768
+
+
+def _uses_responses(model: str) -> bool:
+    return model.startswith(_RESPONSES_MODEL_PREFIXES)
+
+
+def _as_llm_error(e: Exception) -> LLMAPIError | None:
+    """OpenAI SDK 예외를 사용자용 LLMAPIError로 바꾼다. 해당하지 않는 예외는 None."""
+    if isinstance(e, openai_lib.AuthenticationError):
+        return LLMAPIError("LLM API 인증 실패 — 설정에서 OpenAI API 키를 확인해주세요.", 401)
+    if isinstance(e, openai_lib.RateLimitError):
+        return LLMAPIError("LLM API 요청 한도 초과 — 잠시 후 다시 시도해주세요.", 429)
+    if isinstance(e, openai_lib.APIStatusError):
+        return LLMAPIError(f"LLM 서비스 오류 ({e.status_code}) — 잠시 후 다시 시도해주세요.", 503)
+    if isinstance(e, openai_lib.APIConnectionError):
+        return LLMAPIError("LLM 서비스 연결 실패 — 네트워크 상태를 확인해주세요.", 503)
+    return None
+
+
+def _to_responses_content(blocks: list[dict], role: str = "user") -> list[dict]:
+    """Anthropic 형식 content block을 Responses 입력 형식으로 바꾼다. 어시스턴트 글은 output_text 형식이다."""
+    text_type = "output_text" if role == "assistant" else "input_text"
+    parts = []
+    for b in blocks:
+        if b.get("type") == "image":
+            src = b["source"]
+            parts.append({"type": "input_image", "image_url": f"data:{src['media_type']};base64,{src['data']}", "detail": "high"})
+        elif b.get("type") == "text":
+            parts.append({"type": text_type, "text": b["text"]})
+    return parts
+
+
+def _messages_to_responses(messages: list[dict]) -> list[dict]:
+    """대화 이력을 Responses 입력 항목으로 바꾼다. Anthropic 전용 cache_control 필드는 보내지 않는다."""
+    items = []
+    for msg in messages:
+        content = msg["content"]
+        if isinstance(content, list):
+            content = _to_responses_content([{k: v for k, v in b.items() if k != "cache_control"} for b in content], msg["role"])
+        items.append({"role": msg["role"], "content": content})
+    return items
+
+
+def _input_chars(value: Any) -> int:
+    if isinstance(value, str):
+        return len(value)
+    return sum(len(b.get("text", "")) for b in value or [] if isinstance(b, dict))
+
+
+def _hit_output_limit(response: Any) -> bool:
+    return getattr(getattr(response, "incomplete_details", None), "reason", None) == "max_output_tokens"
+
+
 class OpenAIProvider(LLMProvider):
 
     def __init__(self) -> None:
@@ -61,6 +125,10 @@ class OpenAIProvider(LLMProvider):
         max_tokens: int = 8192,
         reasoning_effort: str | None = None,
     ) -> dict:
+        if _uses_responses(model):
+            return await self._extract_structured_responses(
+                system, user, tool_name, tool_description, tool_schema, model, operation, max_tokens, reasoning_effort,
+            )
         temperature_kwarg = {} if model in _NO_TEMPERATURE_MODELS else {"temperature": 0.5}
         reasoning_kwarg = _reasoning_effort_kwarg(model, reasoning_effort)
         # reasoning 모델은 max_completion_tokens 한도를 충분히 줘야 reasoning 후 출력 가능
@@ -134,6 +202,8 @@ class OpenAIProvider(LLMProvider):
         max_tokens: int = 4096,
         reasoning_effort: str | None = None,
     ) -> str:
+        if _uses_responses(model):
+            return await self._complete_responses(system, user, model, operation, content, max_tokens, reasoning_effort)
         msg_content = self._to_openai_content(content) if content is not None else user
         reasoning_kwarg = _reasoning_effort_kwarg(model, reasoning_effort)
         if reasoning_kwarg:
@@ -198,6 +268,10 @@ class OpenAIProvider(LLMProvider):
         history: list[dict] | None = None,
         max_iterations: int = 6,
     ) -> dict:
+        if _uses_responses(model):
+            return await self._run_agent_responses(
+                system, question, tools, tool_executor, model, operation, history, max_iterations,
+            )
         tool_defs = [
             {
                 "type": "function",
@@ -294,6 +368,10 @@ class OpenAIProvider(LLMProvider):
         operation: str = "",
         max_tokens: int = 4096,
     ) -> AsyncIterator[str]:
+        if _uses_responses(model):
+            async for chunk in self._stream_responses(system, messages, model, operation, max_tokens):
+                yield chunk
+            return
         # OpenAI는 system을 messages 배열 첫 번째 항목으로 넣어야 함
         # content block 형태일 때 Anthropic 전용 cache_control 필드 제거
         cleaned = []
@@ -338,3 +416,179 @@ class OpenAIProvider(LLMProvider):
                 output_tokens=output_tokens,
                 duration_ms=t["ms"],
             )
+
+    # ── Responses API 경로 (gpt-6 계열) ─────────────────────────────────────────
+
+    async def _responses_call(
+        self, model: str, system: str, input_items: Any, operation: str, reasoning_effort: str,
+        max_output_tokens: int, tools: list[dict] | None = None, tool_choice: dict | None = None,
+    ) -> Any:
+        kwargs: dict[str, Any] = {
+            "model": model, "instructions": system, "input": input_items, "store": False,
+            "reasoning": {"effort": reasoning_effort}, "max_output_tokens": max_output_tokens,
+        }
+        if tools:
+            kwargs["tools"] = tools
+        if tool_choice:
+            kwargs["tool_choice"] = tool_choice
+        try:
+            with usage_tracker.timer() as t:
+                response = await self._client.responses.create(**kwargs)
+        except openai_lib.OpenAIError as e:
+            raise _as_llm_error(e) or e
+        if response.usage:
+            usage_tracker.append_usage(
+                operation=operation, model=model, input_tokens=response.usage.input_tokens,
+                output_tokens=response.usage.output_tokens, duration_ms=t["ms"], response_id=response.id,
+            )
+        return response
+
+    async def _responses_with_retry(
+        self, model: str, system: str, input_items: Any, operation: str, reasoning_effort: str,
+        max_output_tokens: int, accept: Callable[[Any], str | None], tools: list[dict] | None = None,
+        tool_choice: dict | None = None,
+    ) -> Any:
+        """accept(response)가 None이면 정상, 문자열이면 그 이유로 실패한 시도로 보고 다시 요청한다.
+        실패한 시도는 재시도로 결국 성공해도 기록한다. 출력 상한에 걸렸으면 상한을 두 배로 늘린다."""
+        for attempt in range(1, _RESPONSES_MAX_ATTEMPTS + 1):
+            response = await self._responses_call(
+                model, system, input_items, operation, reasoning_effort, max_output_tokens, tools, tool_choice,
+            )
+            reason = accept(response)
+            if reason is None:
+                return response
+            incidents.record(operation, model, attempt, reason, _input_chars(input_items), reasoning_effort, response)
+            if _hit_output_limit(response) and max_output_tokens < _RESPONSES_OUTPUT_TOKENS_CAP:
+                max_output_tokens = min(max_output_tokens * 2, _RESPONSES_OUTPUT_TOKENS_CAP)
+        raise LLMAPIError("LLM이 결과를 만들지 못했습니다 — 잠시 후 다시 시도해주세요.", 503)
+
+    async def _extract_structured_responses(
+        self, system: str, user: str, tool_name: str, tool_description: str, tool_schema: dict,
+        model: str, operation: str, max_tokens: int, reasoning_effort: str | None,
+    ) -> dict:
+        tools = [{"type": "function", "name": tool_name, "description": tool_description, "parameters": tool_schema, "strict": False}]
+        parsed: dict[str, Any] = {}
+
+        def accept(response: Any) -> str | None:
+            call = next((it for it in response.output if it.type == "function_call" and it.name == tool_name), None)
+            if response.status != "completed" or call is None:
+                return f"status={response.status}, 함수 호출 {'있음' if call else '없음'}"
+            try:
+                parsed["value"] = json.loads(call.arguments)
+            except json.JSONDecodeError:
+                return "함수 인자가 JSON이 아님"
+            return None
+
+        await self._responses_with_retry(
+            model, system, user, operation, reasoning_effort or get_reasoning_effort(),
+            max(max_tokens, _RESPONSES_MIN_OUTPUT_TOKENS), accept, tools,
+            {"type": "function", "name": tool_name},  # 특정 함수를 반드시 호출하도록 강제
+        )
+        return parsed["value"]
+
+    async def _complete_responses(
+        self, system: str, user: str, model: str, operation: str, content: list[dict] | None,
+        max_tokens: int, reasoning_effort: str | None,
+    ) -> str:
+        input_items: Any = [{"role": "user", "content": _to_responses_content(content)}] if content is not None else user
+        last_text = ""
+
+        def accept(response: Any) -> str | None:
+            nonlocal last_text
+            text = response.output_text or ""
+            last_text = text or last_text
+            if response.status != "completed" or not text:
+                return f"status={response.status}, 출력 글자 {len(text)}"
+            return None
+
+        try:
+            response = await self._responses_with_retry(
+                model, system, input_items, operation, reasoning_effort or get_reasoning_effort(),
+                max(max_tokens, _RESPONSES_MIN_OUTPUT_TOKENS), accept,
+            )
+        except LLMAPIError:
+            if not last_text:
+                raise
+            # 잘린 응답을 그대로 반환하는 기존 동작과 같다 — 호출자가 불완전한 글이라도 쓸 수 있게 한다.
+            logger.warning("[%s] 응답이 끝까지 완성되지 못했습니다(재시도 후에도 부족). 내용이 불완전할 수 있습니다.", operation)
+            return last_text
+        return response.output_text or ""
+
+    async def _stream_responses(
+        self, system: str, messages: list[dict], model: str, operation: str, max_tokens: int,
+    ) -> AsyncIterator[str]:
+        effort = get_reasoning_effort()
+        final = None
+        try:
+            with usage_tracker.timer() as t:
+                stream = await self._client.responses.create(
+                    model=model, instructions=system, input=_messages_to_responses(messages), store=False,
+                    reasoning={"effort": effort}, max_output_tokens=max(max_tokens, _RESPONSES_MIN_OUTPUT_TOKENS), stream=True,
+                )
+                async for event in stream:
+                    if event.type == "response.output_text.delta":
+                        yield event.delta
+                    elif event.type in ("response.completed", "response.incomplete", "response.failed"):
+                        final = event.response
+        except openai_lib.OpenAIError as e:
+            raise _as_llm_error(e) or e
+        if final is None:
+            # 이미 글자를 내보낸 뒤라 다시 요청할 수 없다. 사유만 남긴다.
+            incidents.record(operation, model, 1, "스트림이 완료 이벤트 없이 끝남", _input_chars(messages), effort)
+            return
+        if final.usage:
+            usage_tracker.append_usage(
+                operation=operation, model=model, input_tokens=final.usage.input_tokens,
+                output_tokens=final.usage.output_tokens, duration_ms=t["ms"], response_id=final.id,
+            )
+        if final.status != "completed":
+            incidents.record(operation, model, 1, f"스트림 종료 status={final.status}", _input_chars(messages), effort, final)
+
+    async def _run_agent_responses(
+        self, system: str, question: str, tools: list[dict], tool_executor: Callable[[str, dict], Awaitable[Any]],
+        model: str, operation: str, history: list[dict] | None, max_iterations: int,
+    ) -> dict:
+        tool_defs = [
+            {"type": "function", "name": t["name"], "description": t["description"], "parameters": t["input_schema"], "strict": False}
+            for t in tools
+        ]
+        input_items: list[dict] = [*_messages_to_responses(history or []), {"role": "user", "content": question}]
+        tool_calls_trace: list[dict] = []
+        effort = get_reasoning_effort()
+
+        def accept(response: Any) -> str | None:
+            has_call = any(it.type == "function_call" for it in response.output)
+            if response.status != "completed" or not (has_call or response.output_text):
+                return f"status={response.status}, 함수 호출 {'있음' if has_call else '없음'}, 출력 글자 {len(response.output_text or '')}"
+            return None
+
+        for _ in range(max_iterations):
+            response = await self._responses_with_retry(
+                model, system, input_items, operation, effort, _RESPONSES_MIN_OUTPUT_TOKENS, accept, tool_defs,
+            )
+            calls = [it for it in response.output if it.type == "function_call"]
+            if not calls:
+                return {"text": response.output_text or "", "tool_calls": tool_calls_trace}
+            # 저장하지 않는 요청(store=False)이라 reasoning을 포함한 이번 턴의 출력 항목 전부를 순서대로 다음 요청에 다시 넣어야 한다.
+            input_items.extend(it.model_dump(exclude_none=True) for it in response.output)
+            for call in calls:
+                args = json.loads(call.arguments) if call.arguments else {}
+                try:
+                    result = await tool_executor(call.name, args)
+                except (RuntimeError, LLMAPIError) as e:
+                    # chat/completions 경로·Claude provider의 run_agent()와 같은 원칙 — 도구 하나가 실패해도
+                    # 전체 요청을 죽이지 않고 사용자에게 보여도 안전한 메시지를 도구 결과로 모델에 돌려준다.
+                    result = {"error": str(e)}
+                except Exception:
+                    logger.exception("도구 실행 중 예상 못 한 오류 (%s)", call.name)
+                    result = {"error": "내부 도구 실행 오류가 발생했습니다."}
+                tool_calls_trace.append({"tool": call.name, "args": args, "result": result})
+                input_items.append({
+                    "type": "function_call_output", "call_id": call.call_id,
+                    "output": json.dumps(result, ensure_ascii=False, default=str),
+                })
+
+        return {
+            "text": "죄송합니다, 이 질문에 답하는 데 필요한 정보를 정리하지 못했습니다(도구 호출 반복 한도 초과).",
+            "tool_calls": tool_calls_trace,
+        }

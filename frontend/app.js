@@ -1830,6 +1830,8 @@ function syncProviderModels() {
 const MODEL_INPUT_PRICE = {
   // Claude (선택 가능한 모델만: Sonnet 5/5.5 $2, Haiku 4.5 $1, Haiku 5.5 $0.1 — 구체적 패턴 먼저)
   'claude-haiku-5-5': 0.1, 'claude-haiku': 1, 'claude-sonnet': 2,
+  // GPT-6 (Responses API 경로)
+  'gpt-6.2-sol': 2, 'gpt-6-luna': 0.1,
   // GPT-5 (구체적 패턴 먼저)
   'gpt-5.5-pro': 30, 'gpt-5.5': 5,
   'gpt-5.4-pro': 30, 'gpt-5.4-mini': 0.75, 'gpt-5.4-nano': 0.2, 'gpt-5.4': 2.5,
