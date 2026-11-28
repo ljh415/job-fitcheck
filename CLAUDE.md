@@ -106,6 +106,7 @@ data/
 ├── candidate_profile.md
 ├── eval_criteria.md
 ├── usage_log.jsonl
+├── llm_incidents.jsonl   # 정상 완료되지 않은 LLM 응답 요약(OpenAI gpt-6), 전체 요청·응답은 llm_incidents/ 아래 파일(개인정보 포함)
 ├── runtime_settings.json  # provider/모델/알림설정/주간요약 스케줄 — 재시작 후에도 유지
 ├── app.db             # SQLite — 프로필 스냅샷 + 회사별 적합도 평가 이력 (전체 ZIP/삭제 전 자동 백업에 포함)
 ├── uploads/          # 업로드 PDF 임시 저장
