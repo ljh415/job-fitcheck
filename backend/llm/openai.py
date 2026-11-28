@@ -115,6 +115,22 @@ def _hit_output_limit(response: Any) -> bool:
     return getattr(getattr(response, "incomplete_details", None), "reason", None) == "max_output_tokens"
 
 
+def _responses_kwargs(
+    model: str, system: str, input_items: Any, reasoning_effort: str, max_output_tokens: int,
+    tools: list[dict] | None, tool_choice: dict | None,
+) -> dict[str, Any]:
+    """responses.create에 넘기는 인자. 실제 호출과 이상 응답 기록(요청 본문 보관)이 같은 값을 쓰게 한 곳에서 만든다."""
+    kwargs: dict[str, Any] = {
+        "model": model, "instructions": system, "input": input_items, "store": False,
+        "reasoning": {"effort": reasoning_effort}, "max_output_tokens": max_output_tokens,
+    }
+    if tools:
+        kwargs["tools"] = tools
+    if tool_choice:
+        kwargs["tool_choice"] = tool_choice
+    return kwargs
+
+
 class OpenAIProvider(LLMProvider):
 
     def __init__(self) -> None:
@@ -430,14 +446,7 @@ class OpenAIProvider(LLMProvider):
         self, model: str, system: str, input_items: Any, operation: str, reasoning_effort: str,
         max_output_tokens: int, tools: list[dict] | None = None, tool_choice: dict | None = None,
     ) -> Any:
-        kwargs: dict[str, Any] = {
-            "model": model, "instructions": system, "input": input_items, "store": False,
-            "reasoning": {"effort": reasoning_effort}, "max_output_tokens": max_output_tokens,
-        }
-        if tools:
-            kwargs["tools"] = tools
-        if tool_choice:
-            kwargs["tool_choice"] = tool_choice
+        kwargs = _responses_kwargs(model, system, input_items, reasoning_effort, max_output_tokens, tools, tool_choice)
         try:
             with usage_tracker.timer() as t:
                 response = await self._client.responses.create(**kwargs)
@@ -465,6 +474,10 @@ class OpenAIProvider(LLMProvider):
             if reason is None:
                 return response
             incidents.record(operation, model, attempt, reason, _input_chars(input_items), reasoning_effort, response)
+            incidents.dump_full(  # 원인 진단용 — 원인 확인 후 이 호출만 지운다
+                operation, attempt, response,
+                _responses_kwargs(model, system, input_items, reasoning_effort, max_output_tokens, tools, tool_choice),
+            )
             if _hit_output_limit(response) and max_output_tokens < _RESPONSES_OUTPUT_TOKENS_CAP:
                 max_output_tokens = min(max_output_tokens * 2, _RESPONSES_OUTPUT_TOKENS_CAP)
         raise LLMAPIError("LLM이 결과를 만들지 못했습니다 — 잠시 후 다시 시도해주세요.", 503)

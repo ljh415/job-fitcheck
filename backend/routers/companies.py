@@ -564,7 +564,7 @@ async def _process_company(
     logger.info("[1/4] 구조화 추출 시작 (model=%s, 텍스트 %d자)", extract_model, len(raw_text))
     user_extract = prompts.EXTRACT_COMPANY_USER_TEMPLATE.format(raw_text=safe_raw_text)
     extracted = await extract_llm.extract_structured(
-        system=prompts.EXTRACT_COMPANY_SYSTEM,
+        system=prompts.EXTRACT_COMPANY_SYSTEMS[snap.provider_name],
         user=user_extract,
         tool_name=prompts.EXTRACT_COMPANY_TOOL_NAME,
         tool_description=prompts.EXTRACT_COMPANY_TOOL_DESCRIPTION,

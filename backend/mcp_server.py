@@ -324,7 +324,7 @@ async def prepare_company_import(url: str | None = None, raw_text: str | None = 
         "raw_text_escaped": safe_text,
         "source_url": url,
         "extract_company": {
-            "system": prompts.EXTRACT_COMPANY_SYSTEM + _MCP_ISOLATION_NOTICE,
+            "system": prompts.EXTRACT_COMPANY_SYSTEMS["mcp"] + _MCP_ISOLATION_NOTICE,
             "user": prompts.EXTRACT_COMPANY_USER_TEMPLATE.format(raw_text=safe_text),
             "output_schema": prompts.EXTRACT_COMPANY_TOOL_SCHEMA,
         },

@@ -2,7 +2,7 @@
 
 재시도로 결국 성공한 호출도 실패한 시도마다 남겨야 재시도가 실패를 가리지 않는다.
 요청 본문(프로필·공고 등 개인정보)은 저장하지 않고 입력 글자 수만 남긴다. 기록 실패가 호출을 깨뜨리면
-안 되므로 어떤 예외도 밖으로 내보내지 않는다.
+안 되므로 어떤 예외도 밖으로 내보내지 않는다. 예외로 dump_full()만 요청 본문과 응답 전체를 별도 파일에 둔다.
 """
 import json
 import logging
@@ -65,3 +65,24 @@ def record(operation: str, model: str, attempt: int, reason: str, input_chars: i
             f.write(json.dumps(entry, ensure_ascii=False, default=str) + "\n")
     except Exception as e:
         logger.warning("LLM 이상 응답 기록 실패: %s", e)
+
+
+# ── 원인 진단용 전체 기록 ────────────────────────────────────────────────────
+# sol이 함수 호출 없이 끝나는 원인을 응답 내용으로 확인하려고 둔 것이다. 원인을 확인하고 나면 이 함수와
+# openai.py의 호출 한 줄(incidents.dump_full)만 지우면 되고, 위의 record()·summarize_response()는
+# 이 함수에 의존하지 않는다.
+def dump_full(operation: str, attempt: int, response: Any, request: dict | None) -> None:
+    """실패한 시도의 요청 본문과 응답 전체를 data/llm_incidents/ 아래 파일 하나로 저장한다.
+    요청에 프로필·공고(개인정보)가 들어 있으므로 data/ 밖으로 내보내지 않는다."""
+    try:
+        dump_dir = settings.data_dir / "llm_incidents"
+        dump_dir.mkdir(parents=True, exist_ok=True)
+        full = response.model_dump(mode="json") if hasattr(response, "model_dump") else None
+        name = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{getattr(response, 'id', None) or 'no_response_id'}.json"
+        with open(dump_dir / name, "w", encoding="utf-8") as f:
+            json.dump(
+                {"operation": operation, "attempt": attempt, "request": request, "response": full},
+                f, ensure_ascii=False, indent=1, default=str,
+            )
+    except Exception as e:
+        logger.warning("LLM 이상 응답 전체 기록 실패: %s", e)
