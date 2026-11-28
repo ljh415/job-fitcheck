@@ -439,7 +439,7 @@ def derive_legacy_checks(decision_factors: dict) -> dict:
     salary_check는 연봉 요인이 평가에서 빠져 항상 None으로 비운다 — 재평가가
     `model_copy(update=…)`로 필드를 덮어쓰므로 옛 값이 남지 않게 키는 유지한다. CSV 내보내기·MCP 계약 하위 호환용이라
     decision_factors로 대체하지 않고 계속 채운다. status는 프롬프트가 이미
-    이 구 필드들과 같은 어휘로 채우도록 지시돼 있으므로(EVALUATE_FIT_JUDGE_SYSTEM
+    이 구 필드들과 같은 어휘로 채우도록 지시돼 있으므로(판정 시스템 프롬프트의
     [decision_factors 판정]) 그대로 옮기되, enum을 벗어나면 버린다(salary_check/
     stability_check는 Pydantic Literal이라 임의 문자열을 넣으면 저장이 깨진다).
     validate_decision_factors()가 status를 문자열로 보장하지만,
