@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.11.1 — OpenAI 전용 프롬프트 반영(판정 보완·추출 칸·단수 상수 정리)과 실패 응답 전체 기록 (2026-11-28)
+
+`feat/openai-6-migration` 브랜치의 후속 커밋 2개를 반영. 백엔드 코드가 바뀌어 반영하려면 재빌드가 필요하다. provider가 openai일 때만 프롬프트가 달라지고 Claude·Gemini 칸은 이전과 글자 단위로 같다.
+
+- `prompts.py`: 판정 시스템 프롬프트의 openai 칸을 claude 칸 본문 뒤에 `[복합 자격요건 판정 보완]`·`[연차·수준 판정 보완]` 두 블록을 덧붙인 문자열로 바꿨다(시험에서 정답지 일치 111/120, Claude 101). 보고서 칸은 현재안 그대로다.
+- `prompts.py`·`routers/companies.py`·`mcp_server.py`: 공고 추출 시스템 프롬프트를 provider별 dict `EXTRACT_COMPANY_SYSTEMS`(키 claude·openai·gemini·mcp)로 나눴다. claude 칸이 기존 본문이고 openai 칸에만 `[추출 보완 규칙]` 3개를 덧붙였다. REST는 `snap.provider_name` 칸, MCP는 `mcp` 칸을 쓴다.
+- `prompts.py`·`services/fit_normalization.py`: 판정·보고서의 단수 상수(`EVALUATE_FIT_JUDGE_SYSTEM`·`EVALUATE_FIT_REPORT_SYSTEM`)를 없애고 dict만 남겼다. 이 상수를 가리키던 독스트링 한 줄도 고쳤다.
+- `llm/incidents.py`·`llm/openai.py`: sol이 함수 호출 없이 끝난 시도마다 요청 본문과 응답 전체를 `data/llm_incidents/{시각}_{response_id}.json`에 저장한다(`dump_full`). 기존 `data/llm_incidents.jsonl` 요약 기록은 그대로다. 요청 본문에는 프로필·공고가 들어 있어 `data/` 안에만 둔다. 원인 확인 후 `dump_full()`과 `openai.py`의 호출 한 줄만 지우면 된다. `_responses_kwargs`는 실제 호출과 실패 기록이 같은 요청 인자를 쓰게 한 곳으로 모은 것이다.
+- 검증: 가짜 provider로 REST(claude·openai·gemini)·MCP의 추출·본문·판정·보고서 `system`이 provider 칸과 일치하고 변경 전 문자열과 대조됨을 확인(비용 0). 실제 OpenAI로 원티드 3건을 앱의 `add_from_url`로 두 번 등록해 호출 경계의 `system` 해시가 openai 칸과 일치하고 `usage_log.jsonl`의 호출과 모델·`response_id`가 맞음을 확인(각 약 $0.24~0.26, 등록분은 삭제). 이 중 첫 번째 실행에서 sol 보고서 호출 1건이 함수 호출 없이 `incomplete(max_messages)`로 끝나 재시도로 정상 처리됐고, 원인은 미확인이다(전체 기록은 이번 `dump_full`로 다음 발생 때 남는다). prod 재빌드 후 로그인·설정·회사 목록·모델·사용량 200과 컨테이너 안 프롬프트 칸 확인.
+
 ## v1.11.0 — OpenAI gpt-6 계열 지원(Responses API)과 모델 허용 목록 (2026-11-27)
 
 `feat/openai-6-migration` 브랜치를 반영. 백엔드와 프론트엔드가 바뀌어 반영하려면 재빌드가 필요하다. 전역 기본 provider(gemini)와 Claude 동작은 그대로다.
